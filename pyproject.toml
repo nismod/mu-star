@@ -30,7 +30,6 @@ dev = [
     "nbstripout",
     "pre-commit",
     "pytest",
-    "pytest-xdist",
     "pytest-cov",
     "ruff",
 ]
