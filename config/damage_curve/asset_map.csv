@@ -1,0 +1,4 @@
+# This file maps the `asset_type`, a categorical string possessed by assets to
+# a set of applicable damage curves by means of their identifier strings.
+asset_type,curve_id_0,curve_id_1,curve_id_2,curve_id_3,curve_id_4
+

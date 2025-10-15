@@ -1,0 +1,24 @@
+name: Test mu-star
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python environment
+        uses: mamba-org/setup-micromamba@v1
+        with:
+          environment-file: environment.yaml
+          environment-name: mu-star
+          cache-environment: true
+
+      - name: Test with pytest
+        # Use a 'login shell', thereforce sourcing .bashrc, necessary for umamba
+        shell: bash -l {0}
+        # Use pytest-xdist to parallelise (2 CPUs on standard GH Actions runner)
+        run: |
+          python -m pytest -n auto

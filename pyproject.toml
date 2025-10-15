@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mu-star"
+dynamic = ["version"]
+description = "Helper library for MU-STAR infrastructure risk analysis"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Fred Thomas", email = "fred.thomas@eci.ox.ac.uk" },
+    { name = "Tom Russell", email = "tom.russell@ouce.ox.ac.uk" },
+]
+keywords = []
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Utilities",
+]
+requires-python = ">=3.12"
+dependencies = ["pandas", "numpy", "xarray"]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "nbstripout",
+    "pre-commit",
+    "pytest",
+    "pytest-xdist",
+    "pytest-cov",
+    "ruff",
+]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.sdist]
+include = ["/src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.ruff.lint]
+select = [
+    "F",   # pyflakes
+    "E",   # pycodestyle
+    "I",   # isort
+    "RUF", # ruff-specific rules
+]
+fixable = ["ALL"]

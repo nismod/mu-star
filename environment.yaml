@@ -1,0 +1,22 @@
+# To install this environment:
+# micromamba create -f environment.yaml -y
+name: mu-star
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pip:
+    - -e .
+    - nismod-snail
+  - geopandas
+  - hatchling
+  - jupyter
+  - netCDF4
+  - notebook
+  - numpy
+  - matplotlib
+  - pyarrow
+  - bioconda::snakemake
+  - tqdm
+  - xarray

@@ -1,0 +1,11 @@
+configfile: "config/config.yaml"
+
+include: "0-preprocess/preprocess.smk"
+include: "1-damage/damage.smk"
+
+wildcard_constraints:
+    layer=r"layer-\w+",
+    peril=r"peril-(flood|cyclone)",
+    subperil=r"subperil-(wind|fluvial|pluvial|coastal)",
+    ensemble=r"ensemble-\d+",
+

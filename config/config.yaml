@@ -1,0 +1,17 @@
+# This file contains configuration options for mu-star analysis.
+# These values are used by snakemake rules in the `workflow/` directory.
+
+metadata:
+  # Q: Do these paths need to be configurable (and therefore here) or rather hardcoded?
+  layer: "workflow/layer.csv"
+  hazard: "workflow/hazard.csv"
+
+sensitivity:
+  vars:
+    # TODO: Some data structure, or path to a file containing data structure
+    # describing how sensitive inputs might be varied, e.g.
+    # - flood damage curve x shift (min & max?)
+    # - wind damage curve y shift (min & max?)
+    # - rehabilitation cost multiplier (min & max?)
+    # - etc.
+
