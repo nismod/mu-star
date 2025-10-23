@@ -20,3 +20,4 @@ dependencies:
   - bioconda::snakemake
   - tqdm
   - xarray
+  - zarr
