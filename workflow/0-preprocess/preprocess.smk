@@ -33,8 +33,7 @@ rule download_SWIO_RAFI_flooding:
 
 rule collate_SWIO_RAFI_flooding:
     """
-    Take flood rasters, resample to common grid if necessary and output as Zarr
-    store.
+    Collate SWIO RAFI flood rasters, label with metadata and output as Zarr store.
 
     Test with:
     snakemake -c1 data/proc/hazard/rp/peril-flood/subperil-pluvial.zarr
