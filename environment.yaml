@@ -17,6 +17,7 @@ dependencies:
   - notebook
   - numpy
   - matplotlib
+  - pdoc
   - pyarrow
   - pytest
   - bioconda::snakemake
