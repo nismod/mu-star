@@ -1,0 +1,7 @@
+[book]
+title = "Mauritius STAR Documentation"
+authors = ["Tom Russell", "Fred Thomas"]
+language = "en"
+
+[output.html]
+mathjax-support = true
