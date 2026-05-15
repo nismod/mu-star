@@ -20,6 +20,23 @@ intend to work on and develop the codebase.
 
 ## Document control
 
-| Issue | Status           | Authors          | Reviewed by | Issue Date |
-| ----- | ---------------- | ---------------- | ----------- | ---------- |
-| -     | Working document | Tom Russell, ... | -           | -          |
+<table style="margin: 0;">
+<thead>
+<tr>
+  <th>Issue</th>
+  <th>Status</th>
+  <th>Authors</th>
+  <th>Reviewed by</th>
+  <th>Issue Date</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>-</td>
+  <td>Working document</td>
+  <td>Tom Russell, &hellip;</td>
+  <td>-</td>
+  <td>-</td>
+</tr>
+</tbody>
+</table>

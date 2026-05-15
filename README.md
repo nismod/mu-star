@@ -1,6 +1,6 @@
 # Mauritius Strategic Tool for the Analysis of Risk (mu-star)
 
-This repository, [`nismod/mu-star`](https://github.com/nismod/mu-star), contains
+The repository [`nismod/mu-star`](https://github.com/nismod/mu-star), contains
 project-specific codes and configuration to run climate-related risk and
 resilience analysis of infrastructure networks in Mauritius.
 
