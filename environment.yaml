@@ -7,8 +7,8 @@ channels:
 dependencies:
   - python=3.12
   - pip:
-    - -e .
-    - nismod-snail
+      - -e .
+      - nismod-snail
   - geopandas
   - hatchling
   - jupyter
@@ -17,6 +17,7 @@ dependencies:
   - numpy
   - matplotlib
   - pyarrow
+  - pytest
   - bioconda::snakemake
   - tqdm
   - xarray
