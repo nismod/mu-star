@@ -5,4 +5,4 @@ analysis. It assumes familiarity with the [git](https://git-scm.com/) version
 control system, the use of the command-line (or "terminal" or "shell") to run
 various tools, and the [Python](https://www.python.org/) programming language.
 
-{{#include ../../README.md:2:}}
+{{#include ../../README.md:5:}}

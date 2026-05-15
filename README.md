@@ -1,6 +1,9 @@
 # Mauritius Strategic Tool for the Analysis of Risk (mu-star)
 
-The repository [`nismod/mu-star`](https://github.com/nismod/mu-star), contains
+[![docs](https://github.com/nismod/mu-star/actions/workflows/docs.yml/badge.svg)](https://nismod.github.io/mu-star/)
+[![test](https://github.com/nismod/mu-star/actions/workflows/test.yml/badge.svg)](https://github.com/nismod/mu-star/actions/workflows/test.yml)
+
+The repository [`nismod/mu-star`](https://github.com/nismod/mu-star) contains
 project-specific codes and configuration to run climate-related risk and
 resilience analysis of infrastructure networks in Mauritius.
 
@@ -139,6 +142,27 @@ pytest src/mu_star
 Documentation is written in the `./docs/src` directory using
 [markdown](https://rust-lang.github.io/mdBook/format/markdown.html) and built
 using [`mdbook`](https://rust-lang.github.io/mdBook/index.html).
+
+Read the latest documentation at: https://nismod.github.io/mu-star/
+
+## Citation
+
+All contributors should be listed in `./CITATION.cff`.
+
+Once released, a Zenodo DOI will be available.
+
+Cite this software as follows:
+
+> Russell, T., & Thomas, F. Mauritius STAR [Computer software]. https://github.com/nismod/mu-star
+
+```bibtex
+@software{Russell_Mauritius_STAR,
+author = {Russell, Tom and Thomas, Fred},
+license = {MIT},
+title = {{Mauritius STAR}},
+url = {https://github.com/nismod/mu-star}
+}
+```
 
 ## Acknowledgements
 
