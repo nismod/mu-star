@@ -1,4 +1,4 @@
-from sample_model.model import SampleModel
+from transport.model import SampleModel
 
 
 def test_example():
