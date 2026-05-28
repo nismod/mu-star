@@ -1,5 +1,5 @@
 """
-Transform raw input data into analysis ready data.
+Transform incoming input data into analysis ready data.
 """
 
 
@@ -17,10 +17,10 @@ rule download_SWIO_RAFI_flooding:
     to have large blank areas.
 
     Test with:
-    snakemake -c1 data/raw/hazard/rp/peril-flood/subperil-pluvial/swio-rafi-extratropical
+    snakemake -c1 data/incoming/hazard/rp/peril-flood/subperil-pluvial/swio-rafi-extratropical
     """
     output:
-        directory("{data}/raw/hazard/rp/peril-flood/subperil-pluvial/swio-rafi-extratropical")
+        directory("{data}/incoming/hazard/rp/peril-flood/subperil-pluvial/swio-rafi-extratropical")
     shell:
         """
         mkdir -p {output}
@@ -36,12 +36,12 @@ rule collate_SWIO_RAFI_flooding:
     Collate SWIO RAFI flood rasters, label with metadata and output as Zarr store.
 
     Test with:
-    snakemake -c1 data/proc/hazard/rp/peril-flood/subperil-pluvial.zarr
+    snakemake -c1 data/processed/hazard/rp/peril-flood/subperil-pluvial.zarr
     """
     input:
-        raster_dir = "{data}/raw/hazard/rp/peril-flood/subperil-pluvial/swio-rafi-extratropical",
+        raster_dir = "{data}/incoming/hazard/rp/peril-flood/subperil-pluvial/swio-rafi-extratropical",
     output:
-        cube = directory("{data}/proc/hazard/rp/peril-flood/subperil-pluvial.zarr"),
+        cube = directory("{data}/processed/hazard/rp/peril-flood/subperil-pluvial.zarr"),
     run:
         import glob
         from pathlib import Path
@@ -77,4 +77,3 @@ rule collate_SWIO_RAFI_flooding:
         da = da.transpose("scenario", "return_period", "y", "x")
 
         da.to_dataset().to_zarr(output.cube)
-
