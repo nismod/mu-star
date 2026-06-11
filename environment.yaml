@@ -22,3 +22,9 @@ dependencies:
   - tqdm
   - xarray
   - zarr
+  - contextily
+  - matplotlib_map_utils
+  - 'duckdb==1.3.2'
+  - 'pyarrow==21.0.0'
+  - geoarrow-pyarrow
+  - 'ibis-framework[duckdb,geospatial]'

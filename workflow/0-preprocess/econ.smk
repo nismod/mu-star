@@ -1,0 +1,1 @@
+# Snakemake file for the setup of the data catalogue and post processing of model outputs.
