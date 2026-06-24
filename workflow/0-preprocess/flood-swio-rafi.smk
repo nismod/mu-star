@@ -50,14 +50,20 @@ rule collate_SWIO_RAFI_ETC_flooding:
             # think the source is in centimetres
             da = da / 100
             da.attrs["unit"] = "metres"
-            da = da.assign_coords(return_period=rp)
+            da = da.assign_coords(rp=rp)
             data.append(da)
 
-        da = xr.concat(data, dim="return_period")
-        da.return_period.attrs["unit"] = "years"
+        da = xr.concat(data, dim="rp")
+        da.rp.attrs["unit"] = "years"
+        da.rp.attrs["long_name"] = "Return period"
         da = da.expand_dims(case=[0])
-        da = da.assign_coords(scenario=("case", ["baseline"]), epoch=("case", [2010]))
-        da = da.transpose("case", "return_period", "y", "x")
+        da = da.assign_coords(scenario=("case", np.array(["baseline"], dtype=object)), epoch=("case", [2010]))
+        da = da.rename({"y": "lat", "x": "lon"})
+        da.lat.attrs["unit"] = "degrees"
+        da.lon.attrs["unit"] = "degrees"
+        da.lat.attrs["long_name"] = "Latitude"
+        da.lon.attrs["long_name"] = "Longitude"
+        da = da.transpose("case", "rp", "lat", "lon")
         da.to_dataset().to_zarr(output.cube)
 
 
@@ -102,14 +108,20 @@ rule collate_SWIO_RAFI_TC_flooding:
             # think the source is in centimetres
             da = da / 100
             da.attrs["unit"] = "metres"
-            da = da.assign_coords(return_period=rp)
+            da = da.assign_coords(rp=rp)
             data.append(da)
 
-        da = xr.concat(data, dim="return_period")
-        da.return_period.attrs["unit"] = "years"
+        da = xr.concat(data, dim="rp")
+        da.rp.attrs["unit"] = "years"
+        da.rp.attrs["long_name"] = "Return period"
         da = da.expand_dims(case=[0])
-        da = da.assign_coords(scenario=("case", ["baseline"]), epoch=("case", [2010]))
-        da = da.transpose("case", "return_period", "y", "x")
+        da = da.assign_coords(scenario=("case", np.array(["baseline"], dtype=object)), epoch=("case", [2010]))
+        da = da.rename({"y": "lat", "x": "lon"})
+        da.lat.attrs["unit"] = "degrees"
+        da.lon.attrs["unit"] = "degrees"
+        da.lat.attrs["long_name"] = "Latitude"
+        da.lon.attrs["long_name"] = "Longitude"
+        da = da.transpose("case", "rp", "lat", "lon")
         da.to_dataset().to_zarr(output.cube)
 
 
@@ -137,21 +149,26 @@ rule collate_SWIO_RAFI_storm_surge_flooding:
         return_periods = [int(c.split("-")[0]) for c in rp_cols]
         melted = gdf[["Lat", "Lon"] + rp_cols].melt(
             id_vars=["Lat", "Lon"],
-            var_name="return_period",
+            var_name="rp",
             value_name="inundation",
         )
-        melted["return_period"] = melted["return_period"].str.replace("-year", "").astype(int)
-        melted = melted.rename(columns={"Lat": "y", "Lon": "x"})
+        melted["rp"] = melted["rp"].str.replace("-year", "").astype(int)
+        melted = melted.rename(columns={"Lat": "lat", "Lon": "lon"})
         
-        da = melted.set_index(["return_period", "y", "x"])["inundation"].to_xarray()
+        da = melted.set_index(["rp", "lat", "lon"])["inundation"].to_xarray()
         da.attrs["long_name"] = "Flooding inundation depth, as caused by storm surge"
         da.attrs["source"] = "SWIO RAFI project, World Bank"
         da.attrs["unit"] = "metres"
-        da.return_period.attrs["unit"] = "years"
+        da.rp.attrs["unit"] = "years"
+        da.rp.attrs["long_name"] = "Return period"
 
         da = da.expand_dims(case=[0])
-        da = da.assign_coords(scenario=("case", ["baseline"]), epoch=("case", [2010]))
-        da = da.transpose("case", "return_period", "y", "x")
+        da = da.assign_coords(scenario=("case", np.array(["baseline"], dtype=object)), epoch=("case", [2010]))
+        da.lat.attrs["unit"] = "degrees"
+        da.lon.attrs["unit"] = "degrees"
+        da.lat.attrs["long_name"] = "Latitude"
+        da.lon.attrs["long_name"] = "Longitude"
+        da = da.transpose("case", "rp", "lat", "lon")
         ds = da.to_dataset(name="inundation")
         ds.to_zarr(output.cube)
 
