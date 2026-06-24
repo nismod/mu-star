@@ -1,8 +1,14 @@
 """
-Transform raw flooding data into analysis ready datasets.
+South West Indian Ocean Risk Assessment and Financing Initiative (SWIO RAFI)
+flood hazard data.
+
+Raster data on ~900m / 30 arcsecond grid.
 
 For more information on SWIO RAFI source data, see pg. 10 (12) of:
 https://www.gfdrr.org/sites/default/files/mauritius.pdf
+
+This file contains rules to transform raw flooding data into analysis ready
+Zarr datasets.
 """
 
 
