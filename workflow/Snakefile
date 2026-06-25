@@ -9,4 +9,3 @@ wildcard_constraints:
     peril=r"peril-(flood|cyclone)",
     subperil=r"subperil-(wind|fluvial|pluvial|coastal)",
     ensemble=r"ensemble-\d+",
-

@@ -25,10 +25,12 @@ rule collate_JBA_fluvial_flooding:
     output:
         cube = directory("{data}/processed/hazard/rp/peril-flood/subperil-fluvial/jba.zarr"),
     run:
+        import logging
         from pathlib import Path
 
         from mu_star.hazard import collate_jba_flood_rasters
 
+        logging.basicConfig(format="%(asctime)s %(message)s", level=logging.INFO)
         collate_jba_flood_rasters(sorted(Path(input.raster_dir).glob("*")), output.cube, "FLRF")
 
 
@@ -45,8 +47,10 @@ rule collate_JBA_pluvial_flooding:
     output:
         cube = directory("{data}/processed/hazard/rp/peril-flood/subperil-pluvial/jba.zarr"),
     run:
+        import logging
         from pathlib import Path
 
         from mu_star.hazard import collate_jba_flood_rasters
 
+        logging.basicConfig(format="%(asctime)s %(message)s", level=logging.INFO)
         collate_jba_flood_rasters(sorted(Path(input.raster_dir).glob("*")), output.cube, "FLSW")
