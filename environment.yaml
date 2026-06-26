@@ -9,10 +9,14 @@ dependencies:
   - pip:
       - -e .
       - nismod-snail
+  - dask
   - geopandas
+  - geoviews
   - hatchling
+  - hvplot
   - jupyter
   - netCDF4
+  - nbstripout
   - notebook
   - numpy
   - matplotlib

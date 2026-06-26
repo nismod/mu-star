@@ -4,6 +4,9 @@
 # Default data directory
 data/
 
+# Notebooks
+*.ipynb_checkpoints/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
