@@ -1,6 +1,7 @@
 configfile: "config/config.yaml"
 
-include: "0-preprocess/preprocess.smk"
+include: "0-preprocess/flood-swio-rafi.smk"
+include: "0-preprocess/flood-jba.smk"
 include: "1-damage/damage.smk"
 
 wildcard_constraints:
@@ -8,4 +9,3 @@ wildcard_constraints:
     peril=r"peril-(flood|cyclone)",
     subperil=r"subperil-(wind|fluvial|pluvial|coastal)",
     ensemble=r"ensemble-\d+",
-
