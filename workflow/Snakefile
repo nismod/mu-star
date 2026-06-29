@@ -2,6 +2,7 @@ configfile: "config/config.yaml"
 
 include: "0-preprocess/preprocess.smk"
 include: "0-preprocess/catalogue-open-data.smk"
+include: "0-preprocess/transport.smk"
 include: "1-damage/damage.smk"
 
 wildcard_constraints:
