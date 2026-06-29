@@ -9,6 +9,7 @@ dependencies:
   - pip:
       - -e .
       - nismod-snail
+      - osmium
   - geopandas
   - hatchling
   - jupyter
