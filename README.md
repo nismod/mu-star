@@ -47,6 +47,56 @@ The overall technical architecture of the project follows this outline:
       dependencies
     - database is Postgres with PostGIS
 
+```mermaid
+flowchart TB
+    User["Application user<br/>Web browser"]
+    Admin["Administrator<br/>Web browser"]
+
+    subgraph IRV["Web app: nismod/irv-standalone"]
+        UI["User interface<br/>React / TypeScript"]
+        AdminUI["Admin user interface<br/>Django Admin"]
+
+        subgraph VM["Server"]
+            Proxy["Web server / reverse proxy"]
+            Django["Django application<br/>Web API, authentication and metadata"]
+        end
+
+        Proxy <-->|"Requests"| Django
+
+        UI -->|"API requests"| Proxy
+        AdminUI -->|"Admin requests"| Proxy
+
+        Database[("Application data and metadata<br/>PostgreSQL / PostGIS database<br/>Raster and vector tiles")]
+
+    end
+
+    subgraph MU["Workflow: nismod/mu-star"]
+        Snakemake["Modelling and analysis workflow<br/>Snakemake"]
+        Models["Damage, disruption, risk and adaptation analysis<br/>Python models"]
+
+        Snakemake -->|"Orchestrate"| Models
+    end
+
+
+    subgraph SharedStore["Shared file store"]
+        InputData[("Prepared input data")]
+        Results[("Analytical outputs and<br/>visualisation-ready results")]
+    end
+
+    User -->|"HTTPS"| UI
+    UI -->|"Display maps, charts<br/>and analytical results"| User
+
+    Admin -->|"HTTPS"| AdminUI
+    AdminUI -->|"Manage users,<br/>data and metadata"| Admin
+
+    Django <-->|"Queries"| Database
+
+    InputData -->|"Read"| Models
+    Models -->|"Write"| Results
+
+    Results -->|"Load data and results"| Database
+```
+
 ## Setup and installation
 
 Clone or download this repository from
