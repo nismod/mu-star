@@ -6,6 +6,7 @@ include: "0-preprocess/transport.smk"
 include: "0-preprocess/energy.smk"
 include: "1-damage/damage.smk"
 include: "5-visualise/asset.smk"
+include: "5-visualise/hazards.smk"
 
 wildcard_constraints:
     layer=r"layer-\w+",
