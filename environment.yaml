@@ -20,6 +20,7 @@ dependencies:
   - pyarrow
   - pytest
   - bioconda::snakemake
+  - terracotta==0.9.1
   - tqdm
   - xarray
   - zarr
