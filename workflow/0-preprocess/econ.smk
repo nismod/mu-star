@@ -1,8 +1,8 @@
 """Pre-process economic data for model constraints."""
 
-RAW_LOCAL_ECON_DATA_PATH = config["paths"]["raw_local_econ_data"]
-LOCAL_ECON_CATALOGUE_ROOT = config["paths"]["local_econ_catalogue_root"]
-PROCESSED_LOCAL_ECON_DATA_PATH = config["paths"]["processed_local_econ_data"]
+RAW_LOCAL_ECON_DATA_PATH :str = "data/incoming/Socio-economic/GDP/Digest_NA_Yr2024_180625.xlsx"
+LOCAL_ECON_CATALOGUE_ROOT : str = "../catalogue"
+PROCESSED_LOCAL_ECON_DATA_PATH : str = "data/processed/mus_gdp2024/mus.parquet"
 
 
 rule preprocess_local_econ:

@@ -16,10 +16,9 @@ def preprocess_local_catalogue(catalogue_root, output_root, country_code):
 
     catalogue = load_catalogue(local=True, root=catalogue_root)
     conn = snoo.connect()
-    region_codes = [country_code]
 
-    region = conn.read_parquet(catalogue["custom_bounds"]).filter(_.gid_0.isin(region_codes))
-    region_bound = region.geometry.execute().set_crs("epsg:4326")[0]
+    region = conn.read_parquet(catalogue["custom_bounds"]).filter(_.gid_0.isin([country_code]))
+    region_bound = region.geometry.unary_union().execute().set_crs("epsg:4326")[0]
 
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -31,17 +30,20 @@ def preprocess_local_catalogue(catalogue_root, output_root, country_code):
 
         try:
             col_x, col_y = snoo.coords_columns(layer)
-            output_folder = output_root / f"{country_code}_{name}"
+            output_folder = output_root / "processed" / name
             output_folder.mkdir(parents=True, exist_ok=True)
-            output_path = output_folder / f"{name}.parquet"
-            layer.filter(_[col_x].point(_[col_y]).intersects(region_bound)).to_parquet(
-                str(output_path),
-                overwrite=True,
+            # output_path = output_folder / f"{name}.parquet"
+            layer.filter(_[col_x].point(_[col_y]).intersects(region_bound)).to_parquet_dir(
+                # str(output_path),
+                # overwrite=True,
+                str(output_folder),
+                existing_data_behavior="overwrite_or_ignore",
             )
         except Exception:
             missed_layers.append(name)
 
     print("Missed layers:", missed_layers)
+
     return missed_layers
 
 

@@ -81,3 +81,7 @@ venv.bak/
 
 # PyPI configuration file
 .pypirc
+
+.DS_Store
+logs
+cache

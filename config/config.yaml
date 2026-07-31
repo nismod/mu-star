@@ -3,10 +3,9 @@
 
 paths:
   # Update these values when the shared data layout is finalised.
-  raw_local_econ_data: "../catalogue/datasets/mauritius/raw/econ/Digest_NA_Yr2024_180625.xlsx"
-  local_econ_catalogue_root: "../catalogue"
-  processed_local_catalogue_root: "../catalogue/datasets/mauritius/processed"
-  processed_local_econ_data: "../catalogue/datasets/mauritius/processed/mus_gdp2024/mus.parquet"
+  figures : "../../figures"
+  processed_local_catalogue_root: "data/processed/CATALOGUE"
+  osm_extract: "data/incoming/Infrastructure/Road Network/osm-extract/mauritius-260708.osm.pbf"
 
 local_econ:
   country_code: "MUS"
@@ -17,6 +16,10 @@ metadata:
   # Q: Do these paths need to be configurable (and therefore here) or rather hardcoded?
   layer: "workflow/layer.csv"
   hazard: "workflow/hazard.csv"
+
+figures:
+  dpi : 300
+
 
 sensitivity:
   vars:
