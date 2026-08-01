@@ -5,6 +5,7 @@ include: "0-preprocess/catalogue-open-data.smk"
 include: "0-preprocess/transport.smk"
 include: "0-preprocess/energy.smk"
 include: "0-preprocess/water.smk"
+include: "0-preprocess/building.smk"
 include: "1-damage/damage.smk"
 include: "5-visualise/asset.smk"
 include: "5-visualise/hazard.smk"
@@ -14,3 +15,5 @@ wildcard_constraints:
     peril=r"peril-(flood|cyclone)",
     subperil=r"subperil-(wind|fluvial|pluvial|coastal)",
     ensemble=r"ensemble-\d+",
+    sector = r"transport|energy|water|building",
+    geom_type = r"node|edge|area",

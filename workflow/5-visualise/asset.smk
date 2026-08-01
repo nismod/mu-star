@@ -18,13 +18,13 @@ ASSET_SOURCES = {
     # ("water", "irrigation", "edge"): (5 * UID_RANGE, "?"),
     ("water", "potable", "node"): (6 * UID_RANGE, "processed/asset/water/potable/node.gpq"),
     ("water", "waste", "node"): (7 * UID_RANGE, "processed/asset/water/waste/node.gpq"),
-    # N.B. Original irv-jamaica schema had one edge layer for both waste and potable water
+    # N.B. irv-jamaica schema has one edge layer for both waste and potable water
     # ("water", "?", "edge"): (8 * UID_RANGE, "?"),
     ("transport", "road", "node"): (9 * UID_RANGE, "incoming/Infrastructure/Road Network/osm-open-gira/nodes.gpq"),
     ("transport", "road", "edge"): (10 * UID_RANGE, "incoming/Infrastructure/Road Network/osm-open-gira/edges.gpq"),
     ("energy", "transmission", "node"): (11 * UID_RANGE, "processed/asset/energy/inferred-data-mauritius-rodrigues/geoparquet/inferred-data-mauritius-rodrigues-nodes-with-gen-type.geoparquet"),
     ("energy", "transmission", "edge"): (12 * UID_RANGE, "processed/asset/energy/inferred-data-mauritius-rodrigues/geoparquet/inferred-data-mauritius-rodrigues-edges.geoparquet"),
-    # ("buildings", "buildings", "area"): (13 * UID_RANGE, "?"),
+    ("building", "building", "area"): (13 * UID_RANGE, "processed/asset/building/building.gpq"),
 }
 
 
@@ -48,11 +48,9 @@ rule copy_and_label_asset:
     output:
         gpq = "{data}/visualise/asset/{sector}/{layer}/{geom_type}.gpq",
     wildcard_constraints:
-        sector = r"transport|energy|water|buildings",
         layer = r"[\w-]+",
-        geom_type = r"node|edge|area",
     run:
-        import numpy as np 
+        import numpy as np
 
         uid_start, path = ASSET_SOURCES[(wildcards.sector, wildcards.layer, wildcards.geom_type)]
         df = _read_geo(input.src)
