@@ -1,16 +1,15 @@
 """Subset global catalogue data for the local study area."""
 
-LOCAL_CATALOGUE_ROOT : str = "../catalogue"
-PROCESSED_LOCAL_CATALOGUE_ROOT = config["paths"]["processed_local_catalogue_root"]
-LOCAL_CATALOGUE_COMPLETE_PATH = f"{PROCESSED_LOCAL_CATALOGUE_ROOT}/.logs"
+from economy import local_catalogue_root, processed_local_catalogue_root
 
 rule econ_catalogue:
     """Subset point-based global catalogue layers to the configured country."""
     output:
-        complete = str(PROCESSED_LOCAL_CATALOGUE_ROOT) + "{catalogue_outputs}",
+        complete = directory(processed_local_catalogue_root),
+        # complete = str(processed_local_catalogue_root) + "{catalogue_outputs}",
     params:
-        catalogue_root = lambda wildcards: LOCAL_CATALOGUE_ROOT,
-        output_root = lambda wildcards: PROCESSED_LOCAL_CATALOGUE_ROOT,
+        catalogue_root = lambda wildcards: local_catalogue_root,
+        output_root = lambda wildcards: processed_local_catalogue_root,
         country_code = config["local_econ"]["country_code"],
     # log:
     #     f"{LOCAL_CATALOGUE_COMPLETE_PATH}/{{catalogue_outputs}}.log",

@@ -1,9 +1,11 @@
 """Pre-process an OSM extract into CSV node and edge tables."""
 
-OSM_BUFFER_EXTRACT_PATH = config['paths']['osm_extract']
-OSM_NODES_PATH = "data/processed/cppRosm_network/nodes.csv"
-OSM_EDGES_PATH = "data/processed/cppRosm_network/road_segments.csv"
-OSM_ROADS_OUTPUT_DIR = "data/processed/cppRosm_network/"
+from economy import (
+    cppRosm_edges_path, 
+    cppRosm_nodes_path, 
+    cppRosm_roads_output_dir, 
+    osm_extract_path,
+)
 
 rule osm_roads_preprocess:
     """
@@ -13,11 +15,11 @@ rule osm_roads_preprocess:
     argument and the output directory as its second.
     """
     input:
-        osm_buffer_extract = OSM_BUFFER_EXTRACT_PATH,
+        osm_buffer_extract = osm_extract_path,
     output: 
-        nodes_path = OSM_NODES_PATH,
-        edges_path = OSM_EDGES_PATH,
+        nodes_path = cppRosm_nodes_path,
+        edges_path = cppRosm_edges_path,
     params:
-        cpprosm_dir = OSM_ROADS_OUTPUT_DIR,
+        cpprosm_dir = cppRosm_roads_output_dir,
     script:
         "osm_roads_preprocess.R"

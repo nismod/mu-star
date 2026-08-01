@@ -1,13 +1,15 @@
 """Pre-process economic data for model constraints."""
 
-wtp_path : str = "data/incoming/Infrastructure/Water Treatment Plant/wtp.gpkg"
-wwtp_path : str = "data/incoming/Infrastructure/Wastewater Treatment Plant/wwtp.gpkg"
-roads_path : str = "data/incoming/Infrastructure/Road Network/overture/roads.parquet"
-cppRosm_roads : str = "data/processed/cppRosm_network/"
-cppRosm_nodes_path : str = "data/processed/cppRosm_network/nodes.csv"
-cppRosm_edges_path : str = "data/processed/cppRosm_network/road_segments.csv"
-
-voronoids_fig_path : str = f"../../catalogue/economic/utilities/voronoids.png"
+from economy import (
+    cppRosm_edges_path,
+    cppRosm_nodes_path,
+    cppRosm_roads,
+    econ_utilities_folder,
+    roads_path,
+    voronoids_fig_path,
+    wtp_path,
+    wwtp_path,
+)
 
 rule econ_utilities:
     """Convert official national accounts into a geospatial economic constraint table."""
@@ -22,7 +24,7 @@ rule econ_utilities:
         # table = PROCESSED_LOCAL_ECON_DATA_PATH,
         # utilities_voronoids_fig = "../../figures/economic/utilities_voronois.png",
         voronoids_fig_path=voronoids_fig_path,
-        figures=directory("../../figures/economic/utilities"),
+        figures=directory(econ_utilities_folder),
     # params:
     #     catalogue_root = lambda wildcards: LOCAL_ECON_CATALOGUE_ROOT,
     #     country_code = config["local_econ"]["country_code"],

@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 from shapely.geometry import box
 
-SCRIPT_PATH = Path(__file__).resolve().parents[3] / "workflow" / "0-preprocess" / "econ.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[3] / "workflow" / "0-preprocess" / "economic.py"
 SCRIPT_SPEC = spec_from_file_location("workflow_local_econ", SCRIPT_PATH)
 assert SCRIPT_SPEC is not None and SCRIPT_SPEC.loader is not None
 SCRIPT_MODULE = module_from_spec(SCRIPT_SPEC)
