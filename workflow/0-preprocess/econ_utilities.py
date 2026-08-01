@@ -6,6 +6,8 @@ Maps with main econ activity and relation to utilities:
 - Energy (?)
 """
 
+FULL_PLOTS: bool = True
+
 
 def econ_utilities(
     wtp_path,
@@ -16,8 +18,6 @@ def econ_utilities(
     voronoids_fig,
     econ_utilities_figs,
 ):
-    FULL_PLOTS: bool = False
-
     from pathlib import Path
 
     import numpy as np

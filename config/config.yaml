@@ -3,7 +3,7 @@
 
 paths:
   # Update these values when the shared data layout is finalised.
-  figures : "../../figures"
+  figures : "figures"
   processed_local_catalogue_root: "data/processed/CATALOGUE"
   osm_extract: "data/incoming/Infrastructure/Road Network/osm-extract/mauritius-260708.osm.pbf"
 
