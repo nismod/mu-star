@@ -1,12 +1,19 @@
 # Economic activity and trade
 
-In order to understand the finer geographical scale at which the economy is organised, we introduce modelling methods allowing to disaggregate reported national statistics for economic output onto a fine spatial indexed grid. The methodology fits into the inverse problem theory, in this context the modeller takes observed data and attempts to build a model that produces this data under some constraint and sometimes limited prior knowledge about a pheomenon. In the following sections, the model, input data and output schema will be described. 
+In order to understand the finer geographical scale at which the economy is organised, we introduce modelling methods allowing to disaggregate reported national statistics for economic output onto a fine spatial indexed grid. The methodology fits into the inverse problem theory and in this context observed data is taken and a model that produces this data under some constraint and sometimes limited prior knowledge about a pheomenon is developped. In the following sections, the model, input data and output schema will be described. 
 
 ## Data
 
 The input data come from various sources including academic, open source, crowd sourced, and official accounts. The full list has been put together into a catalogue available upon request. The econometric model uses OvertureMaps as it's primary source of points of interest (POIs), for which the exact coordinates and a categorical classification are known, the
 
 ![](img/economics/flowchart.png)
+
+### Sectorial coverage
+
+Coverage of selected entries of our data catalogue:
+
+![](img/economics/isic_section_coverage.png)
+
 
 # Methods
 
@@ -128,15 +135,17 @@ $$
 
 The successive application of these aggregation operators to an output tensor ($n \_ locations\times n \_ sectors$) provides a tensor containing modelled outputs aggregated to the same spatial and sectoral resolution as the constrain. At this level of resolution, the likelihood function can be applied and comparison can be made with the available data.
 
+<!-- 
 ## Spatial modelling
 
 ## Bayesian Modelling
 
-## Econometrics
+## Econometrics 
+-->
 
-### Traditional proxies
+<!-- ### Traditional proxies
 
-Very common in the spatial econometric literature is the use of night time lights (NTL) as a proxy for the intensity of economic activity, this
+Very common in the spatial econometric literature is the use of night time lights (NTL) as a proxy for the intensity of economic activity, this -->
 
 [@anselinSpatialEconometrics1988]
 
@@ -152,9 +161,10 @@ Visually, the model is represented as follows :
 
 ![Graph representation of the model.](img/economics/METHODS/MUS_model_graph.png)
 
+<!-- 
 ## Expanding the baseline model
 
-When additional data is availbale, it can be used to either validate sectorial level outputs, or become part of the prior.
+When additional data is availbale, it can be used to either validate sectorial level outputs, or become part of the prior. -->
 
 [^1]: https://overturemaps.org/
 
