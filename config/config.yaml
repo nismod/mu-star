@@ -1,10 +1,25 @@
 # This file contains configuration options for mu-star analysis.
 # These values are used by snakemake rules in the `workflow/` directory.
 
+paths:
+  # Update these values when the shared data layout is finalised.
+  figures : "figures"
+  processed_local_catalogue_root: "data/processed/CATALOGUE"
+  osm_extract: "data/incoming/Infrastructure/Road Network/osm-extract/mauritius-260708.osm.pbf"
+
+local_econ:
+  country_code: "MUS"
+  year: 2024
+  rupees_per_usd: 47.12
+
 metadata:
   # Q: Do these paths need to be configurable (and therefore here) or rather hardcoded?
   layer: "workflow/layer.csv"
   hazard: "workflow/hazard.csv"
+
+figures:
+  dpi : 300
+
 
 sensitivity:
   vars:
@@ -14,4 +29,3 @@ sensitivity:
     # - wind damage curve y shift (min & max?)
     # - rehabilitation cost multiplier (min & max?)
     # - etc.
-

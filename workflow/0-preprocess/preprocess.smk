@@ -30,7 +30,6 @@ rule download_SWIO_RAFI_flooding:
         rm hzd-mus-fl-etc.zip
         """
 
-
 rule collate_SWIO_RAFI_flooding:
     """
     Collate SWIO RAFI flood rasters, label with metadata and output as Zarr store.
