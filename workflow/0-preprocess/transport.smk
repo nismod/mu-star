@@ -29,6 +29,6 @@ rule prepare_airport_areas:
     shell:
         """
         python {input.script} \
-            --input {input.pbf}
+            --input {input.pbf} \
             --output {output.areas}
         """
