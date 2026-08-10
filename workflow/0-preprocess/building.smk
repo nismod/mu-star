@@ -51,12 +51,15 @@ rule label_building_category:
             "Not Classified": "Unclassified",
             "": "Unclassified",
         }
+
         df = gpd.read_file(input.raw)
+
         df = df.drop_duplicates("geometry")
         # irv-standalone expects, area_sqm, name and building_type columns
         df["area_sqm"] = df.to_crs(df.estimate_utm_crs()).geometry.area
         df = df.rename(columns={"Building_N": "name"})
-        df["building_type"] = "Unclassified"
         df["building_type"] = df["Category_L"].map(category_l_to_vis_category)
+        df.loc[df.building_type.isna(), "building_type"] = "Unclassified"
+
         df.to_parquet(output.proc)
 
