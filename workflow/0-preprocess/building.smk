@@ -23,6 +23,7 @@ rule label_building_category:
             "Section O - Public Administration and Defence; Compulsory Social Security": "Institutional",
             "Section P - Education": "Institutional",
             "Section Q - Human Health and Social Work Activities": "Institutional",
+            "Assembly": "Institutional",
 
             "Section I - Accommodation and Food Service Activities": "Recreation",
             "Section R - Arts, Entertainment and Recreation": "Recreation",
@@ -40,7 +41,6 @@ rule label_building_category:
 
             "Mixed Use": "Mixed Use",
 
-            "Assembly": "Industrial",
             "Section C - Manufacturing": "Industrial",
             "Section D - Electricity, Gas, Steam and Air Conditioning Supply": "Industrial",
             "Section E - Water Supply; Sewerage, Waste Management and Remediation": "Industrial",
