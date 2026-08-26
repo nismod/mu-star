@@ -11,13 +11,21 @@ dependencies:
       - nismod-snail
   - geopandas
   - hatchling
+  - highspy
   - jupyter
-  - netCDF4
-  - notebook
-  - numpy
   - matplotlib
+  - netCDF4
+  - networkx
+  - notebook
+  - numpy>=1.26,<2
+  - openpyxl
+  - osmnx>=2
+  - pandas>=2,<3
   - pyarrow
+  - pypsa>=0.30,<0.31
   - pytest
+  - scipy
+  - shapely
   - bioconda::snakemake
   - tqdm
   - xarray

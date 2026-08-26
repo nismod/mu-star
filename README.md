@@ -128,13 +128,32 @@ output files.
 
 While this workflow is in development, some of the rules are placeholders.
 
+The energy workflow builds three explicit network products through a single
+`build_network` dispatch: the canonical reviewed `base-mauritius` network, and
+two topology-only inferred coverage proxies for Mauritius and Rodrigues —
+`inferred-osm-mauritius-rodrigues` (OSM power terminals) and
+`inferred-data-mauritius-rodrigues` (reviewed substations, generators and CEB
+backbone). Both inferred products retain the OSM road subnetwork supported by
+VIIRS nightlight targets, and each build writes matching GeoParquet layers:
+
+```shell
+snakemake -c1 energy_network
+snakemake -c1 energy_exports
+```
+
+The inferred electrical values are topology placeholders. Interruption analysis
+is intentionally out of scope for this migration, so energy does not yet expose
+the "given disrupted assets, output disruption metrics" interface. See
+`docs/src/infrastructure-energy.md` for inputs, provenance, the nightlight
+method (adapted from GridFinder) and current limitations.
+
 ### Testing
 
 Test the helper library by activating the environment and running the following
 from this directory:
 
 ```shell
-pytest src/mu_star
+pytest src
 ```
 
 ## Documentation

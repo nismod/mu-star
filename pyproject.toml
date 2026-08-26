@@ -23,14 +23,26 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "pandas",
-    "numpy",
+    "geopandas",
+    "highspy",
+    "matplotlib",
+    "networkx",
+    "numpy>=1.26,<2",
+    "openpyxl",
+    "pandas>=2,<3",
+    "pyarrow",
+    "pypsa>=0.30,<0.31",
     "rasterio",
     "rioxarray",
+    "scipy",
+    "shapely",
     "xarray",
 ]
 
 [project.optional-dependencies]
+inference = [
+    "osmnx>=2",
+]
 dev = [
     "black",
     "nbstripout",
@@ -45,6 +57,9 @@ source = "vcs"
 
 [tool.hatch.build.targets.sdist]
 include = ["/src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mu_star", "src/transport", "src/energy"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

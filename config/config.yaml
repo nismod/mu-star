@@ -1,6 +1,8 @@
 # This file contains configuration options for mu-star analysis.
 # These values are used by snakemake rules in the `workflow/` directory.
 
+data_root: data
+
 metadata:
   # Q: Do these paths need to be configurable (and therefore here) or rather hardcoded?
   layer: "workflow/layer.csv"
@@ -15,3 +17,68 @@ sensitivity:
     # - rehabilitation cost multiplier (min & max?)
     # - etc.
 
+energy:
+  base_network:
+    # Bridge only short breaks in the provided transmission-route geometry.
+    route_gap_tolerance_m: 75
+    # The source routes describe the CEB 66 kV network. Until reviewed line
+    # ratings are available, use a deliberately non-binding topology rating.
+    default_voltage_kv: 66
+    topology_capacity_mva: 10000
+
+  inferred:
+    # The inferred products cover Mauritius and Rodrigues. They are geographic
+    # coverage proxies built from a VIIRS-nightlight-supported OSM road
+    # subnetwork, not observed distribution infrastructure or operational
+    # electrical models.
+    region: mauritius-rodrigues
+    # VIIRS nightlight targets filter the drivable OSM road network; the
+    # resulting inferred product keeps road cycles and the reviewed-data variant
+    # also preserves the main CEB backbone. "drive" excludes footpaths, tracks
+    # and hiking trails (use "all" only to inspect every mapped way).
+    network_type: drive
+    # OSM acquisition is a manual, opt-in step: the Snakemake builds consume the
+    # cached roads.parquet/power.parquet as inputs and never download. To
+    # (re)populate the offline cache under incoming/energy/osm/<region>/, call
+    # energy.osm.fetch_osm_roads / fetch_osm_power_features once with
+    # allow_download=True; this flag records that intent for those helpers.
+    allow_osm_download: false
+    max_anchor_distance_m: 1000
+    topology_voltage_kv: 11
+    topology_capacity_mva: 5
+    # CEB reports total transmission plus MV/LV distribution circuit length.
+    ceb_total_line_length_km: 10492.2
+    # Advisory coverage bound comparing the inferred road subnetwork against the
+    # CEB whole-network circuit length. Road length and electrical circuit-km
+    # are different quantities, so this stays deliberately tight at 0.10 (the
+    # reviewed value); build_network's own parameter default is the looser 0.35.
+    line_length_tolerance_fraction: 0.10
+    # Advisory bound for the inferred-data generation total against CEB's
+    # reported installed capacity (CEB Annual Report 2023-2024).
+    generation_capacity_tolerance_fraction: 0.10
+
+  nightlight:
+    # VIIRS nightlight targets identify likely electrified locations; the
+    # inferred builds retain the OSM road subnetwork within the support distance
+    # of a target or reviewed power asset. The high-pass filter and threshold
+    # are adapted from GridFinder by Chris Arderne (MIT):
+    # https://github.com/carderne/gridfinder
+    region: mauritius-rodrigues
+    # Matches energy.inferred.network_type: the drivable OSM road network is the
+    # distribution-line proxy the targets filter.
+    network_type: drive
+    # OSM acquisition is manual and opt-in (see energy.inferred above): the
+    # nightlight rule reads the provided VIIRS raster and area of interest, and
+    # the inferred builds consume the cached OSM road extract. These keys record
+    # how that offline cache was produced; the Snakemake rules never download.
+    allow_osm_download: false
+    # Paths are relative to data_root. Leave both null to use the cached OSM
+    # extract under incoming/energy/osm/<region>/; set both to use
+    # user-supplied files (never downloaded or overwritten).
+    roads: null
+    aoi: null
+    # Required VIIRS composite. The file is not downloaded implicitly because
+    # its vintage and preprocessing must be reviewed and cited.
+    nightlights: incoming/energy/nightlights/viirs-mauritius-rodrigues-2024.tif
+    nightlight_threshold: 0.1
+    nightlight_support_distance_m: 1000
