@@ -14,6 +14,7 @@ dependencies:
   - highspy
   - jupyter
   - matplotlib
+  - nbstripout
   - netCDF4
   - networkx
   - notebook
@@ -21,6 +22,7 @@ dependencies:
   - openpyxl
   - osmnx>=2
   - pandas>=2,<3
+  - pre-commit
   - pyarrow
   - pypsa>=0.30,<0.31
   - pytest

@@ -1,0 +1,7 @@
+# Run `pre-commit install` once per clone to enable these hooks.
+# Strips notebook outputs and execution counts so committed .ipynb stay diff-clean.
+repos:
+  - repo: https://github.com/kynan/nbstripout
+    rev: "0.7.1"
+    hooks:
+      - id: nbstripout
