@@ -156,6 +156,22 @@ from this directory:
 pytest src
 ```
 
+### Developer notebooks
+
+For visual debugging while developing a model, the `notebooks/` directory holds
+local, dev-only notebooks that read the pipeline's standard outputs and render
+them. They are namespaced per system (`notebooks/energy/`, and so on) and are
+not part of any workflow rule — production visualisation is the separate viewer
+at https://github.com/nismod/irv-standalone. Enable notebook output-stripping
+once per clone so committed notebooks stay diff-clean:
+
+```shell
+pre-commit install
+nbstripout --install
+```
+
+See `notebooks/README.md` for the per-system layout and conventions.
+
 ## Documentation
 
 Documentation is written in the `./docs/src` directory using

@@ -64,7 +64,9 @@ The Snakemake workflow (`workflow/0-preprocess/energy.smk`):
 
 Each build also writes checksum-linked EPSG:4326 GeoParquet node and edge views
 in a `geoparquet/` subdirectory: NetCDF remains the modelling artifact, while the
-GeoParquet files are its GIS and visualisation view.
+GeoParquet files are its GIS and visualisation view. For quick local inspection
+while developing, the dev-only notebooks under `notebooks/energy/` load and plot
+these outputs; they read the files and are not part of the workflow.
 
 Convenience targets:
 
