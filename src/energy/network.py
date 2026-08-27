@@ -193,8 +193,6 @@ def build_topology_network(
         "source_route_id",
         "source_route_part_id",
         "circuit_id",
-        "derived",
-        "rating_basis",
     ):
         if column in line_frame:
             network.lines[column] = line_frame[column].reindex(network.lines.index)

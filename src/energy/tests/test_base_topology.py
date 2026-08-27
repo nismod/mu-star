@@ -41,7 +41,6 @@ def test_base_topology_connects_short_route_gaps_and_keeps_substations():
     assert set(result.buses.query("kind == 'substation'")["bus_id"]) == {"A", "B"}
     assert result.lines["length_km"].sum() == pytest.approx(1.8)
     assert result.lines["s_nom_mva"].eq(10_000).all()
-    assert result.lines["rating_basis"].eq("non_binding_topology_proxy").all()
     assert result.lines["source"].eq("derived_route_gap").any()
 
 

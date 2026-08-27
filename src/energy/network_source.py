@@ -302,6 +302,10 @@ def _build_base_network(
             "ceb_topology_validation": ceb_topology_validation,
             "default_voltage_kv": default_voltage_kv,
             "topology_capacity_mva": topology_capacity_mva,
+            "electrical_values_note": (
+                "Voltages are reviewed CEB 66 kV values; line capacities are "
+                "non-binding topology placeholders."
+            ),
             "model_line_length_km": validation["totals"]["line_length_km"],
             "line_length_validation": validation["checks"]["line_length_against_published_ceb_total"],
             "human_tables": str(table_output_dir) if table_output_dir else None,
@@ -319,10 +323,12 @@ def _build_base_network(
         source_network_path=network_path,
         source_metadata_path=metadata_path,
         default_region="mauritius",
-        operational_ready=True,
         publish_voltage=True,
         publish_capacity=False,
-        electrical_values_basis="reviewed_voltage_non_binding_capacity",
+        electrical_values_note=(
+            "Voltages are reviewed CEB 66 kV values; line capacities are "
+            "non-binding topology placeholders."
+        ),
         stage="topology_only",
     )
     return NetworkBuildOutputs(
@@ -1123,6 +1129,10 @@ def _build_inferred_network(
             "unanchored_power_assets": unanchored,
             "inferred_voltage_kv": inferred_voltage_kv,
             "inferred_capacity_mva": inferred_capacity_mva,
+            "electrical_values_note": (
+                "Inferred voltages and capacities are non-binding topology "
+                "placeholders (see model_v_nom_kv / model_s_nom_mva)."
+            ),
             "max_anchor_distance_m": max_anchor_distance_m,
             "connected_components": nx.number_connected_components(graph),
             "model_line_length_km": validation["totals"]["line_length_km"],
@@ -1142,10 +1152,12 @@ def _build_inferred_network(
         methodology=methodology,
         source_network_path=network_path,
         source_metadata_path=metadata_path,
-        operational_ready=False,
         publish_voltage=False,
         publish_capacity=False,
-        electrical_values_basis="topology_placeholder",
+        electrical_values_note=(
+            "Inferred voltages and capacities are non-binding topology "
+            "placeholders (see model_v_nom_kv / model_s_nom_mva)."
+        ),
         stage="connectivity_only",
     )
     return NetworkBuildOutputs(

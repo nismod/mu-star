@@ -485,10 +485,8 @@ def derive_base_topology(
                 "source_route_part_id": attrs["source_route_part_id"],
                 "circuit_id": attrs["circuit_id"],
                 "source": attrs["source"],
-                "derived": True,
                 "inferred": False,
                 "stage": "topology_only",
-                "rating_basis": "non_binding_topology_proxy",
                 "geometry": attrs["geometry"],
             }
         )

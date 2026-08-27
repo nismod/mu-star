@@ -36,8 +36,6 @@ def _tables():
             "s_nom_mva": [10_000.0],
             "source": ["provided_transmission_geometry"],
             "stage": ["topology_only"],
-            "derived": [True],
-            "rating_basis": ["non_binding_topology_proxy"],
             "source_route_id": ["ROUTE_001"],
             "source_route_part_id": ["ROUTE_001_PART_001"],
             "circuit_id": ["ROUTE_001_PART_001"],
@@ -77,10 +75,8 @@ def test_write_network_geoparquet_round_trips_stable_spatial_contract(tmp_path):
         methodology="ceb-routed-topology-v3",
         source_network_path=source_network,
         default_region="mauritius",
-        operational_ready=True,
         publish_voltage=True,
         publish_capacity=False,
-        electrical_values_basis="reviewed_voltage_non_binding_capacity",
         stage="topology_only",
         source_metadata_path=source_metadata,
     )
@@ -138,10 +134,8 @@ def test_inferred_export_hides_placeholder_electrical_values(tmp_path):
         network_source="inferred",
         methodology="osm-all-ways-connectivity-v3",
         source_network_path=_network_file(tmp_path),
-        operational_ready=False,
         publish_voltage=False,
         publish_capacity=False,
-        electrical_values_basis="topology_placeholder",
     )
     nodes = gpd.read_parquet(outputs.nodes)
     edges = gpd.read_parquet(outputs.edges)
@@ -151,7 +145,6 @@ def test_inferred_export_hides_placeholder_electrical_values(tmp_path):
     assert edges["s_nom_mva"].isna().all()
     assert edges.loc[0, "model_v_nom_kv"] == 11.0
     assert edges.loc[0, "model_s_nom_mva"] == 5.0
-    assert not edges["operational_ready"].any()
     assert set(edges["asset_type"]) == {"inferred_candidate"}
 
 
@@ -186,10 +179,8 @@ def test_network_geoparquet_rejects_invalid_topology(tmp_path, mutation, message
             methodology="test",
             source_network_path=_network_file(tmp_path),
             default_region="mauritius",
-            operational_ready=True,
             publish_voltage=True,
             publish_capacity=False,
-            electrical_values_basis="test",
         )
 
 
@@ -207,8 +198,6 @@ def test_network_geoparquet_requires_expected_geometry_types(tmp_path):
             methodology="test",
             source_network_path=_network_file(tmp_path),
             default_region="mauritius",
-            operational_ready=True,
             publish_voltage=True,
             publish_capacity=False,
-            electrical_values_basis="test",
         )

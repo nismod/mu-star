@@ -66,7 +66,6 @@ def test_build_topology_network_preserves_review_provenance():
     buses["kind"] = "substation"
     lines["source_route_part_id"] = "ROUTE_001_PART_001"
     lines["circuit_id"] = "ROUTE_001_PART_001"
-    lines["rating_basis"] = "non_binding_topology_proxy"
 
     network = build_topology_network(buses, lines, generators)
 
@@ -74,7 +73,6 @@ def test_build_topology_network_preserves_review_provenance():
     assert network.buses["kind"].eq("substation").all()
     assert network.lines.loc["AB", "source_route_part_id"] == "ROUTE_001_PART_001"
     assert network.lines.loc["AB", "circuit_id"] == "ROUTE_001_PART_001"
-    assert network.lines.loc["AB", "rating_basis"] == "non_binding_topology_proxy"
 
 
 def test_build_topology_network_explains_legacy_capacity_column():

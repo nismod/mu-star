@@ -14,7 +14,7 @@ import pandas as pd
 from shapely import force_2d
 
 GEOGRAPHIC_CRS = "EPSG:4326"
-SPATIAL_SCHEMA_VERSION = "energy-network-spatial-v1"
+SPATIAL_SCHEMA_VERSION = "energy-network-spatial-v2"
 
 NODE_COLUMNS = (
     "asset_id",
@@ -29,9 +29,7 @@ NODE_COLUMNS = (
     "carrier",
     "v_nom_kv",
     "model_v_nom_kv",
-    "electrical_values_basis",
     "is_inferred",
-    "operational_ready",
     "provisional_root",
     "anchor_status",
     "anchor_distance_m",
@@ -53,13 +51,9 @@ EDGE_COLUMNS = (
     "s_nom_mva",
     "model_v_nom_kv",
     "model_s_nom_mva",
-    "electrical_values_basis",
     "length_km",
     "is_inferred",
-    "operational_ready",
     "stage",
-    "derived",
-    "rating_basis",
     "source_route_id",
     "source_route_part_id",
     "circuit_id",
@@ -160,9 +154,7 @@ def _prepare_nodes(
     network_id: str,
     network_source: str,
     default_region: str | None,
-    operational_ready: bool,
     publish_voltage: bool,
-    electrical_values_basis: str,
 ) -> gpd.GeoDataFrame:
     bus_ids = _required_ids(buses, "bus_id", "buses")
     geometry = _prepare_geometry(buses, label="buses", geometry_type="Point")
@@ -200,17 +192,7 @@ def _prepare_nodes(
             "carrier": _column(buses, "carrier", default="AC", dtype="string").fillna("AC"),
             "v_nom_kv": (model_voltage if publish_voltage else pd.Series(pd.NA, index=buses.index, dtype="Float64")),
             "model_v_nom_kv": model_voltage,
-            "electrical_values_basis": pd.Series(
-                electrical_values_basis,
-                index=buses.index,
-                dtype="string",
-            ),
             "is_inferred": inferred,
-            "operational_ready": pd.Series(
-                operational_ready,
-                index=buses.index,
-                dtype="boolean",
-            ),
             "provisional_root": _column(
                 buses,
                 "provisional_root",
@@ -236,10 +218,8 @@ def _prepare_edges(
     network_id: str,
     network_source: str,
     default_region: str | None,
-    operational_ready: bool,
     publish_voltage: bool,
     publish_capacity: bool,
-    electrical_values_basis: str,
 ) -> gpd.GeoDataFrame:
     line_ids = _required_ids(lines, "line_id", "lines")
     geometry = _prepare_geometry(lines, label="lines", geometry_type="LineString")
@@ -300,21 +280,9 @@ def _prepare_edges(
             "s_nom_mva": (model_capacity if publish_capacity else pd.Series(pd.NA, index=lines.index, dtype="Float64")),
             "model_v_nom_kv": model_voltage,
             "model_s_nom_mva": model_capacity,
-            "electrical_values_basis": pd.Series(
-                electrical_values_basis,
-                index=lines.index,
-                dtype="string",
-            ),
             "length_km": lengths,
             "is_inferred": inferred,
-            "operational_ready": pd.Series(
-                operational_ready,
-                index=lines.index,
-                dtype="boolean",
-            ),
             "stage": _column(lines, "stage", dtype="string"),
-            "derived": _column(lines, "derived", default=False, dtype="boolean").fillna(False),
-            "rating_basis": _column(lines, "rating_basis", dtype="string"),
             "source_route_id": _column(lines, "source_route_id", dtype="string"),
             "source_route_part_id": _column(lines, "source_route_part_id", dtype="string"),
             "circuit_id": _column(lines, "circuit_id", dtype="string"),
@@ -375,10 +343,9 @@ def write_network_geoparquet(
     methodology: str,
     source_network_path: Path,
     default_region: str | None = None,
-    operational_ready: bool,
     publish_voltage: bool,
     publish_capacity: bool,
-    electrical_values_basis: str,
+    electrical_values_note: str | None = None,
     stage: str | None = None,
     source_metadata_path: Path | None = None,
 ) -> SpatialExportOutputs:
@@ -398,9 +365,7 @@ def write_network_geoparquet(
         network_id=network_id,
         network_source=network_source,
         default_region=default_region,
-        operational_ready=operational_ready,
         publish_voltage=publish_voltage,
-        electrical_values_basis=electrical_values_basis,
     )
     prepared_edges = _prepare_edges(
         lines,
@@ -408,10 +373,8 @@ def write_network_geoparquet(
         network_id=network_id,
         network_source=network_source,
         default_region=default_region,
-        operational_ready=operational_ready,
         publish_voltage=publish_voltage,
         publish_capacity=publish_capacity,
-        electrical_values_basis=electrical_values_basis,
     )
 
     output_dir = Path(output_dir)
@@ -488,8 +451,7 @@ def write_network_geoparquet(
                 "line_length_km": float(prepared_edges["length_km"].sum()),
             },
             "line_length_km": float(prepared_edges["length_km"].sum()),
-            "operational_ready": operational_ready,
-            "electrical_values_basis": electrical_values_basis,
+            "electrical_values_note": electrical_values_note,
         }
         temporary_manifest.write_text(
             json.dumps(manifest, indent=2, sort_keys=True),
