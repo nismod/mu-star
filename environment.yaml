@@ -22,6 +22,7 @@ dependencies:
   - openpyxl
   - osmnx>=2
   - pandas>=2,<3
+  - plotly>=6
   - pre-commit
   - pyarrow
   - pypsa>=0.30,<0.31

@@ -153,3 +153,88 @@ def plot_network(
     ax.set_axis_off()
     ax.set_title(title or f"{name}\n{len(edge_layer)} edges \u00b7 {shown} nodes shown ({nodes})")
     return ax
+
+
+# Distinct colours for edge-source / node-kind traces.
+_PALETTE = ("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf")
+
+
+def _line_coords(gdf):
+    """Flatten (Multi)LineStrings to lon/lat lists with None gaps between parts."""
+    lons, lats = [], []
+    for geom in gdf.geometry:
+        if geom is None or geom.is_empty:
+            continue
+        parts = geom.geoms if geom.geom_type.startswith("Multi") else (geom,)
+        for part in parts:
+            xs, ys = part.xy
+            lons.extend(xs)
+            lats.extend(ys)
+            lons.append(None)
+            lats.append(None)
+    return lons, lats
+
+
+def explore_network(name, *, roads=True, clip=None, map_style="open-street-map"):
+    """Interactive Plotly map of a product for debugging (matches the viewer style).
+
+    Pan/zoom/hover on an OpenStreetMap basemap (no API key). Draws every edge,
+    one trace per source: for the inferred products the dense OSM road mesh *is*
+    the distribution network, so it is shown (thin grey) with the transmission /
+    backbone / anchor layers coloured on top. Observed terminals are coloured by
+    kind with attribute hover. ``roads=False`` hides the OSM mesh for a power-only
+    view; ``clip`` restricts to a ``(minx, miny, maxx, maxy)`` bbox.
+    """
+    import math
+
+    import plotly.graph_objects as go
+
+    node_layer, edge_layer = load_layers(name)
+    if clip is not None:
+        minx, miny, maxx, maxy = clip
+        edge_layer = edge_layer.cx[minx:maxx, miny:maxy]
+        node_layer = node_layer.cx[minx:maxx, miny:maxy]
+
+    fig = go.Figure()
+    if "source" in edge_layer.columns:
+        # Draw the OSM road mesh first (underneath), power layers coloured on top.
+        groups = sorted(edge_layer.groupby("source"), key=lambda kv: kv[0] != "osm")
+        colour_i = 0
+        for src, grp in groups:
+            if src == "osm" and not roads:
+                continue
+            lons, lats = _line_coords(grp)
+            if src == "osm":
+                style = {"width": 1, "color": "#9aa0a6"}
+            else:
+                style = {"width": 3, "color": _PALETTE[colour_i % len(_PALETTE)]}
+                colour_i += 1
+            fig.add_trace(go.Scattermap(lon=lons, lat=lats, mode="lines", name=str(src),
+                                        line=style, hoverinfo="skip"))
+    elif len(edge_layer):
+        lons, lats = _line_coords(edge_layer)
+        fig.add_trace(go.Scattermap(lon=lons, lat=lats, mode="lines", name="edges",
+                                    line={"width": 2}, hoverinfo="skip"))
+
+    terminals = anchor_nodes(node_layer)
+    if len(terminals):
+        cols = [c for c in ("kind", "source", "name", "v_nom_kv", "model_v_nom_kv") if c in terminals.columns]
+        groups = terminals.groupby("kind") if "kind" in terminals.columns else [("terminals", terminals)]
+        for i, (kind_val, grp) in enumerate(groups):
+            hover = grp[cols].apply(lambda r: "<br>".join(f"{c}: {r[c]}" for c in cols), axis=1) if cols else None
+            fig.add_trace(go.Scattermap(
+                lon=grp.geometry.x, lat=grp.geometry.y, mode="markers", name=str(kind_val),
+                marker={"size": 8, "color": _PALETTE[(i + 4) % len(_PALETTE)]},
+                text=hover, hoverinfo="text" if cols else "skip"))
+
+    bounds = (edge_layer if len(edge_layer) else node_layer).total_bounds
+    center = {"lon": float((bounds[0] + bounds[2]) / 2), "lat": float((bounds[1] + bounds[3]) / 2)}
+    span = max(bounds[2] - bounds[0], bounds[3] - bounds[1], 1e-3)
+    zoom = min(max(math.log2(360 / span) - 1, 3), 12)
+    fig.update_layout(
+        map={"style": map_style, "center": center, "zoom": zoom},
+        margin={"l": 0, "r": 0, "t": 30, "b": 0},
+        legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 0.01},
+        title=name, height=650,
+    )
+    return fig
