@@ -111,11 +111,11 @@ def test_base_topology_preserves_distinct_parallel_source_routes():
     assert result.retained_source_length_km == pytest.approx(result.source_route_length_km)
 
 
-def test_base_topology_applies_ceb_names_without_overwriting_reviewed_names():
+def test_base_topology_applies_ceb_names_without_overwriting_provided_names():
     substations = gpd.GeoDataFrame(
         {
             "bus_id": ["SUB_001", "SUB_004"],
-            "name": ["SUB_001", "Reviewed Amaury"],
+            "name": ["SUB_001", "Provided Amaury"],
             "geometry": [Point(100, 0), Point(900, 0)],
         },
         crs="EPSG:32740",
@@ -133,11 +133,11 @@ def test_base_topology_applies_ceb_names_without_overwriting_reviewed_names():
     names = result.buses.set_index("bus_id")["name"]
 
     assert names["SUB_001"] == CEB_SUBSTATION_NAMES["SUB_001"]
-    assert names["SUB_004"] == "Reviewed Amaury"
+    assert names["SUB_004"] == "Provided Amaury"
     assert result.buses["v_nom_kv"].eq(66).all()
 
 
-def test_ceb_base_regression_restores_reviewed_loops_and_amaury_junction():
+def test_ceb_base_regression_restores_provided_loops_and_amaury_junction():
     root = Path(__file__).parents[1]
     substation_path = root / "data/1-processed/energy/provided/snapped_substations.parquet"
     route_path = root / "data/1-processed/energy/provided/transmission_routes.parquet"

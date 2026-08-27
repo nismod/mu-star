@@ -129,10 +129,10 @@ output files.
 While this workflow is in development, some of the rules are placeholders.
 
 The energy workflow builds three explicit network products through a single
-`build_network` dispatch: the canonical reviewed `base-mauritius` network, and
+`build_network` dispatch: the canonical provided `base-mauritius` network, and
 two topology-only inferred coverage proxies for Mauritius and Rodrigues —
 `inferred-osm-mauritius-rodrigues` (OSM power terminals) and
-`inferred-data-mauritius-rodrigues` (reviewed substations, generators and CEB
+`inferred-provided-mauritius-rodrigues` (provided substations, generators and CEB
 backbone). Both inferred products retain the OSM road subnetwork supported by
 VIIRS nightlight targets, and each build writes matching GeoParquet layers:
 

@@ -120,7 +120,7 @@ def test_geodesic_graph_preserves_region_and_default_anchor_distance():
     assert road_edge["length_km"] == pytest.approx(geodesic_length_km(roads.geometry.iloc[0]))
 
 
-def test_power_asset_can_join_supported_roads_to_reviewed_backbone():
+def test_power_asset_can_join_supported_roads_to_provided_backbone():
     assets = gpd.GeoDataFrame(
         {
             "asset_id": ["SUB"],
@@ -149,7 +149,7 @@ def test_power_asset_can_join_supported_roads_to_reviewed_backbone():
     graph = build_inferred_distribution_graph(
         assets,
         osm_distribution_lines=roads,
-        reviewed_backbone_lines=backbone,
+        provided_backbone_lines=backbone,
         max_anchor_distance_m=100,
         anchor_to_each_line_source=True,
     )

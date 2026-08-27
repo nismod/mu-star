@@ -40,7 +40,7 @@ CEB_SUBSTATION_NAMES = {
 
 # This 171.5 m discontinuity opens the Ebene-Wooton side of the blue loop on
 # the CEB map. It is kept explicit rather than hidden in a broad global snap.
-REVIEWED_ROUTE_JOINS = (
+PROVIDED_ROUTE_JOINS = (
     (
         "CEB_EBENE_WOOTON",
         "ROUTE_001_PART_008",
@@ -203,11 +203,11 @@ def _route_gap_connectors(
     return connectors
 
 
-def _reviewed_route_gap_connectors(route_parts: gpd.GeoDataFrame) -> list[LineString]:
+def _provided_route_gap_connectors(route_parts: gpd.GeoDataFrame) -> list[LineString]:
     """Return the small set of CEB-map joins that lack a station anchor."""
     by_id = route_parts.set_index("route_part_id")["geometry"]
     connectors: list[LineString] = []
-    for _, first_id, second_id, maximum_distance_m in REVIEWED_ROUTE_JOINS:
+    for _, first_id, second_id, maximum_distance_m in PROVIDED_ROUTE_JOINS:
         if first_id not in by_id.index or second_id not in by_id.index:
             continue
         first = by_id.loc[first_id]
@@ -215,7 +215,7 @@ def _reviewed_route_gap_connectors(route_parts: gpd.GeoDataFrame) -> list[LineSt
         distance = float(first.distance(second))
         if not 0.001 < distance <= maximum_distance_m:
             raise ValueError(
-                f"Reviewed route join {first_id} -> {second_id} is {distance:.1f} m; "
+                f"Provided route join {first_id} -> {second_id} is {distance:.1f} m; "
                 f"expected at most {maximum_distance_m:.1f} m"
             )
         start, end = nearest_points(first, second)
@@ -416,8 +416,8 @@ def derive_base_topology(
         route_gap_tolerance_m,
         excluded_component_pairs=station_pairs,
     )
-    reviewed_connectors = _reviewed_route_gap_connectors(route_parts)
-    gap_connectors = _deduplicate_connectors([*station_connectors, *local_connectors, *reviewed_connectors])
+    provided_connectors = _provided_route_gap_connectors(route_parts)
+    gap_connectors = _deduplicate_connectors([*station_connectors, *local_connectors, *provided_connectors])
     linework = unary_union([original_linework, *gap_connectors])
     graph, _bus_points = _split_graph_at_substations(
         linework,

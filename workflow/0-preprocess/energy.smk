@@ -3,13 +3,13 @@
 Three explicit, provenance-preserving products are built through the single
 ``energy.network_source.build_network`` dispatch:
 
-- ``base-mauritius`` (source ``base``): the reviewed CEB routed transmission
+- ``base-mauritius`` (source ``base``): the provided CEB routed transmission
   topology. This is the canonical operational network.
 - ``inferred-osm-<region>`` (source ``inferred-osm``): OSM substations, plants
   and generators as power terminals, with a VIIRS-nightlight-supported OSM road
   subnetwork.
-- ``inferred-data-<region>`` (source ``inferred-data``): the same nightlight
-  road method rooted on the reviewed substations and generators, preserving the
+- ``inferred-provided-<region>`` (source ``inferred-provided``): the same nightlight
+  road method rooted on the provided substations and generators, preserving the
   CEB backbone.
 
 Interruption analysis is intentionally out of scope for this migration, so the
@@ -55,10 +55,10 @@ if not ENERGY_INFERRED_NETWORK_TYPE:
 # --- Product result names --------------------------------------------------
 ENERGY_BASE_NAME = "base-mauritius"
 ENERGY_INFERRED_OSM_NAME = f"inferred-osm-{ENERGY_INFERRED_REGION_SLUG}"
-ENERGY_INFERRED_DATA_NAME = f"inferred-data-{ENERGY_INFERRED_REGION_SLUG}"
+ENERGY_INFERRED_PROVIDED_NAME = f"inferred-provided-{ENERGY_INFERRED_REGION_SLUG}"
 
-# --- Reviewed and cached inputs --------------------------------------------
-# The provided/reviewed asset tables and the offline OSM cache are inputs to
+# --- Provided and cached inputs --------------------------------------------
+# The provided asset tables and the offline OSM cache are inputs to
 # the builds. OSM roads and power features are cached under
 # incoming/energy/osm/<region>/; acquire them once with allow_osm_download
 # then keep runs offline (see energy.osm.fetch_osm_roads).
@@ -162,7 +162,7 @@ rule prepare_energy_assets:
 
 rule build_base_energy_network:
     """
-    Build the canonical reviewed CEB routed transmission topology.
+    Build the canonical provided CEB routed transmission topology.
 
     Methodology: ceb-routed-topology-v3. Test with:
     snakemake -c1 data/processed/energy/networks/base-mauritius/base-mauritius.nc
@@ -306,14 +306,14 @@ rule build_inferred_osm_energy_network:
         )
 
 
-rule build_inferred_data_energy_network:
+rule build_inferred_provided_energy_network:
     """
-    Build the reviewed-data inferred topology using the same nightlight road method.
+    Build the provided-data inferred topology using the same nightlight road method.
 
-    Reviewed substations and generators are the power targets and the CEB
-    backbone is preserved. Methodology: nightlight-roads-reviewed-power-v1.
+    Provided substations and generators are the power targets and the CEB
+    backbone is preserved. Methodology: nightlight-roads-provided-power-v1.
     Test with:
-    snakemake -c1 data/processed/energy/networks/inferred-data-mauritius-rodrigues/inferred-data-mauritius-rodrigues.nc
+    snakemake -c1 data/processed/energy/networks/inferred-provided-mauritius-rodrigues/inferred-provided-mauritius-rodrigues.nc
     """
     input:
         buses="{data}/processed/energy/provided/snapped_substations.parquet",
@@ -322,23 +322,23 @@ rule build_inferred_data_energy_network:
         roads=f"{{data}}/{ENERGY_OSM_ROADS}",
         nightlight_targets=ENERGY_NIGHTLIGHT_TARGETS,
     output:
-        network=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_DATA_NAME}/{ENERGY_INFERRED_DATA_NAME}.nc",
-        metadata=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_DATA_NAME}/{ENERGY_INFERRED_DATA_NAME}_metadata.json",
-        spatial_nodes=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_DATA_NAME}/geoparquet/{ENERGY_INFERRED_DATA_NAME}-nodes.geoparquet",
-        spatial_edges=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_DATA_NAME}/geoparquet/{ENERGY_INFERRED_DATA_NAME}-edges.geoparquet",
-        spatial_manifest=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_DATA_NAME}/geoparquet/{ENERGY_INFERRED_DATA_NAME}-spatial-manifest.json",
-        nodes=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_DATA_NAME}/inferred_distribution/inferred_distribution_nodes.csv",
-        edges=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_DATA_NAME}/inferred_distribution/inferred_distribution_edges.csv",
-        graph_metadata=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_DATA_NAME}/inferred_distribution/inferred_distribution_metadata.json",
-        service_weights=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_DATA_NAME}/inferred_distribution/service_weights.csv",
-        generators=f"{ENERGY_TABLES_DIR}/{ENERGY_INFERRED_DATA_NAME}/generators.csv",
-        lines=f"{ENERGY_TABLES_DIR}/{ENERGY_INFERRED_DATA_NAME}/lines.csv",
-        validation=f"{ENERGY_TABLES_DIR}/{ENERGY_INFERRED_DATA_NAME}/validation.json",
+        network=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/{ENERGY_INFERRED_PROVIDED_NAME}.nc",
+        metadata=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/{ENERGY_INFERRED_PROVIDED_NAME}_metadata.json",
+        spatial_nodes=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/geoparquet/{ENERGY_INFERRED_PROVIDED_NAME}-nodes.geoparquet",
+        spatial_edges=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/geoparquet/{ENERGY_INFERRED_PROVIDED_NAME}-edges.geoparquet",
+        spatial_manifest=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/geoparquet/{ENERGY_INFERRED_PROVIDED_NAME}-spatial-manifest.json",
+        nodes=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/inferred_distribution/inferred_distribution_nodes.csv",
+        edges=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/inferred_distribution/inferred_distribution_edges.csv",
+        graph_metadata=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/inferred_distribution/inferred_distribution_metadata.json",
+        service_weights=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/inferred_distribution/service_weights.csv",
+        generators=f"{ENERGY_TABLES_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/generators.csv",
+        lines=f"{ENERGY_TABLES_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/lines.csv",
+        validation=f"{ENERGY_TABLES_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/validation.json",
     params:
         input_dir=ENERGY_PROVIDED_DIR,
         output_dir=ENERGY_NETWORKS_DIR,
         export_root=ENERGY_TABLES_DIR,
-        output_name=ENERGY_INFERRED_DATA_NAME,
+        output_name=ENERGY_INFERRED_PROVIDED_NAME,
         region=ENERGY_INFERRED_REGION,
         network_type=ENERGY_INFERRED_NETWORK_TYPE,
         max_anchor_distance_m=ENERGY_INFERRED.get("max_anchor_distance_m", 1000),
@@ -361,7 +361,7 @@ rule build_inferred_data_energy_network:
         os.environ["MU_STAR_DATA_ROOT"] = str(Path(wildcards.data).resolve())
 
         build_network(
-            "inferred-data",
+            "inferred-provided",
             region=params.region,
             input_dir=Path(params.input_dir),
             output_dir=Path(params.output_dir),
@@ -394,10 +394,10 @@ rule energy_inferred_osm_network:
         f"{ENERGY_DATA_ROOT}/processed/energy/networks/{ENERGY_INFERRED_OSM_NAME}/{ENERGY_INFERRED_OSM_NAME}.nc",
 
 
-rule energy_inferred_data_network:
-    """Build the reviewed-data inferred network."""
+rule energy_inferred_provided_network:
+    """Build the provided-data inferred network."""
     input:
-        f"{ENERGY_DATA_ROOT}/processed/energy/networks/{ENERGY_INFERRED_DATA_NAME}/{ENERGY_INFERRED_DATA_NAME}.nc",
+        f"{ENERGY_DATA_ROOT}/processed/energy/networks/{ENERGY_INFERRED_PROVIDED_NAME}/{ENERGY_INFERRED_PROVIDED_NAME}.nc",
 
 
 rule energy_network:
@@ -405,7 +405,7 @@ rule energy_network:
     input:
         rules.energy_base_network.input,
         rules.energy_inferred_osm_network.input,
-        rules.energy_inferred_data_network.input,
+        rules.energy_inferred_provided_network.input,
 
 
 rule energy_exports:
@@ -417,6 +417,6 @@ rule energy_exports:
         # inferred-osm
         f"{ENERGY_DATA_ROOT}/processed/energy/networks/{ENERGY_INFERRED_OSM_NAME}/geoparquet/{ENERGY_INFERRED_OSM_NAME}-spatial-manifest.json",
         f"{ENERGY_DATA_ROOT}/out/energy/{ENERGY_INFERRED_OSM_NAME}/validation.json",
-        # inferred-data
-        f"{ENERGY_DATA_ROOT}/processed/energy/networks/{ENERGY_INFERRED_DATA_NAME}/geoparquet/{ENERGY_INFERRED_DATA_NAME}-spatial-manifest.json",
-        f"{ENERGY_DATA_ROOT}/out/energy/{ENERGY_INFERRED_DATA_NAME}/validation.json",
+        # inferred-provided
+        f"{ENERGY_DATA_ROOT}/processed/energy/networks/{ENERGY_INFERRED_PROVIDED_NAME}/geoparquet/{ENERGY_INFERRED_PROVIDED_NAME}-spatial-manifest.json",
+        f"{ENERGY_DATA_ROOT}/out/energy/{ENERGY_INFERRED_PROVIDED_NAME}/validation.json",

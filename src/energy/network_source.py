@@ -49,13 +49,13 @@ BASE_REQUIRED_FILES = (
     "transmission_routes.parquet",
     "generators.csv",
 )
-REVIEWED_POWER_REQUIRED_FILES = (
+PROVIDED_POWER_REQUIRED_FILES = (
     "snapped_substations.parquet",
     "generators.csv",
 )
 BASE_METHODOLOGY = "ceb-routed-topology-v3"
 INFERRED_OSM_METHODOLOGY = "nightlight-roads-osm-power-v1"
-INFERRED_DATA_METHODOLOGY = "nightlight-roads-reviewed-power-v1"
+INFERRED_PROVIDED_METHODOLOGY = "nightlight-roads-provided-power-v1"
 DEFAULT_NIGHTLIGHT_SUPPORT_DISTANCE_M = 1_000.0
 
 BASE_LINE_LENGTH_SCOPE = "CEB 66 kV transmission circuit length"
@@ -69,7 +69,7 @@ INFERRED_LINE_LENGTH_NOTE = (
     "CEB reports 10,492.2 km across overhead and underground transmission, "
     "medium-voltage distribution and low-voltage distribution. This check "
     "compares that total directly with the nightlight-supported OSM road "
-    "subnetwork plus the reviewed CEB backbone where available. Geographic "
+    "subnetwork plus the provided CEB backbone where available. Geographic "
     "road length and electrical circuit-km remain different quantities."
 )
 
@@ -125,7 +125,7 @@ def _missing_files(input_dir: Path, names: tuple[str, ...]) -> list[Path]:
     return [input_dir / name for name in names if not (input_dir / name).exists()]
 
 
-def _load_reviewed_inputs(
+def _load_provided_inputs(
     input_dir: Path,
 ) -> tuple[
     gpd.GeoDataFrame,
@@ -212,7 +212,7 @@ def _build_base_network(
     default_voltage_kv: float,
     topology_capacity_mva: float,
 ) -> NetworkBuildOutputs:
-    snapped_substations, transmission_routes, generators = _load_reviewed_inputs(input_dir)
+    snapped_substations, transmission_routes, generators = _load_provided_inputs(input_dir)
     topology = derive_base_topology(
         snapped_substations,
         transmission_routes,
@@ -303,7 +303,7 @@ def _build_base_network(
             "default_voltage_kv": default_voltage_kv,
             "topology_capacity_mva": topology_capacity_mva,
             "electrical_values_note": (
-                "Voltages are reviewed CEB 66 kV values; line capacities are "
+                "Voltages are provided CEB 66 kV values; line capacities are "
                 "non-binding topology placeholders."
             ),
             "model_line_length_km": validation["totals"]["line_length_km"],
@@ -326,7 +326,7 @@ def _build_base_network(
         publish_voltage=True,
         publish_capacity=False,
         electrical_values_note=(
-            "Voltages are reviewed CEB 66 kV values; line capacities are "
+            "Voltages are provided CEB 66 kV values; line capacities are "
             "non-binding topology placeholders."
         ),
         stage="topology_only",
@@ -347,7 +347,7 @@ def provisional_demand_profile(input_dir: Path) -> pd.DataFrame:
     path = input_dir / "monthly_peak_demand_mw.csv"
     if not path.exists():
         raise FileNotFoundError(
-            "monthly_peak_demand_mw.csv is missing; supply a reviewed demand "
+            "monthly_peak_demand_mw.csv is missing; supply a provided demand "
             "profile or place the monthly peak table in this input directory."
         )
     peaks = pd.read_csv(path)
@@ -393,7 +393,7 @@ def _node_bus_frame(graph: nx.Graph) -> gpd.GeoDataFrame:
             "asset_id": attrs.get("asset_id"),
             "is_root": bool(attrs.get("is_root", False)),
             "inferred": bool(attrs.get("inferred", False)),
-            "source": attrs.get("source", "reviewed_substation"),
+            "source": attrs.get("source", "provided_substation"),
             "region": attrs.get("region"),
             "provisional_root": bool(attrs.get("provisional_root", False)),
             "anchor_status": attrs.get("anchor_status"),
@@ -577,21 +577,21 @@ def _normalise_osm_power_assets(
     ).to_crs("EPSG:4326")
 
 
-def _reviewed_power_assets(
+def _provided_power_assets(
     input_dir: Path,
 ) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
-    missing = _missing_files(input_dir, REVIEWED_POWER_REQUIRED_FILES)
+    missing = _missing_files(input_dir, PROVIDED_POWER_REQUIRED_FILES)
     if missing:
         formatted = "\n".join(f"- {path}" for path in missing)
         raise FileNotFoundError(
-            f"Cannot build the reviewed-data inferred network until these prepared files exist:\n{formatted}"
+            f"Cannot build the provided-data inferred network until these prepared files exist:\n{formatted}"
         )
     substations = gpd.read_parquet(input_dir / "snapped_substations.parquet").to_crs("EPSG:4326")
     substations = gpd.GeoDataFrame(
         {
             "asset_id": substations["bus_id"].astype(str),
             "asset_kind": "substation",
-            "source": "reviewed_substation",
+            "source": "provided_substation",
             "region": "mauritius",
             "provisional_root": False,
             "geometry": substations.geometry,
@@ -612,7 +612,7 @@ def _reviewed_power_assets(
         {
             "asset_id": coordinate_rows["generator_id"].astype(str),
             "asset_kind": "generator",
-            "source": "reviewed_generator",
+            "source": "provided_generator",
             "region": "mauritius",
             "provisional_root": False,
             "geometry": [
@@ -855,7 +855,7 @@ def _nightlight_supported_roads(
     return selected, metadata
 
 
-def _reviewed_generators_for_inferred(
+def _provided_generators_for_inferred(
     generators: pd.DataFrame,
 ) -> pd.DataFrame:
     prepared = generators.copy()
@@ -903,7 +903,7 @@ def _build_inferred_network(
     reference_generation_capacity_mw: float,
     generation_capacity_tolerance_fraction: float,
 ) -> NetworkBuildOutputs:
-    if source not in {"inferred-osm", "inferred-data"}:
+    if source not in {"inferred-osm", "inferred-provided"}:
         raise ValueError(f"Unsupported inferred source: {source}")
     roads_result = osm.fetch_osm_roads(region, network_type=network_type, allow_download=allow_download)
     roads_cache_path = _fetch_result_path(roads_result)
@@ -913,8 +913,8 @@ def _build_inferred_network(
 
     power_cache_path = None
     power_feature_count = 0
-    reviewed_generator_records = 0
-    reviewed_generators = _empty_generators()
+    provided_generator_records = 0
+    provided_generators = _empty_generators()
     if source == "inferred-osm":
         try:
             power_result = osm.fetch_osm_power_features(
@@ -930,10 +930,10 @@ def _build_inferred_network(
         methodology = INFERRED_OSM_METHODOLOGY
         power_asset_source = "osm_power"
     else:
-        power_assets, reviewed_generators = _reviewed_power_assets(input_dir)
-        reviewed_generator_records = len(reviewed_generators)
-        methodology = INFERRED_DATA_METHODOLOGY
-        power_asset_source = "reviewed_substations_and_generators"
+        power_assets, provided_generators = _provided_power_assets(input_dir)
+        provided_generator_records = len(provided_generators)
+        methodology = INFERRED_PROVIDED_METHODOLOGY
+        power_asset_source = "provided_substations_and_generators"
 
     member_roots: list[gpd.GeoDataFrame] = []
     for member in osm.region_members(region):
@@ -991,23 +991,23 @@ def _build_inferred_network(
     supported_road_metadata["power_asset_support_count"] = len(power_assets)
     supported_road_metadata["highway_classes"] = _highway_class_breakdown(supported_roads)
 
-    reviewed_backbone: gpd.GeoDataFrame | None = None
-    reviewed_backbone_edges = 0
-    if source == "inferred-data":
-        reviewed_substations, reviewed_routes, _ = _load_reviewed_inputs(input_dir)
-        reviewed_topology = derive_base_topology(
-            reviewed_substations,
-            reviewed_routes,
+    provided_backbone: gpd.GeoDataFrame | None = None
+    provided_backbone_edges = 0
+    if source == "inferred-provided":
+        provided_substations, provided_routes, _ = _load_provided_inputs(input_dir)
+        provided_topology = derive_base_topology(
+            provided_substations,
+            provided_routes,
         )
-        reviewed_backbone = reviewed_topology.lines.copy()
-        reviewed_backbone["region"] = "mauritius"
-        reviewed_backbone_edges = len(reviewed_backbone)
+        provided_backbone = provided_topology.lines.copy()
+        provided_backbone["region"] = "mauritius"
+        provided_backbone_edges = len(provided_backbone)
     graph = build_inferred_distribution_graph(
         power_assets,
         osm_distribution_lines=supported_roads,
-        reviewed_backbone_lines=reviewed_backbone,
+        provided_backbone_lines=provided_backbone,
         max_anchor_distance_m=max_anchor_distance_m,
-        anchor_to_each_line_source=reviewed_backbone is not None,
+        anchor_to_each_line_source=provided_backbone is not None,
     )
     table_dir = _inferred_table_dir(output_dir)
     inferred_tables = write_inferred_distribution_tables(
@@ -1030,7 +1030,7 @@ def _build_inferred_network(
     service_weights.to_csv(service_weights_path_out, index=False)
 
     generators = (
-        _reviewed_generators_for_inferred(reviewed_generators) if source == "inferred-data" else _empty_generators()
+        _provided_generators_for_inferred(provided_generators) if source == "inferred-provided" else _empty_generators()
     )
     table_outputs = None
     validation_kwargs = {
@@ -1041,12 +1041,12 @@ def _build_inferred_network(
         "reference_line_length_note": INFERRED_LINE_LENGTH_NOTE,
         "reference_line_length_sources": (
             "osm",
-            "reviewed_backbone",
+            "provided_transmission",
         ),
         "line_length_tolerance_fraction": line_length_tolerance_fraction,
-        "reference_generation_capacity_mw": (reference_generation_capacity_mw if source == "inferred-data" else None),
+        "reference_generation_capacity_mw": (reference_generation_capacity_mw if source == "inferred-provided" else None),
         "generation_capacity_tolerance_fraction": (generation_capacity_tolerance_fraction),
-        "allow_incomplete_generators": source == "inferred-data",
+        "allow_incomplete_generators": source == "inferred-provided",
     }
     if table_output_dir is None:
         validation = validate_model_tables(
@@ -1114,13 +1114,13 @@ def _build_inferred_network(
             "nightlight_supported_roads": supported_road_metadata,
             "osm_power_cache": power_cache_path,
             "osm_power_features": power_feature_count,
-            "reviewed_generator_records": reviewed_generator_records,
+            "provided_generator_records": provided_generator_records,
             "power_asset_source": power_asset_source,
             "power_assets": len(power_assets),
             "substation_roots": int(power_assets["asset_kind"].eq("substation").sum()),
             "generator_roots": int(power_assets["asset_kind"].eq("generator").sum()),
             "provisional_roots": len(member_roots),
-            "reviewed_backbone_edges": reviewed_backbone_edges,
+            "provided_backbone_edges": provided_backbone_edges,
             "nightlight_targets_path": (str(nightlight_targets_path) if nightlight_targets_path is not None else None),
             "nightlight_targets_metadata": (
                 str(nightlight_targets_metadata_path) if nightlight_targets_metadata_path is not None else None
@@ -1205,12 +1205,12 @@ def build_network(
 ) -> NetworkBuildOutputs:
     """Build and save a named network-source artifact.
 
-    ``source="base"`` derives a topology from reviewed CEB assets.
+    ``source="base"`` derives a topology from provided CEB assets.
     ``source="inferred-osm"`` uses OSM substations, plants and generators as
-    power terminals. ``source="inferred-data"`` instead uses the reviewed
+    power terminals. ``source="inferred-provided"`` instead uses the provided
     input substations and generator sites. Both inferred products use VIIRS
     nightlight targets to retain a dense, cyclic OSM road subnetwork;
-    the reviewed-data product also preserves the CEB backbone. Existing
+    the inferred-provided product also preserves the CEB backbone. Existing
     outputs are not overwritten unless ``overwrite`` is set, and OSM data is
     only downloaded when ``allow_download`` is True. Every build also writes
     checksum-linked node and edge GeoParquet views in a ``geoparquet``
@@ -1221,9 +1221,9 @@ def build_network(
     a source-named subdirectory.
     """
     source = source.lower()
-    valid_sources = {"base", "inferred-osm", "inferred-data"}
+    valid_sources = {"base", "inferred-osm", "inferred-provided"}
     if source not in valid_sources:
-        raise ValueError("source must be 'base', 'inferred-osm', or 'inferred-data'")
+        raise ValueError("source must be 'base', 'inferred-osm', or 'inferred-provided'")
     if region is not None and source == "base":
         raise ValueError("region can only be used with an inferred source")
     if source != "base" and not region:

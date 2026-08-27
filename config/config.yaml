@@ -33,7 +33,7 @@ energy:
     # electrical models.
     region: mauritius-rodrigues
     # VIIRS nightlight targets filter the drivable OSM road network; the
-    # resulting inferred product keeps road cycles and the reviewed-data variant
+    # resulting inferred product keeps road cycles and the provided-data variant
     # also preserves the main CEB backbone. "drive" excludes footpaths, tracks
     # and hiking trails (use "all" only to inspect every mapped way).
     network_type: drive
@@ -53,14 +53,14 @@ energy:
     # are different quantities, so this stays deliberately tight at 0.10 (the
     # reviewed value); build_network's own parameter default is the looser 0.35.
     line_length_tolerance_fraction: 0.10
-    # Advisory bound for the inferred-data generation total against CEB's
+    # Advisory bound for the inferred-provided generation total against CEB's
     # reported installed capacity (CEB Annual Report 2023-2024).
     generation_capacity_tolerance_fraction: 0.10
 
   nightlight:
     # VIIRS nightlight targets identify likely electrified locations; the
     # inferred builds retain the OSM road subnetwork within the support distance
-    # of a target or reviewed power asset. The high-pass filter and threshold
+    # of a target or provided power asset. The high-pass filter and threshold
     # are adapted from GridFinder by Chris Arderne (MIT):
     # https://github.com/carderne/gridfinder
     region: mauritius-rodrigues

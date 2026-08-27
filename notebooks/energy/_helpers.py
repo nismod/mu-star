@@ -32,7 +32,7 @@ OUT_DIR = DATA_ROOT / "out" / "energy"
 PRODUCTS = (
     "base-mauritius",
     "inferred-osm-mauritius-rodrigues",
-    "inferred-data-mauritius-rodrigues",
+    "inferred-provided-mauritius-rodrigues",
 )
 
 # Rough WGS84 bounding boxes to zoom a multi-island product to a single island

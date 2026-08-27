@@ -5,15 +5,15 @@ products through a single dispatch, `energy.network_source.build_network`:
 
 - **`base-mauritius`** (`source="base"`) derives the transmission topology from
   the provided CEB routes, substations and generation records. It is the
-  canonical, reviewed network. Methodology: `ceb-routed-topology-v3`.
+  canonical, provided network. Methodology: `ceb-routed-topology-v3`.
 - **`inferred-osm-mauritius-rodrigues`** (`source="inferred-osm"`) uses OSM
   substations, plants and generators as known power terminals and retains the
   OSM road subnetwork supported by VIIRS nightlight targets. Methodology:
   `nightlight-roads-osm-power-v1`.
-- **`inferred-data-mauritius-rodrigues`** (`source="inferred-data"`) applies the
-  same nightlight road method but roots it on the reviewed input substations and
-  generators and preserves the reviewed CEB backbone. Methodology:
-  `nightlight-roads-reviewed-power-v1`.
+- **`inferred-provided-mauritius-rodrigues`** (`source="inferred-provided"`) applies the
+  same nightlight road method but roots it on the provided input substations and
+  generators and preserves the provided CEB backbone. Methodology:
+  `nightlight-roads-provided-power-v1`.
 
 The two inferred products share one routing method: VIIRS nightlights identify
 likely electrified targets, which then retain the dense, cyclic drivable OSM
@@ -58,9 +58,9 @@ The Snakemake workflow (`workflow/0-preprocess/energy.smk`):
    (`build_energy_nightlight_targets`);
 4. builds `inferred-osm-<region>` from OSM power terminals and the
    nightlight-supported roads (`build_inferred_osm_energy_network`); and
-5. builds `inferred-data-<region>` from the reviewed substations, generators and
+5. builds `inferred-provided-<region>` from the provided substations, generators and
    CEB backbone with the same nightlight road method
-   (`build_inferred_data_energy_network`).
+   (`build_inferred_provided_energy_network`).
 
 Each build also writes checksum-linked EPSG:4326 GeoParquet node and edge views
 in a `geoparquet/` subdirectory: NetCDF remains the modelling artifact, while the
@@ -76,7 +76,7 @@ snakemake -c1 energy_base_network
 
 # Build either inferred product
 snakemake -c1 energy_inferred_osm_network
-snakemake -c1 energy_inferred_data_network
+snakemake -c1 energy_inferred_provided_network
 
 # Build all three products
 snakemake -c1 energy_network

@@ -1,6 +1,6 @@
 """Inferred distribution-network graph experiments.
 
-This module is deliberately separate from the reviewed transmission baseline.
+This module is deliberately separate from the provided transmission baseline.
 It supports a topology-only scenario: infer candidate feeders from precomputed
 or OSM lines, anchor them to known power assets, place proxy demand on graph
 nodes and estimate demand disconnected by graph cuts. It does not run
@@ -136,7 +136,7 @@ def build_inferred_distribution_graph(
     *,
     precomputed_lines: gpd.GeoDataFrame | None = None,
     osm_distribution_lines: gpd.GeoDataFrame | None = None,
-    reviewed_backbone_lines: gpd.GeoDataFrame | None = None,
+    provided_backbone_lines: gpd.GeoDataFrame | None = None,
     max_anchor_distance_m: float = DEFAULT_MAX_ANCHOR_DISTANCE_M,
     anchor_to_each_line_source: bool = False,
 ) -> nx.Graph:
@@ -163,8 +163,8 @@ def build_inferred_distribution_graph(
     _add_distribution_lines(graph, osm_distribution_lines, source="osm")
     _add_distribution_lines(
         graph,
-        reviewed_backbone_lines,
-        source="reviewed_backbone",
+        provided_backbone_lines,
+        source="provided_transmission",
     )
 
     geographic_assets = power_assets.to_crs(GEOGRAPHIC_CRS)

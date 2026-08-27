@@ -353,7 +353,7 @@ def test_build_inferred_uses_osm_substations_and_generators_as_roots(tmp_path, m
     assert not bool(roots.loc["bus::SUB", "provisional_root"])
 
 
-def test_build_inferred_data_uses_only_reviewed_power_assets(tmp_path, monkeypatch):
+def test_build_inferred_provided_uses_only_provided_power_assets(tmp_path, monkeypatch):
     input_dir = tmp_path / "processed" / "energy" / "provided"
     _write_base_inputs(input_dir)
     roads = gpd.GeoDataFrame(
@@ -370,7 +370,7 @@ def test_build_inferred_data_uses_only_reviewed_power_assets(tmp_path, monkeypat
     )
 
     def unexpected_osm_power(*args, **kwargs):
-        raise AssertionError("inferred-data must not read OSM power features")
+        raise AssertionError("inferred-provided must not read OSM power features")
 
     monkeypatch.setattr(
         "energy.network_source.osm.fetch_osm_power_features",
@@ -378,7 +378,7 @@ def test_build_inferred_data_uses_only_reviewed_power_assets(tmp_path, monkeypat
     )
 
     outputs = build_network(
-        "inferred-data",
+        "inferred-provided",
         region="mauritius",
         input_dir=input_dir,
         output_dir=tmp_path / "networks",
@@ -388,12 +388,12 @@ def test_build_inferred_data_uses_only_reviewed_power_assets(tmp_path, monkeypat
 
     metadata = json.loads(outputs.metadata.read_text())
     network = pypsa.Network(outputs.network)
-    assert metadata["methodology"] == "nightlight-roads-reviewed-power-v1"
-    assert metadata["power_asset_source"] == "reviewed_substations_and_generators"
+    assert metadata["methodology"] == "nightlight-roads-provided-power-v1"
+    assert metadata["power_asset_source"] == "provided_substations_and_generators"
     assert metadata["substation_roots"] == 2
     assert metadata["generator_roots"] == 1
     assert metadata["osm_power_features"] == 0
-    assert metadata["reviewed_backbone_edges"] >= 1
+    assert metadata["provided_backbone_edges"] >= 1
     assert set(network.generators.index) == {"plant"}
     assert network.generators.loc["plant", "bus"] == "bus::A"
     assert {"bus::A", "bus::B", "asset::plant"} <= set(network.buses.index)
