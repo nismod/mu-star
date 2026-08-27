@@ -35,6 +35,11 @@ PRODUCTS = (
     "inferred-data-mauritius-rodrigues",
 )
 
+# Rough WGS84 bounding boxes to zoom a multi-island product to a single island
+# (Mauritius and Rodrigues are ~560 km apart, so the full extent is mostly ocean).
+MAURITIUS_BBOX = (57.3, -20.6, 57.9, -19.9)
+RODRIGUES_BBOX = (63.3, -19.8, 63.5, -19.6)
+
 
 def _geoparquet_dir(name: str) -> Path:
     return NETWORKS_DIR / name / "geoparquet"
@@ -79,16 +84,72 @@ def summarise(name: str) -> dict:
     }
 
 
-def plot_network(name, *, color_by="source", ax=None, node_size=6, title=None):
-    """Plot a product's edges (optionally coloured by a column) and its nodes."""
-    nodes, edges = load_layers(name)
+def list_products() -> "pd.DataFrame":
+    """Return a table of built products with node/edge counts (for the selector cell)."""
+    import pandas as pd
+
+    rows = []
+    for name in available_products():
+        nodes, edges = load_layers(name)
+        rows.append({"product": name, "nodes": len(nodes), "edges": len(edges)})
+    return pd.DataFrame(rows)
+
+
+def anchor_nodes(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Keep observed/reviewed power terminals, dropping inferred road vertices."""
+    if "is_inferred" in nodes.columns:
+        keep = ~nodes["is_inferred"].fillna(False).astype(bool)
+        if keep.any():
+            return nodes.loc[keep]
+    return nodes
+
+
+def plot_network(
+    name,
+    *,
+    nodes="anchors",
+    node_color_by="kind",
+    edge_color_by="source",
+    node_size=None,
+    ax=None,
+    title=None,
+    figsize=(9, 11),
+    clip=None,
+):
+    """Map a single product's edges and nodes.
+
+    nodes: ``"anchors"`` (observed power terminals only), ``"all"``, or ``"none"``.
+    clip: optional ``(minx, miny, maxx, maxy)`` bbox to zoom to (e.g. ``MAURITIUS_BBOX``).
+    """
+    node_layer, edge_layer = load_layers(name)
+    if clip is not None:
+        minx, miny, maxx, maxy = clip
+        edge_layer = edge_layer.cx[minx:maxx, miny:maxy]
+        node_layer = node_layer.cx[minx:maxx, miny:maxy]
     if ax is None:
-        _, ax = plt.subplots(figsize=(9, 11))
-    plot_kwargs = {"linewidth": 0.6}
-    if color_by and color_by in edges.columns and edges[color_by].nunique(dropna=True) > 1:
-        plot_kwargs.update(column=color_by, legend=True, categorical=True)
-    edges.plot(ax=ax, **plot_kwargs)
-    nodes.plot(ax=ax, markersize=node_size, color="crimson", zorder=5)
+        _, ax = plt.subplots(figsize=figsize)
+
+    # Colour a handful of edges by source; draw dense road networks as thin grey.
+    few_edges = (
+        edge_color_by in edge_layer.columns
+        and len(edge_layer) < 500
+        and edge_layer[edge_color_by].nunique(dropna=True) > 1
+    )
+    if few_edges:
+        edge_layer.plot(ax=ax, column=edge_color_by, legend=True, categorical=True, linewidth=0.8)
+    else:
+        edge_layer.plot(ax=ax, color="0.75", linewidth=0.4)
+
+    selection = {"anchors": anchor_nodes(node_layer), "all": node_layer}.get(nodes)
+    if selection is not None and len(selection):
+        size = node_size if node_size is not None else (36 if len(selection) < 500 else 6)
+        # With dense grey edges, colour the terminals by kind to carry the legend.
+        if not few_edges and node_color_by in selection.columns and selection[node_color_by].nunique(dropna=True) > 1:
+            selection.plot(ax=ax, column=node_color_by, categorical=True, legend=True, markersize=size, zorder=5)
+        else:
+            selection.plot(ax=ax, color="crimson", markersize=size, edgecolor="white", linewidth=0.3, zorder=5)
+
+    shown = 0 if selection is None else len(selection)
     ax.set_axis_off()
-    ax.set_title(title or f"{name}  \u00b7  {len(nodes)} nodes / {len(edges)} edges")
+    ax.set_title(title or f"{name}\n{len(edge_layer)} edges \u00b7 {shown} nodes shown ({nodes})")
     return ax
