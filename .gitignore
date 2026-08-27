@@ -5,6 +5,9 @@
 # Default data directory
 data/
 
+# Local working notes (not part of the published mdBook docs)
+/DEVELOPMENT_NOTES.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
