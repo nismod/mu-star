@@ -155,8 +155,11 @@ def plot_network(
     return ax
 
 
-# Distinct colours for edge-source / node-kind traces.
-_PALETTE = ("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf")
+# tab10 palette (matches the mauritius-kestrel viewer's line colours).
+_TAB10 = (
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+)
 
 
 def _line_coords(gdf):
@@ -179,14 +182,15 @@ def explore_network(name, *, roads=True, clip=None, map_style="open-street-map")
     """Interactive Plotly map of a product for debugging (matches the viewer style).
 
     Pan/zoom/hover on an OpenStreetMap basemap (no API key). Draws every edge,
-    one trace per source: for the inferred products the dense OSM road mesh *is*
-    the distribution network, so it is shown (thin grey) with the transmission /
-    backbone / anchor layers coloured on top. Observed terminals are coloured by
-    kind with attribute hover. ``roads=False`` hides the OSM mesh for a power-only
-    view; ``clip`` restricts to a ``(minx, miny, maxx, maxy)`` bbox.
+    one trace per source coloured with the tab10 palette (as in the viewer): for
+    the inferred products the dense OSM road mesh *is* the distribution network,
+    drawn underneath the transmission / backbone / anchor layers. Only substation
+    and generator buses are marked (with attribute hover). ``roads=False`` hides
+    the OSM mesh for a power-only view; ``clip`` restricts to a bbox.
     """
     import math
 
+    import pandas as pd
     import plotly.graph_objects as go
 
     node_layer, edge_layer = load_layers(name)
@@ -196,36 +200,37 @@ def explore_network(name, *, roads=True, clip=None, map_style="open-street-map")
         node_layer = node_layer.cx[minx:maxx, miny:maxy]
 
     fig = go.Figure()
+    # tab10 palette, one stable colour per source category (matches the viewer).
     if "source" in edge_layer.columns:
-        # Draw the OSM road mesh first (underneath), power layers coloured on top.
-        groups = sorted(edge_layer.groupby("source"), key=lambda kv: kv[0] != "osm")
-        colour_i = 0
-        for src, grp in groups:
+        categories = sorted(str(s) for s in edge_layer["source"].dropna().unique())
+        colour = {c: _TAB10[i % len(_TAB10)] for i, c in enumerate(categories)}
+        for src in sorted(categories, key=lambda c: c != "osm"):  # draw osm first
             if src == "osm" and not roads:
                 continue
+            grp = edge_layer[edge_layer["source"].astype(str).eq(src)]
             lons, lats = _line_coords(grp)
-            if src == "osm":
-                style = {"width": 1, "color": "#9aa0a6"}
-            else:
-                style = {"width": 3, "color": _PALETTE[colour_i % len(_PALETTE)]}
-                colour_i += 1
-            fig.add_trace(go.Scattermap(lon=lons, lat=lats, mode="lines", name=str(src),
-                                        line=style, hoverinfo="skip"))
+            width = 1.5 if src == "osm" else 2.5
+            fig.add_trace(go.Scattermap(lon=lons, lat=lats, mode="lines", name=src,
+                                        line={"width": width, "color": colour[src]}, hoverinfo="skip"))
     elif len(edge_layer):
         lons, lats = _line_coords(edge_layer)
         fig.add_trace(go.Scattermap(lon=lons, lat=lats, mode="lines", name="edges",
                                     line={"width": 2}, hoverinfo="skip"))
 
-    terminals = anchor_nodes(node_layer)
-    if len(terminals):
-        cols = [c for c in ("kind", "source", "name", "v_nom_kv", "model_v_nom_kv") if c in terminals.columns]
-        groups = terminals.groupby("kind") if "kind" in terminals.columns else [("terminals", terminals)]
-        for i, (kind_val, grp) in enumerate(groups):
-            hover = grp[cols].apply(lambda r: "<br>".join(f"{c}: {r[c]}" for c in cols), axis=1) if cols else None
+    # Mark only the meaningful buses (substation / generator); the road/junction
+    # vertices stay as line geometry, as in the viewer.
+    node_styles = {"substation": ("#111827", 8), "generator": ("#7c3aed", 11)}
+    if "kind" in node_layer.columns:
+        kinds = node_layer["kind"].astype("string")
+        cols = [c for c in ("bus_id", "name", "kind", "source", "v_nom_kv", "model_v_nom_kv") if c in node_layer.columns]
+        for kind_val, (colour_hex, size) in node_styles.items():
+            grp = node_layer[kinds.eq(kind_val)]
+            if grp.empty:
+                continue
+            hover = grp[cols].apply(lambda r: "<br>".join(f"{c}: {r[c]}" for c in cols if pd.notna(r[c])), axis=1) if cols else None
             fig.add_trace(go.Scattermap(
-                lon=grp.geometry.x, lat=grp.geometry.y, mode="markers", name=str(kind_val),
-                marker={"size": 8, "color": _PALETTE[(i + 4) % len(_PALETTE)]},
-                text=hover, hoverinfo="text" if cols else "skip"))
+                lon=grp.geometry.x, lat=grp.geometry.y, mode="markers", name=f"{kind_val} bus",
+                marker={"size": size, "color": colour_hex}, text=hover, hoverinfo="text" if cols else "skip"))
 
     bounds = (edge_layer if len(edge_layer) else node_layer).total_bounds
     center = {"lon": float((bounds[0] + bounds[2]) / 2), "lat": float((bounds[1] + bounds[3]) / 2)}
