@@ -20,5 +20,4 @@ jobs:
         # Use a 'login shell', thereforce sourcing .bashrc, necessary for umamba
         shell: bash -l {0}
         run: |
-          pytest src/mu_star/tests
-          pytest src/transport/tests
+          pytest src/
