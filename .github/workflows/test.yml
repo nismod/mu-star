@@ -21,5 +21,4 @@ jobs:
         shell: bash -l {0}
         # Use pytest-xdist to parallelise (2 CPUs on standard GH Actions runner)
         run: |
-          pytest src/mu_star/tests
-          pytest src/transport/tests
+          pytest src/
