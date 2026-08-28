@@ -11,9 +11,9 @@ rule label_water_nodes:
     snakemake -c1 data/processed/asset/water/potable/node.gpq
     """
     input:
-        res = "{data}/incoming/Infrastructure/Reservoir/Reservoir.shp",
-        wtw = "{data}/incoming/Infrastructure/Water Treatment/WaterTreatment.shp",
-        wwtw = "{data}/incoming/Infrastructure/Wastewater Treatment Plant/WWTreatmentP.shp",
+        res = "{data}/incoming/Infrastructure/Reservoirs and Dams/Reservoirs and Dams/reservoirs.gpkg",
+        wtw = "{data}/incoming/Infrastructure/Water Treatment Plant/wtp.gpkg",
+        wwtw = "{data}/incoming/Infrastructure/Wastewater Treatment Plant/wwtp.gpkg",
     output:
         res = "{data}/processed/asset/water/potable/area.gpq",
         wtw = "{data}/processed/asset/water/potable/node.gpq",
