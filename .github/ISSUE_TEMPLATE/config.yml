@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or design discussion
+    url: https://github.com/nismod/mu-star/discussions
+    about: For open-ended questions and design discussions. For a concrete, reproducible task use one of the templates.
