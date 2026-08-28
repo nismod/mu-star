@@ -19,6 +19,9 @@ jobs:
       - name: Lint
         run: ruff check --output-format=github .
 
+      - name: Check notebooks have no output
+        run: find -name '*.ipynb' -exec nbstripout --verify {} \;
+
       - name: Test with pytest
         # Use a 'login shell', thereforce sourcing .bashrc, necessary for umamba
         shell: bash -l {0}
