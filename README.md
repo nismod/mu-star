@@ -180,11 +180,11 @@ While this workflow is in development, some of the rules are placeholders.
 
 ### Testing
 
-Test the helper library by activating the environment and running the following
-from this directory:
+Test the helper library and other included packages by activating the
+environment and running the following from this directory:
 
 ```shell
-pytest src/mu_star
+python -m pytest -n 2 src/
 ```
 
 ## Documentation

@@ -20,4 +20,4 @@ jobs:
         # Use a 'login shell', thereforce sourcing .bashrc, necessary for umamba
         shell: bash -l {0}
         run: |
-          pytest src/
+          pytest -n auto src/
