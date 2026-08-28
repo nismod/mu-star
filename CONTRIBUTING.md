@@ -99,6 +99,23 @@ polished ones.
 If you are ever unsure whether something is "ready" to push — push it. That is
 what the draft state is for.
 
+### Review cadence
+
+Opening a pull request is only half the job; the rest is review and merging in.
+Here are some reasonable expectations on the review-and-merge side:
+
+- **A first response within a week** of a pull request being marked ready for
+  review — an approval, review comments, or at minimum an acknowledgment. We'll
+  run through these in weekly technical meetings.
+- **Drafts make progress.** A draft that has gone quiet (for over a couple of
+  weeks) is either ready, should be closed, or it's explicitly waiting for
+  something, with a note saying why and what's next.
+- **Trivial fixes go straight to `development`** as their own small pull
+  request, ahead of any feature work. A one-line CI or typo fix should be easy
+  and quick to merge, and saves effort independently fixing the same thing.
+- **Rebase as you go.** If `development` has moved on, pull and rebase, ideally early
+  to keep it as easy as possible to resolve any potential conflicts.
+
 ## Branches and pull requests
 
 The default branch is `development`. All work happens on branches and is merged
