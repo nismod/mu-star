@@ -36,9 +36,7 @@ def remove_overlapping_features(aeroways, tag):
         overlapping_positions = target_sindex.query(geometry, predicate="intersects")
         overlapping_positions = overlapping_positions[overlapping_positions < position]
         if len(overlapping_positions) > 0:
-            geometry = geometry.difference(
-                target_geometries.iloc[overlapping_positions].union_all()
-            )
+            geometry = geometry.difference(target_geometries.iloc[overlapping_positions].union_all())
             if geometry.is_empty:
                 continue
 
@@ -69,9 +67,7 @@ def process_overlapping_features(aeroways, tag):
     target_features = remove_overlapping_features(aeroways, tag)
 
     if not target_features.empty:
-        aeroways = pandas.concat(
-            [sites, non_target, target_features], ignore_index=True
-        )
+        aeroways = pandas.concat([sites, non_target, target_features], ignore_index=True)
 
     return aeroways
 
