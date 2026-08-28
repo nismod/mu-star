@@ -32,7 +32,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "black",
     "nbstripout",
     "pre-commit",
     "pytest",
