@@ -37,6 +37,7 @@ dev = [
     "pre-commit",
     "pytest",
     "pytest-cov",
+    "pytest-xdist[psutil]",
     "ruff",
 ]
 
