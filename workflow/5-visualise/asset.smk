@@ -12,7 +12,7 @@ ASSET_SOURCES = {
     # (sector, subsector, {node|edge|area}): (starting UID, path)
     # ("transport", "rail", "node"): (0 * UID_RANGE, "incoming/Infrastructure/Light Rail Station/LRT_station.shp"),
     # ("transport", "rail", "edge"): (1 * UID_RANGE, "incoming/Infrastructure/Light Rail/Lightrail.shp"),
-    # ("transport", "airport", "area"): (2 * UID_RANGE, "incoming/Infrastructure/Airport/Airport_area.shp"),
+    ("transport", "airport", "area"): (2 * UID_RANGE, "processed/networks/transport/airport-areas.geoparquet"),
     # ("transport", "port", "area"): (3 * UID_RANGE, "?"),
     # ("water", "irrigation", "node"): (4 * UID_RANGE, "?"),
     # ("water", "irrigation", "edge"): (5 * UID_RANGE, "?"),
