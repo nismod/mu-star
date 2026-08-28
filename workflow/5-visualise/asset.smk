@@ -23,7 +23,7 @@ ASSET_SOURCES = {
     ("transport", "road", "node"): (9 * UID_RANGE, "incoming/Infrastructure/Road Network/osm-open-gira/nodes.gpq"),
     ("transport", "road", "edge"): (10 * UID_RANGE, "incoming/Infrastructure/Road Network/osm-open-gira/edges.gpq"),
     ("energy", "transmission", "node"): (11 * UID_RANGE, "processed/asset/energy/inferred-data-mauritius-rodrigues/geoparquet/inferred-data-mauritius-rodrigues-nodes-with-gen-type.geoparquet"),
-    ("energy", "transmission", "edge"): (12 * UID_RANGE, "processed/asset/energy/inferred-data-mauritius-rodrigues/geoparquet/inferred-data-mauritius-rodrigues-edges.geoparquet"),
+    ("energy", "transmission", "edge"): (12 * UID_RANGE, "incoming/Infrastructure/Energy/inferred-distribution-mauritius-rodrigues/20260728/geoparquet/inferred-data-mauritius-rodrigues-edges.geoparquet"),
     ("building", "building", "area"): (13 * UID_RANGE, "processed/asset/building/building.gpq"),
 }
 

@@ -6,8 +6,8 @@ rule assign_generator_types:
         snakemake -c1 data/processed/asset/energy/inferred-data-mauritius-rodrigues/geoparquet/inferred-data-mauritius-rodrigues-nodes-with-gen-type.geoparquet
     """
     input:
-        all_nodes = "{data}/processed/asset/energy/inferred-data-mauritius-rodrigues/geoparquet/inferred-data-mauritius-rodrigues-nodes.geoparquet",
-        generators = "{data}/processed/asset/energy/inferred-data-mauritius-rodrigues/generators.csv",
+        all_nodes = "{data}/incoming/Infrastructure/Energy/inferred-distribution-mauritius-rodrigues/20260728/geoparquet/inferred-data-mauritius-rodrigues-nodes.geoparquet",
+        generators = "{data}/incoming/Infrastructure/Energy/inferred-distribution-mauritius-rodrigues/20260728/generators.csv",
     output:
         join = "{data}/processed/asset/energy/inferred-data-mauritius-rodrigues/geoparquet/inferred-data-mauritius-rodrigues-nodes-with-gen-type.geoparquet"
     run:
