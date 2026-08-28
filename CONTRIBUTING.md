@@ -55,7 +55,7 @@ contributions later.
 
    ```shell
    snakemake --dry-run --cores 1 \
-     data//processed/networks/transport/airport-areas.geoparquet
+     data/processed/networks/transport/airport-areas.geoparquet
    ```
 
 5. **Open a draft pull request.**
