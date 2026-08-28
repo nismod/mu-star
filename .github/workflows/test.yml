@@ -22,4 +22,4 @@ jobs:
         # Use pytest-xdist to parallelise (2 CPUs on standard GH Actions runner)
         run: |
           pytest src/mu_star/tests
-          pytest src/sample_model/tests
+          pytest src/transport/tests
