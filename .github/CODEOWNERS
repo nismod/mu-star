@@ -1,0 +1,39 @@
+# Code owners for mu-star
+#
+# Code owners are automatically requested for review when a pull request touches
+# files they own. Review should help rather than hinder — see CONTRIBUTING.md.
+#
+# Syntax: <path pattern>  <@owner> [<@owner> ...]
+# Later matches take precedence over earlier ones.
+# Owners must have write access to the repository to be auto-requested.
+
+# Default owners for everything in the repo
+*                       @tomalrussell @thomas-fred
+
+# Shared infrastructure — reviewed closely by maintainers
+/src/mu_star/           @tomalrussell @thomas-fred
+/workflow/Snakefile     @tomalrussell @thomas-fred
+/config/config.yaml     @tomalrussell @thomas-fred
+/environment.yaml       @tomalrussell @thomas-fred
+/pyproject.toml         @tomalrussell @thomas-fred
+/.github/               @tomalrussell @thomas-fred
+
+# Sector models — assign the responsible RA(s) as sector owners.
+# Uncomment and set the GitHub handle for each sector lead so
+# reviews route to the right person. Update the path matches too,
+# as the repo structure evolves.
+/src/transport/                       @tomalrussell # sadien
+/workflow/**/transport.smk            @tomalrussell # sadien
+/docs/src/infrastructure-transport.md @tomalrussell # sadien
+
+/src/power/                           @cpalazzi # shoaib
+/workflow/**/power.smk                @cpalazzi # shoaib
+/docs/src/infrastructure-energy.md    @cpalazzi # shoaib
+
+/src/water/                           @S-col-env @apeer123
+/workflow/**/water.smk                @S-col-env @apeer123
+/docs/src/infrastructure-water.md     @S-col-env @apeer123
+
+/src/econ/                           @ischlo @Olivier37-J
+/workflow/**/econ.smk                @ischlo @Olivier37-J
+/docs/src/economics.md               @ischlo @Olivier37-J

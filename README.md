@@ -195,6 +195,13 @@ using [`mdbook`](https://rust-lang.github.io/mdBook/index.html).
 
 Read the latest documentation at: https://nismod.github.io/mu-star/
 
+## Contributing
+
+New to the project? Start with [`CONTRIBUTING.md`](./CONTRIBUTING.md). It covers
+setup and a first session, how we work with branches and pull requests, where
+your work goes and how to write issues. In short: open draft pull requests
+early, keep changes fairly small, and ask for review often.
+
 ## Citation
 
 All contributors should be listed in `./CITATION.cff`.
