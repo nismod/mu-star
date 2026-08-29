@@ -116,6 +116,19 @@ Create a conda environment once (per machine/user):
 micromamba create --file environment.yaml
 ```
 
+Activate it any time you pick up work on this repository:
+
+```shell
+micromamba activate mu-star
+```
+
+Install `nbstripout` to ensure that no outputs are committed with any jupyter
+notebooks:
+
+```shell
+nbstripout --install
+```
+
 ## Usage
 
 The principal goal of this repository is to analyse risks to infrastructure
@@ -180,11 +193,18 @@ While this workflow is in development, some of the rules are placeholders.
 
 ### Testing
 
-Test the helper library by activating the environment and running the following
-from this directory:
+Test the helper library and other included packages by activating the
+environment and running the following from this directory:
 
 ```shell
-pytest src/mu_star
+python -m pytest -n 2 src/
+```
+
+Run auto-formatting and check for common minor problems using `ruff`:
+
+```shell
+ruff format
+ruff check
 ```
 
 ## Documentation
