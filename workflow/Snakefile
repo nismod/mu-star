@@ -1,7 +1,13 @@
 configfile: "config/config.yaml"
 
-include: "0-preprocess/preprocess.smk"
+
+include: "0-preprocess/osm_roads_preprocess.smk"
+include: "0-preprocess/econ_catalogue.smk"
+include: "0-preprocess/econ_utilities.smk"
+include: "0-preprocess/econ_modelling.smk"
+include: "0-preprocess/econ.smk"
 include: "0-preprocess/catalogue-open-data.smk"
+include: "0-preprocess/preprocess.smk"
 include: "0-preprocess/transport.smk"
 include: "1-damage/damage.smk"
 
@@ -10,3 +16,5 @@ wildcard_constraints:
     peril=r"peril-(flood|cyclone)",
     subperil=r"subperil-(wind|fluvial|pluvial|coastal)",
     ensemble=r"ensemble-\d+",
+    catalogue_outputs=r"/\w/\w\d*.parquet",
+    model_run=r"[a-z]{5}_mauritius_[^/]+",

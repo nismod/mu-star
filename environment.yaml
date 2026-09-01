@@ -7,9 +7,14 @@ channels:
 dependencies:
   - python=3.12
   - pip:
-      - -e .
-      - nismod-snail
-      - osmium
+    - -e .
+    - nismod-snail
+    - osmium
+    - matplotlib_scalebar
+    - osmnx
+    - contextily
+    - reverse_geocoder
+    - seaborn
   - geopandas
   - hatchling
   - jupyter
@@ -23,3 +28,10 @@ dependencies:
   - tqdm
   - xarray
   - zarr
+  - matplotlib_map_utils
+  - 'duckdb==1.3.2'
+  - 'pyarrow==21.0.0'
+  - geoarrow-pyarrow
+  - 'ibis-framework[duckdb,geospatial]'
+  - scalenav
+  - pydeck
