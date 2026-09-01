@@ -11,6 +11,8 @@ import pandas as pd
 import pytest
 from shapely.geometry import box
 
+from economy import processed_local_econ_data_path
+
 SCRIPT_PATH = Path(__file__).resolve().parents[3] / "workflow" / "0-preprocess" / "economic.py"
 SCRIPT_SPEC = spec_from_file_location("workflow_local_econ", SCRIPT_PATH)
 assert SCRIPT_SPEC is not None and SCRIPT_SPEC.loader is not None
@@ -120,21 +122,6 @@ def test_snakemake_local_econ_rule_dry_run(tmp_path):
         pytest.skip("snakemake is not installed")
 
     repository = Path(__file__).resolve().parents[3]
-    accounts_path = tmp_path / "accounts.xlsx"
-    output_path = tmp_path / "mus.parquet"
-    config_path = tmp_path / "config.yaml"
-    accounts_path.touch()
-    config_path.write_text(
-        "paths:\n"
-        f"  raw_local_econ_data: {str(accounts_path)!r}\n"
-        "  local_econ_catalogue_root: '../'\n"
-        f"  processed_local_catalogue_root: {str(tmp_path / 'catalogue')!r}\n"
-        f"  processed_local_econ_data: {str(output_path)!r}\n"
-        "local_econ:\n"
-        "  country_code: 'MUS'\n"
-        "  year: 2024\n"
-        "  rupees_per_usd: 47.12\n"
-    )
 
     environment = os.environ.copy()
     environment["XDG_CACHE_HOME"] = str(tmp_path / ".cache")
@@ -144,11 +131,11 @@ def test_snakemake_local_econ_rule_dry_run(tmp_path):
             "--snakefile",
             str(repository / "workflow" / "Snakefile"),
             "--configfile",
-            str(config_path),
+            str(repository / "config" / "config.yaml"),
             "--cores",
             "1",
             "--dry-run",
-            str(output_path),
+            processed_local_econ_data_path,
         ],
         cwd=repository,
         env=environment,

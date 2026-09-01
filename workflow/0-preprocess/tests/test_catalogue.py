@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from economy import processed_local_catalogue_root
+
 SCRIPT_PATH = Path(__file__).resolve().parents[3] / "workflow" / "0-preprocess" / "catalogue.py"
 SCRIPT_SPEC = spec_from_file_location("workflow_catalogue", SCRIPT_PATH)
 assert SCRIPT_SPEC is not None and SCRIPT_SPEC.loader is not None
@@ -34,6 +36,9 @@ def _install_fake_catalogue_modules(monkeypatch):
             return Expression()
 
     class Geometry:
+        def unary_union(self):
+            return self
+
         @staticmethod
         def execute():
             class ExecutedGeometry:
@@ -51,9 +56,11 @@ def _install_fake_catalogue_modules(monkeypatch):
         def filter(self, _condition):
             return self
 
-        def to_parquet(self, path, overwrite=False):
-            assert overwrite is True
-            Path(path).touch()
+        def to_parquet_dir(self, path, existing_data_behavior):
+            assert existing_data_behavior == "overwrite_or_ignore"
+            output_path = Path(path)
+            output_path.mkdir(parents=True, exist_ok=True)
+            (output_path / "roads.parquet").touch()
 
     class Connection:
         @staticmethod
@@ -100,7 +107,7 @@ def test_preprocess_local_catalogue_regression(tmp_path, monkeypatch):
         country_code="MUS",
     )
 
-    assert (tmp_path / "MUS_roads" / "roads.parquet").exists()
+    assert (tmp_path / "processed" / "roads" / "roads.parquet").exists()
     assert missed_layers == ["custom_bounds"]
 
 
@@ -110,23 +117,6 @@ def test_snakemake_local_catalogue_rule_dry_run(tmp_path):
         pytest.skip("snakemake is not installed")
 
     repository = Path(__file__).resolve().parents[3]
-    raw_econ_path = tmp_path / "accounts.xlsx"
-    catalogue_output_root = tmp_path / "catalogue"
-    econ_output_path = tmp_path / "mus.parquet"
-    complete_path = catalogue_output_root / ".local_catalogue_complete"
-    config_path = tmp_path / "config.yaml"
-    raw_econ_path.touch()
-    config_path.write_text(
-        "paths:\n"
-        f"  raw_local_econ_data: {str(raw_econ_path)!r}\n"
-        "  local_econ_catalogue_root: '../'\n"
-        f"  processed_local_catalogue_root: {str(catalogue_output_root)!r}\n"
-        f"  processed_local_econ_data: {str(econ_output_path)!r}\n"
-        "local_econ:\n"
-        "  country_code: 'MUS'\n"
-        "  year: 2024\n"
-        "  rupees_per_usd: 47.12\n"
-    )
 
     environment = os.environ.copy()
     environment["XDG_CACHE_HOME"] = str(tmp_path / ".cache")
@@ -136,11 +126,11 @@ def test_snakemake_local_catalogue_rule_dry_run(tmp_path):
             "--snakefile",
             str(repository / "workflow" / "Snakefile"),
             "--configfile",
-            str(config_path),
+            str(repository / "config" / "config.yaml"),
             "--cores",
             "1",
             "--dry-run",
-            str(complete_path),
+            processed_local_catalogue_root,
         ],
         cwd=repository,
         env=environment,
@@ -150,4 +140,4 @@ def test_snakemake_local_catalogue_rule_dry_run(tmp_path):
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "preprocess_local_catalogue" in completed.stdout + completed.stderr
+    assert "econ_catalogue" in completed.stdout + completed.stderr
