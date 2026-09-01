@@ -20,22 +20,21 @@ rule econ_model_setup:
     run:
 
         import scalenav.oop as snoo
-        from scalenav.utils import *
         import os
         import datetime
         import yaml
         import ibis as ib
         from ibis import _
+        import numpy as np
 
 
         # In[2]:
 
 
-        from globdata.parameters import *
-        from globdata import ISIC_CODES, REGION_INDEX, OUTPUT_ROOT
-        from globdata.base_params import *
-        from globdata.base_constraints import *
-        from scalenav.utils import *
+        from globdata import ISIC_CODES, REGION_INDEX
+        from globdata.base_constraints import ModelConstraint
+        from globdata.base_params import ModelParams
+        from globdata.parameters import job_partition, load_catalogue, set_model_index
 
         ib.options.interactive = True
         ib.options.graphviz_repr = True
@@ -112,8 +111,9 @@ rule econ_model_setup:
 
 
         # automate the next parameters in the short term
-        # time : str = "15:00:00"
-        # memory : int = 50 # in GB
+        time : str = "15:00:00"
+        memory : int = 50
+        RUN : bool = False
         samples : int = 1_000
         final_res : int = 8
 
