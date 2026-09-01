@@ -1,7 +1,22 @@
 [book]
 title = "Mauritius STAR Documentation"
-authors = ["Tom Russell", "Fred Thomas"]
+authors = ["Tom Russell", "Ivann Schlosser", "Fred Thomas"]
 language = "en"
+
 
 [output.html]
 mathjax-support = true
+additional-css = ["styles/styles.css"]
+
+[preprocessor.bib]
+bibliography = "references/references_econ.bib"
+# add-bib-in-chapters = true  # Default: false
+citation-syntax = "pandoc"
+backend = "csl"
+# csl-style = "../styles/harvard-cite-them-right.csl"
+title = "References"
+render-bib = "cited"
+order = "author"
+
+[preprocessor.katex]
+# [preprocessor.typst-math]
