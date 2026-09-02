@@ -1,10 +1,19 @@
 """Local, dev-only helpers for inspecting energy pipeline outputs.
 
-These functions are NOT part of the packaged ``energy`` model or any Snakemake
-rule. They only *read* the standard files the pipeline writes (GeoParquet,
-PyPSA NetCDF, validation JSON) and render them for quick visual debugging.
-Production visualisation lives in the separate viewer (nismod/irv-standalone),
-so keep plotting code here rather than in ``src/energy/``.
+Imported as ``h`` in the energy notebooks (``notebooks/energy/**``). These
+functions only *read* the standard files the pipeline writes (GeoParquet, PyPSA
+NetCDF, validation JSON) and render them for quick visual debugging. They are
+NOT part of the packaged ``energy`` model or any Snakemake rule — production
+visualisation lives in the separate viewer (nismod/irv-standalone), so keep
+plotting code here rather than in ``src/energy/``.
+
+Main entry points:
+- ``available_products()`` / ``list_products()`` — which built products exist.
+- ``load_layers(name)`` — ``(nodes, edges)`` GeoDataFrames for a product.
+- ``load_validation(name)`` / ``load_pypsa(name)`` / ``summarise(name)``.
+- ``explore_network(name)`` — interactive Plotly map (OpenStreetMap basemap).
+- ``plot_network(name)`` — static matplotlib map.
+- ``MAURITIUS_BBOX`` / ``RODRIGUES_BBOX`` — bbox constants for the ``clip=`` arg.
 """
 
 from __future__ import annotations
