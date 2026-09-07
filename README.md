@@ -191,9 +191,9 @@ output files.
 
 While this workflow is in development, some of the rules are placeholders.
 
-The energy workflow builds three explicit network products through a single
-`build_network` dispatch: the canonical provided `base-mauritius` network, and
-two topology-only inferred coverage proxies for Mauritius and Rodrigues —
+The energy workflow builds three network products with one function,
+`build_network`: the `base-mauritius` network built from the provided CEB data,
+and two topology-only inferred coverage proxies for Mauritius and Rodrigues —
 `inferred-osm-mauritius-rodrigues` (OSM power terminals) and
 `inferred-provided-mauritius-rodrigues` (provided substations, generators and CEB
 backbone). Both inferred products retain the OSM road subnetwork supported by

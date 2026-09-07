@@ -1,11 +1,12 @@
 # Energy
 
-The energy workflow builds three explicit, provenance-preserving network
-products through a single dispatch, `energy.network_source.build_network`:
+The energy workflow builds three network products, each from a different data
+source, using one function: `energy.network_source.build_network`. Each product
+records the source data and method it was built from:
 
 - **`base-mauritius`** (`source="base"`) derives the transmission topology from
-  the provided CEB routes, substations and generation records. It is the
-  canonical, provided network. Methodology: `ceb-routed-topology-v3`.
+  the provided CEB routes, substations and generation records. It is the network
+  built directly from the provided CEB data. Methodology: `ceb-routed-topology-v3`.
 - **`inferred-osm-mauritius-rodrigues`** (`source="inferred-osm"`) uses OSM
   substations, plants and generators as known power terminals and retains the
   OSM road subnetwork supported by VIIRS nightlight targets. Methodology:
@@ -22,9 +23,9 @@ asset. The drivable network excludes footpaths, tracks and hiking trails that
 the distribution-line proxy should not follow (set `network_type: all` only to
 inspect every mapped way). They are topology-only geographic coverage proxies,
 not observed distribution infrastructure or operational electrical models. Their
-inferred electrical values (11 kV, 5 MVA) are explicit placeholders published as
-`model_v_nom_kv` / `model_s_nom_mva`, while the public `v_nom_kv` / `s_nom_mva`
-fields are null so they cannot be mistaken for observed ratings.
+inferred electrical values (11 kV, 5 MVA) are placeholders, written to
+`model_v_nom_kv` / `model_s_nom_mva`; the public `v_nom_kv` / `s_nom_mva`
+fields are left null so they cannot be mistaken for observed ratings.
 
 ## Nightlight targets
 
@@ -53,7 +54,7 @@ The Snakemake workflow (`workflow/0-preprocess/energy.smk`):
 
 1. cleans the provided demand, substation, transmission and generation data
    (`prepare_energy_assets`);
-2. builds the canonical `base-mauritius` PyPSA network (`build_base_energy_network`);
+2. builds the `base-mauritius` PyPSA network from the provided data (`build_base_energy_network`);
 3. extracts VIIRS nightlight targets inside the reviewed area of interest
    (`build_energy_nightlight_targets`);
 4. builds `inferred-osm-<region>` from OSM power terminals and the
@@ -71,7 +72,7 @@ these outputs; they read the files and are not part of the workflow.
 Convenience targets:
 
 ```shell
-# Build the canonical base network
+# Build the base network (from the provided CEB data)
 snakemake -c1 energy_base_network
 
 # Build either inferred product
