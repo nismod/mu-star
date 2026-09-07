@@ -23,6 +23,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
+import pandas as pd
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -95,8 +96,6 @@ def summarise(name: str) -> dict:
 
 def list_products() -> "pd.DataFrame":
     """Return a table of built products with node/edge counts (for the selector cell)."""
-    import pandas as pd
-
     rows = []
     for name in available_products():
         nodes, edges = load_layers(name)
@@ -199,7 +198,6 @@ def explore_network(name, *, roads=True, clip=None, map_style="open-street-map")
     """
     import math
 
-    import pandas as pd
     import plotly.graph_objects as go
 
     node_layer, edge_layer = load_layers(name)
@@ -231,12 +229,20 @@ def explore_network(name, *, roads=True, clip=None, map_style="open-street-map")
     node_styles = {"substation": ("#111827", 8), "generator": ("#7c3aed", 11)}
     if "kind" in node_layer.columns:
         kinds = node_layer["kind"].astype("string")
-        cols = [c for c in ("bus_id", "name", "kind", "source", "v_nom_kv", "model_v_nom_kv") if c in node_layer.columns]
+        cols = [
+            c
+            for c in ("bus_id", "name", "kind", "source", "v_nom_kv", "model_v_nom_kv")
+            if c in node_layer.columns
+        ]
         for kind_val, (colour_hex, size) in node_styles.items():
             grp = node_layer[kinds.eq(kind_val)]
             if grp.empty:
                 continue
-            hover = grp[cols].apply(lambda r: "<br>".join(f"{c}: {r[c]}" for c in cols if pd.notna(r[c])), axis=1) if cols else None
+            hover = (
+                grp[cols].apply(lambda r: "<br>".join(f"{c}: {r[c]}" for c in cols if pd.notna(r[c])), axis=1)
+                if cols
+                else None
+            )
             fig.add_trace(go.Scattermap(
                 lon=grp.geometry.x, lat=grp.geometry.y, mode="markers", name=f"{kind_val} bus",
                 marker={"size": size, "color": colour_hex}, text=hover, hoverinfo="text" if cols else "skip"))

@@ -1044,7 +1044,9 @@ def _build_inferred_network(
             "provided_transmission",
         ),
         "line_length_tolerance_fraction": line_length_tolerance_fraction,
-        "reference_generation_capacity_mw": (reference_generation_capacity_mw if source == "inferred-provided" else None),
+        "reference_generation_capacity_mw": (
+            reference_generation_capacity_mw if source == "inferred-provided" else None
+        ),
         "generation_capacity_tolerance_fraction": (generation_capacity_tolerance_fraction),
         "allow_incomplete_generators": source == "inferred-provided",
     }
