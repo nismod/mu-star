@@ -1,139 +1,128 @@
 # Energy
 
-The energy workflow builds three network products, each from a different data
-source, using one function: `energy.network_source.build_network`. Each product
-records the source data and method it was built from:
+The energy model turns Mauritius's power-system data into network models you can
+analyse. It produces three versions of the electricity network; a downstream
+analysis picks which one to use.
 
-- **`base-mauritius`** (`source="base"`) derives the transmission topology from
-  the provided CEB routes, substations and generation records. It is the network
-  built directly from the provided CEB data. Methodology: `ceb-routed-topology-v3`.
-- **`inferred-osm-mauritius-rodrigues`** (`source="inferred-osm"`) uses OSM
-  substations, plants and generators as known power terminals and retains the
-  OSM road subnetwork supported by VIIRS nightlight targets. Methodology:
-  `nightlight-roads-osm-power-v1`.
-- **`inferred-provided-mauritius-rodrigues`** (`source="inferred-provided"`) applies the
-  same nightlight road method but roots it on the provided input substations and
-  generators and preserves the provided CEB backbone. Methodology:
-  `nightlight-roads-provided-power-v1`.
+**`base-mauritius`** is the real transmission network, built straight from the
+data the national utility (CEB) provided: its routed lines, substations and
+generation records. This is the reference network (method
+`ceb-routed-topology-v3`).
 
-The two inferred products share one routing method: VIIRS nightlights identify
-likely electrified targets, which then retain the dense, cyclic drivable OSM
-road subnetwork within the configured support distance of a target or a power
-asset. The drivable network excludes footpaths, tracks and hiking trails that
-the distribution-line proxy should not follow (set `network_type: all` only to
-inspect every mapped way). They map plausible network coverage — connectivity
-only — not the real distribution lines and not a working electrical model. Their
-inferred electrical values (11 kV, 5 MVA) are placeholders, written to
-`model_v_nom_kv` / `model_s_nom_mva`; the public `v_nom_kv` / `s_nom_mva`
-fields are left null so they cannot be mistaken for observed ratings.
+The other two are *estimates* of where the grid reaches for the parts we don't
+have surveyed. They use the same method (see below) and differ only in where
+their power assets come from:
 
-## Nightlight targets
+- **`inferred-osm-mauritius-rodrigues`** takes substations, plants and generators
+  from OpenStreetMap (method `nightlight-roads-osm-power-v1`).
+- **`inferred-provided-mauritius-rodrigues`** uses CEB's provided substations and
+  generators instead, and keeps CEB's transmission backbone (method
+  `nightlight-roads-provided-power-v1`).
 
-The nightlight step replaces the previous GridFinder least-cost (Dijkstra / MST)
-raster search. The high-pass filter and threshold are adapted from
-[GridFinder](https://github.com/carderne/gridfinder) by Chris Arderne (MIT
-licence); only the nightlight **target** step is kept. The inferred builds no
-longer route a least-cost tree over roads. Instead the VIIRS targets are used
-downstream to retain the OSM road subnetwork they support, preserving road
-cycles rather than collapsing to a sparse connector tree.
+One function builds all three, `energy.network_source.build_network`, chosen by a
+`source` argument (`base`, `inferred-osm`, `inferred-provided`). Each product
+records the data and method it came from in its metadata.
 
-`energy.nightlight_targets.build_nightlight_targets` writes only:
+## How the inferred estimate works
 
-```text
-data/processed/energy/nightlight/<region>/targets.tif
-data/processed/energy/nightlight/<region>/targets.geoparquet
-data/processed/energy/nightlight/<region>/metadata.json
-```
+We don't have a surveyed map of the whole distribution grid, so the inferred
+products estimate where it plausibly reaches. The idea is straightforward:
 
-The former `costs.tif`, `distances.tif`, `grid.tif` and
-`connector-lines.geoparquet` raster/vector products are removed.
+1. **Find the lit-up places.** Satellites photograph the Earth at night, and
+   places that are consistently bright are almost certainly electrified. The
+   model reads a year of VIIRS night-lights imagery, keeps the pixels brighter
+   than a threshold, and turns them into *target* points — places the grid has
+   to reach. (The brightness filter is adapted from
+   [GridFinder](https://github.com/carderne/gridfinder) by Chris Arderne, MIT
+   licence.)
+2. **Take the roads.** Distribution lines tend to follow roads, so the drivable
+   road network from OpenStreetMap is the set of possible routes. Footpaths,
+   tracks and trails are left out — a power line won't follow a hiking path (set
+   `network_type: all` only to inspect every mapped way).
+3. **Keep the roads that matter.** The model keeps the roads that run close to a
+   target or a known power asset and drops the rest. What remains is its estimate
+   of the grid's reach.
 
-## Pipeline
+An earlier version routed a single least-cost tree over the roads (a Dijkstra /
+minimum-spanning-tree search). This method instead *keeps* the connected road
+network near the lit areas, so it preserves loops and dense local coverage rather
+than collapsing everything to one sparse path. The target step
+(`build_energy_nightlight_targets`) writes the target points, their raster mask
+and provenance to `data/processed/energy/nightlight/<region>/`.
 
-The Snakemake workflow (`workflow/0-preprocess/energy.smk`):
+**What the inferred products are — and aren't.** They are a coverage estimate:
+they show where the network plausibly runs, as connectivity. They are not a
+survey of the real lines, and not an electrical model you can flow power through.
+Their voltages and capacities are placeholders (11 kV, 5 MVA) written to
+`model_v_nom_kv` / `model_s_nom_mva`; the measured-rating fields
+`v_nom_kv` / `s_nom_mva` are left empty so the placeholders can't be mistaken for
+real values.
 
-1. cleans the provided demand, substation, transmission and generation data
-   (`prepare_energy_assets`);
-2. builds the `base-mauritius` PyPSA network from the provided data (`build_base_energy_network`);
-3. extracts VIIRS nightlight targets inside the reviewed area of interest
-   (`build_energy_nightlight_targets`);
-4. builds `inferred-osm-<region>` from OSM power terminals and the
-   nightlight-supported roads (`build_inferred_osm_energy_network`); and
-5. builds `inferred-provided-<region>` from the provided substations, generators and
-   CEB backbone with the same nightlight road method
-   (`build_inferred_provided_energy_network`).
+## Running it
 
-Each build also writes checksum-linked EPSG:4326 GeoParquet node and edge views
-in a `geoparquet/` subdirectory: NetCDF remains the modelling artifact, while the
-GeoParquet files are its GIS and visualisation view. For quick local inspection
-while developing, the dev-only notebooks under `notebooks/energy/` load and plot
-these outputs; they read the files and are not part of the workflow.
-
-Convenience targets:
+Snakemake drives everything (`workflow/0-preprocess/energy.smk`). In order it
+cleans the provided CEB data (`prepare_energy_assets`), builds `base-mauritius`
+from it (`build_base_energy_network`), extracts the night-light targets
+(`build_energy_nightlight_targets`), then builds the two inferred products on top
+of the targets and roads (`build_inferred_osm_energy_network` and
+`build_inferred_provided_energy_network`).
 
 ```shell
-# Build the base network (from the provided CEB data)
+# One product at a time
 snakemake -c1 energy_base_network
-
-# Build either inferred product
 snakemake -c1 energy_inferred_osm_network
 snakemake -c1 energy_inferred_provided_network
 
-# Build all three products (also writes the GeoParquet views and review tables)
+# All three
 snakemake -c1 build_energy_networks
 ```
 
-## Inputs
+Every build writes the network two ways: a PyPSA NetCDF file (the model itself)
+and, next to it in a `geoparquet/` folder, EPSG:4326 GeoParquet node and edge
+tables with matching checksums (the GIS / map view of the same topology). While
+developing, the notebooks under `notebooks/energy/` load and plot these outputs;
+they only read files and aren't part of the workflow.
 
-Place the unchanged provided source folders under
-`data/incoming/energy/provided/`: `power_demand`, `substation`,
-`power_transmission` and `generation_source`.
+## Inputs and configuration
 
-The nightlight and inferred builds also read cached monthly VIIRS tiles, an area
-of interest, and the cached OSM extracts:
+The provided CEB data goes under `data/incoming/energy/provided/` as the
+unchanged `power_demand`, `substation`, `power_transmission` and
+`generation_source` folders. The night-light and inferred builds also read:
 
 ```text
-data/incoming/energy/nightlights/viirs-2024-monthly/*.tif
-data/incoming/energy/osm/mauritius-rodrigues/aoi.parquet
-data/incoming/energy/osm/mauritius-rodrigues/roads.parquet
-data/incoming/energy/osm/mauritius-rodrigues/power.parquet
+data/incoming/energy/nightlights/viirs-2024-monthly/*.tif   # one image per month
+data/incoming/energy/osm/mauritius-rodrigues/aoi.parquet    # area of interest
+data/incoming/energy/osm/mauritius-rodrigues/roads.parquet  # OSM roads
+data/incoming/energy/osm/mauritius-rodrigues/power.parquet  # OSM power assets
 ```
 
-**The radiance composite is built for you.** `build_energy_nightlight_composite`
-reduces the cached monthly tiles to a single composite — their pixelwise median —
-at `data/processed/energy/nightlight/<region>/viirs-composite.tif`, which the
-target step reads. You never hand-make or hand-place it. (To use a pre-made
-composite instead, point `energy.nightlight.nightlights` at it and this step is
-skipped.)
+### Night-lights
 
-The monthly tiles are cached, opt-in downloads — the same offline-first pattern
-as OSM. A build never contacts the image service on its own; if the tiles are
-missing it stops until you set `energy.nightlight.source.allow_download: true`
-and run `snakemake -c1 fetch_energy_nightlights` (or simply build), after which
-runs stay offline. Everything project-specific — the image service, which
-monthly rasters to pull, the bounding box and the resolution — lives in
-`energy.nightlight.source`, so the same code reproduces a composite for any
-region or year.
+VIIRS publishes one night-lights image per month. The pipeline combines a year
+of them into a single image, taking the median brightness at each pixel so that
+cloudy or noisy months fall away (`build_energy_nightlight_composite`, written to
+`.../nightlight/<region>/viirs-composite.tif`). The monthly images are downloaded
+once and then cached; a normal build never touches the network. If they're
+missing the build stops and asks you to opt in: set
+`energy.nightlight.source.allow_download: true`, then run
+`snakemake -c1 fetch_energy_nightlights` (or start a normal build). After the one
+fetch, runs stay offline. Where the images come from — the service, which months
+to pull, the bounding box and the resolution — all lives in
+`energy.nightlight.source`, so the same code works for any region or year; for
+mu-star it is the 2024 VIIRS monthly series over Mauritius and Rodrigues from the
+Earth Observation Group's image service. To skip the download and combine steps,
+point `energy.nightlight.nightlights` at an image you already have.
 
-For mu-star, these are the 2024 VIIRS monthly cloud-free radiance layers over
-Mauritius and Rodrigues, from the Earth Observation Group ArcGIS service.
+### OpenStreetMap
 
-**OSM data is cached, not fetched during a build either.** A build never
-contacts OpenStreetMap; it reads the `roads.parquet` and `power.parquet` files
-above. You fill that cache once, explicitly, by calling
-`energy.osm.fetch_osm_roads` and `energy.osm.fetch_osm_power_features` with
-`allow_download=True` (for example from a Python shell or a notebook). After
-that, every build runs offline from the cache. Mauritius and Rodrigues are
-fetched separately and keep their island-level `region` labels. The
-`allow_osm_download` keys in the config only *record* how the cache was made —
-the Snakemake rules themselves never download.
-
-Each cached road keeps its OSM `highway` class, and the build reports two
-breakdowns in its metadata — `highway_classes` for the roads it kept and
-`road_envelope_highway_classes` for the full envelope — so you can see which road
-types were included or dropped (footpaths, tracks and the like). The default
-`network_type: drive` keeps the drivable network; `network_type: all` instead
-caches `roads-all.parquet` with every mapped way, for a whole-network coverage
+Roads and power features are cached the same way: fetched once with
+`energy.osm.fetch_osm_roads` / `fetch_osm_power_features` (`allow_download=True`,
+e.g. from a Python shell), then read offline on every build. Mauritius and
+Rodrigues are fetched separately and keep their island `region` labels. Each road
+keeps its OSM `highway` class, and the build metadata lists which classes it kept
+(`highway_classes`) against the full set (`road_envelope_highway_classes`), so the
+footpath/track exclusion stays checkable. `network_type: drive` (the default)
+keeps the drivable network; `network_type: all` caches every mapped way for
 comparison.
 
 The relevant settings (`config/config.yaml`) are:
@@ -174,14 +163,13 @@ energy:
     nightlight_support_distance_m: 1000
 ```
 
-The inferred road-plus-backbone length is checked against CEB's reported
-10,492.2 circuit-km total. Geographic road length and electrical circuit-km are
-different quantities, so `line_length_tolerance_fraction` is a deliberately
-advisory bound: the reviewed inferred builds use `0.10`, while
-`build_network`'s own parameter default is the looser `0.35`. If a member island
-has no known power asset, the build gives it a clearly labelled placeholder
-("provisional") root, so that island still forms its own connected part of the
-network instead of being dropped.
+As a sanity check, the total length of the inferred roads-plus-backbone is
+compared against CEB's reported 10,492.2 circuit-km. Road length and electrical
+circuit-km aren't the same quantity, so this is only an advisory bound
+(`line_length_tolerance_fraction`): the reviewed builds use `0.10`, while
+`build_network`'s own default is a looser `0.35`. If a member island has no known
+power asset, it gets a clearly labelled placeholder ("provisional") root so it
+still forms its own connected piece of the network rather than being dropped.
 
 ## Outputs
 
