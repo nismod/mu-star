@@ -16,7 +16,7 @@ produces three versions:
 Without a survey of the real distribution grid, the inferred networks estimate
 its likely reach:
 
-1. **Find the lit-up places.** Somewhere consistently bright at night is almost
+1. **Find lit-up areas.** Somewhere consistently bright at night is almost
    certainly electrified. We read a year of VIIRS night-time-lights imagery and
    keep the bright pixels as *targets* — places the grid has to reach. (The
    brightness filter is adapted from
