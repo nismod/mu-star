@@ -77,8 +77,19 @@ energy:
     # user-supplied files (never downloaded or overwritten).
     roads: null
     aoi: null
-    # Required VIIRS composite. The file is not downloaded implicitly because
-    # its vintage and preprocessing must be reviewed and cited.
-    nightlights: incoming/energy/nightlights/viirs-mauritius-rodrigues-2024.tif
+    # Optional pre-made radiance composite (relative to data_root). Leave null to
+    # build one from the monthly tiles under source.monthly_dir.
+    nightlights: null
+    # Where the VIIRS radiance composite comes from. Generic and offline-first: a
+    # build only downloads when a monthly tile is missing AND allow_download is
+    # true. Change bbox for another region, object_ids for another year/service.
+    source:
+      service: https://di-lawimagery1.img.arcgis.com/arcgis/rest/services/NighttimeLightsMDNB/ImageServer
+      rendering_rule: "Average Monthly Radiance (Raw Values)"
+      object_ids: [120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131]
+      bbox: [57, -21, 64, -19]
+      pixel_size_degrees: 0.004166666666666667
+      monthly_dir: incoming/energy/nightlights/viirs-2024-monthly
+      allow_download: false
     nightlight_threshold: 0.1
     nightlight_support_distance_m: 1000

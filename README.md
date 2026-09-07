@@ -200,8 +200,7 @@ backbone). Both inferred products retain the OSM road subnetwork supported by
 VIIRS nightlight targets, and each build writes matching GeoParquet layers:
 
 ```shell
-snakemake -c1 energy_network
-snakemake -c1 energy_exports
+snakemake -c1 build_energy_networks
 ```
 
 The inferred electrical values are topology placeholders. Interruption analysis

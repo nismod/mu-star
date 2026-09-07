@@ -17,6 +17,6 @@ See [`../README.md`](../README.md) for one-time setup (nbstripout / pre-commit).
   - `explore_network(name)` — interactive Plotly map; `plot_network(name)` — static.
   - `MAURITIUS_BBOX` / `RODRIGUES_BBOX` — bbox constants for the `clip=` argument.
 - `00-data-review/` — review inputs and built outputs at a glance.
-- `01-build-network/` — the edit → `snakemake -c1 energy_network` → re-plot loop.
+- `01-build-network/` — the edit → `snakemake -c1 build_energy_networks` → re-plot loop.
 
-Build the products first via `01-build-network` (or `snakemake -c1 energy_network`).
+Build the products first via `01-build-network` (or `snakemake -c1 build_energy_networks`).

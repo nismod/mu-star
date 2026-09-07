@@ -86,34 +86,44 @@ ENERGY_NIGHTLIGHT_REGION = str(
     ENERGY_NIGHTLIGHT.get("region", ENERGY_INFERRED_REGION)
 ).strip()
 ENERGY_NIGHTLIGHT_REGION_SLUG = _energy_slug(ENERGY_NIGHTLIGHT_REGION)
-ENERGY_NIGHTLIGHT_RELATIVE = ENERGY_NIGHTLIGHT.get(
-    "nightlights",
-    f"incoming/energy/nightlights/viirs-{ENERGY_NIGHTLIGHT_REGION_SLUG}-2024.tif",
-)
-ENERGY_NIGHTLIGHT_AOI_RELATIVE = (
-    ENERGY_NIGHTLIGHT.get("aoi")
-    or f"incoming/energy/osm/{ENERGY_NIGHTLIGHT_REGION_SLUG}/aoi.parquet"
-)
 ENERGY_NIGHTLIGHT_DIR = (
     f"{{data}}/processed/energy/nightlight/{ENERGY_NIGHTLIGHT_REGION_SLUG}"
 )
 ENERGY_NIGHTLIGHT_TARGETS = f"{ENERGY_NIGHTLIGHT_DIR}/targets.geoparquet"
 
-for label, relative_path, suffixes in (
-    ("energy.nightlight.nightlights", ENERGY_NIGHTLIGHT_RELATIVE, {".tif", ".tiff"}),
-    (
-        "energy.nightlight.aoi",
-        ENERGY_NIGHTLIGHT_AOI_RELATIVE,
-        {".geojson", ".gpkg", ".parquet", ".geoparquet"},
-    ),
-):
-    if not relative_path:
-        raise ValueError(f"{label} must not be empty")
-    if Path(relative_path).is_absolute():
-        raise ValueError(f"{label} must be relative to the selected data root")
-    if Path(relative_path).suffix.lower() not in suffixes:
-        expected = ", ".join(sorted(suffixes))
-        raise ValueError(f"{label} must use one of: {expected}")
+# The radiance composite is built from cached monthly VIIRS tiles unless the user
+# supplies their own via energy.nightlight.nightlights (relative to data_root).
+# Region/year specifics live in config so the acquisition code stays reusable.
+ENERGY_NIGHTLIGHT_SOURCE = ENERGY_NIGHTLIGHT.get("source", {})
+ENERGY_NIGHTLIGHT_MONTHLY_DIR = ENERGY_NIGHTLIGHT_SOURCE.get(
+    "monthly_dir", "incoming/energy/nightlights/viirs-2024-monthly"
+)
+ENERGY_NIGHTLIGHT_OBJECT_IDS = list(ENERGY_NIGHTLIGHT_SOURCE.get("object_ids", range(120, 132)))
+ENERGY_NIGHTLIGHT_MONTHS = [
+    f"{{data}}/{ENERGY_NIGHTLIGHT_MONTHLY_DIR}/{index:02d}.tif"
+    for index in range(1, len(ENERGY_NIGHTLIGHT_OBJECT_IDS) + 1)
+]
+ENERGY_NIGHTLIGHT_BUILT_COMPOSITE = f"{ENERGY_NIGHTLIGHT_DIR}/viirs-composite.tif"
+
+ENERGY_NIGHTLIGHT_OVERRIDE = ENERGY_NIGHTLIGHT.get("nightlights")
+if ENERGY_NIGHTLIGHT_OVERRIDE:
+    if Path(ENERGY_NIGHTLIGHT_OVERRIDE).is_absolute():
+        raise ValueError("energy.nightlight.nightlights must be relative to the selected data root")
+    if Path(ENERGY_NIGHTLIGHT_OVERRIDE).suffix.lower() not in {".tif", ".tiff"}:
+        raise ValueError("energy.nightlight.nightlights must be a .tif or .tiff raster")
+    ENERGY_NIGHTLIGHT_COMPOSITE = f"{{data}}/{ENERGY_NIGHTLIGHT_OVERRIDE}"
+else:
+    ENERGY_NIGHTLIGHT_COMPOSITE = ENERGY_NIGHTLIGHT_BUILT_COMPOSITE
+
+ENERGY_NIGHTLIGHT_AOI_RELATIVE = (
+    ENERGY_NIGHTLIGHT.get("aoi")
+    or f"incoming/energy/osm/{ENERGY_NIGHTLIGHT_REGION_SLUG}/aoi.parquet"
+)
+if Path(ENERGY_NIGHTLIGHT_AOI_RELATIVE).is_absolute():
+    raise ValueError("energy.nightlight.aoi must be relative to the selected data root")
+_ENERGY_AOI_SUFFIXES = {".geojson", ".gpkg", ".parquet", ".geoparquet"}
+if Path(ENERGY_NIGHTLIGHT_AOI_RELATIVE).suffix.lower() not in _ENERGY_AOI_SUFFIXES:
+    raise ValueError(f"energy.nightlight.aoi must use one of: {', '.join(sorted(_ENERGY_AOI_SUFFIXES))}")
 
 
 # Sidecars required to read a provided ESRI shapefile. The optional .cpg
@@ -219,6 +229,65 @@ rule build_base_energy_network:
         )
 
 
+rule fetch_energy_nightlights:
+    """
+    Cache the monthly VIIRS radiance tiles (opt-in download).
+
+    Offline-first: this reaches the image service only when a tile is missing
+    AND energy.nightlight.source.allow_download is true; otherwise it explains
+    how to enable the fetch. Reproduce the tiles from scratch with:
+    snakemake -c1 fetch_energy_nightlights
+    """
+    output:
+        months=ENERGY_NIGHTLIGHT_MONTHS,
+    params:
+        out_dir=f"{{data}}/{ENERGY_NIGHTLIGHT_MONTHLY_DIR}",
+        object_ids=ENERGY_NIGHTLIGHT_OBJECT_IDS,
+        bbox=ENERGY_NIGHTLIGHT_SOURCE.get("bbox", [57, -21, 64, -19]),
+        pixel_size_degrees=ENERGY_NIGHTLIGHT_SOURCE.get("pixel_size_degrees", 0.004166666666666667),
+        service=ENERGY_NIGHTLIGHT_SOURCE.get("service"),
+        rendering_rule=ENERGY_NIGHTLIGHT_SOURCE.get("rendering_rule"),
+        allow_download=bool(ENERGY_NIGHTLIGHT_SOURCE.get("allow_download", False)),
+    run:
+        from pathlib import Path
+
+        from energy.nightlight_source import (
+            DEFAULT_RENDERING_RULE,
+            DEFAULT_SERVICE,
+            fetch_nightlight_months,
+        )
+
+        fetch_nightlight_months(
+            object_ids=list(params.object_ids),
+            bbox=list(params.bbox),
+            pixel_size_degrees=float(params.pixel_size_degrees),
+            out_dir=Path(params.out_dir),
+            service=params.service or DEFAULT_SERVICE,
+            rendering_rule=params.rendering_rule or DEFAULT_RENDERING_RULE,
+            allow_download=params.allow_download,
+        )
+
+
+rule build_energy_nightlight_composite:
+    """
+    Reduce the cached monthly VIIRS tiles to one radiance composite.
+
+    Tiles come from fetch_energy_nightlights (or the shared data store); this
+    writes the pixelwise-median composite the target step reads. Test with:
+    snakemake -c1 data/processed/energy/nightlight/mauritius-rodrigues/viirs-composite.tif
+    """
+    input:
+        months=ENERGY_NIGHTLIGHT_MONTHS,
+    output:
+        composite=ENERGY_NIGHTLIGHT_BUILT_COMPOSITE,
+    run:
+        from pathlib import Path
+
+        from energy.nightlight_source import build_nightlight_composite
+
+        build_nightlight_composite([Path(p) for p in input.months], Path(output.composite))
+
+
 rule build_energy_nightlight_targets:
     """
     Extract VIIRS nightlight connection targets (replaces GridFinder rasters).
@@ -229,7 +298,7 @@ rule build_energy_nightlight_targets:
     snakemake -c1 data/processed/energy/nightlight/mauritius-rodrigues/targets.geoparquet
     """
     input:
-        nightlights=f"{{data}}/{ENERGY_NIGHTLIGHT_RELATIVE}",
+        nightlights=ENERGY_NIGHTLIGHT_COMPOSITE,
         aoi=f"{{data}}/{ENERGY_NIGHTLIGHT_AOI_RELATIVE}",
     output:
         targets_raster=f"{ENERGY_NIGHTLIGHT_DIR}/targets.tif",
@@ -417,23 +486,9 @@ rule energy_inferred_provided_network:
         f"{ENERGY_DATA_ROOT}/processed/energy/networks/{ENERGY_INFERRED_PROVIDED_NAME}/{ENERGY_INFERRED_PROVIDED_NAME}.nc",
 
 
-rule energy_network:
+rule build_energy_networks:
     """Build all three energy networks (base and both inferred products)."""
     input:
         rules.energy_base_network.input,
         rules.energy_inferred_osm_network.input,
         rules.energy_inferred_provided_network.input,
-
-
-rule energy_exports:
-    """Publish checksum-linked GeoParquet sidecars and review tables per product."""
-    input:
-        # base-mauritius
-        f"{ENERGY_DATA_ROOT}/processed/energy/networks/{ENERGY_BASE_NAME}/geoparquet/{ENERGY_BASE_NAME}-spatial-manifest.json",
-        f"{ENERGY_DATA_ROOT}/out/energy/{ENERGY_BASE_NAME}/validation.json",
-        # inferred-osm
-        f"{ENERGY_DATA_ROOT}/processed/energy/networks/{ENERGY_INFERRED_OSM_NAME}/geoparquet/{ENERGY_INFERRED_OSM_NAME}-spatial-manifest.json",
-        f"{ENERGY_DATA_ROOT}/out/energy/{ENERGY_INFERRED_OSM_NAME}/validation.json",
-        # inferred-provided
-        f"{ENERGY_DATA_ROOT}/processed/energy/networks/{ENERGY_INFERRED_PROVIDED_NAME}/geoparquet/{ENERGY_INFERRED_PROVIDED_NAME}-spatial-manifest.json",
-        f"{ENERGY_DATA_ROOT}/out/energy/{ENERGY_INFERRED_PROVIDED_NAME}/validation.json",
