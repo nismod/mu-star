@@ -1,0 +1,225 @@
+{# Template adapted from https://github.com/codeghetti/seagulls-py/pull/39/ MIT license (c) 2021 codeghetti.com #}
+{% defaultmacro bases(cls) %}
+    {% if cls.bases -%}
+        ({% for base in cls.bases %}{{ base[2] | safe }}{% endfor %})
+    {%- endif %}
+{% enddefaultmacro %}
+{% defaultmacro default_value(var) -%}
+    {%- if var.default_value_str -%}
+{{ var.default_value_str | safe }}
+    {%- endif -%}
+{% enddefaultmacro %}
+{% defaultmacro annotation(var) %}
+    {%- if var.annotation_str -%}
+{{ var.annotation_str | safe }}
+    {%- endif -%}
+{% enddefaultmacro %}
+{% defaultmacro decorators(doc) %}
+    {% for d in doc.decorators if not d.startswith("@_") %}
+{{ d }}
+    {% endfor -%}
+{% enddefaultmacro %}
+{% defaultmacro headerlink(doc) -%}
+[# ](#{{ doc.qualname }}.html){: #{{ doc.qualname.replace("_", "\_") }} }
+{% enddefaultmacro %}
+{% defaultmacro function(fn, nesting_lvl) -%}
+    {% set nesting_header = "#" * nesting_lvl %}
+    {% if fn.name == "__init__" %}
+##{{ nesting_header }} {{ ".".join(fn.qualname.split(".")[:-1]) }}()
+
+```python
+{{ decorators(fn) -}}
+{{ ".".join(fn.qualname.split(".")[:-1]) }}
+            {#- no space -#}
+{{ fn.signature_without_self | safe }}:
+```
+    {% else %}
+##{{ nesting_header }} {{ fn.name }}()
+
+```python
+{{ decorators(fn) -}}
+{{ fn.funcdef }} {{ fn.name }}
+            {#- no space -#}
+{{ fn.signature | safe }}:
+```
+    {% endif %}
+{% enddefaultmacro %}
+{% defaultmacro variable(var, nesting_lvl) %}
+{% set nesting_header = "#" * nesting_lvl %}
+##{{ nesting_header }} {{ var.name }}
+
+```python
+{{ var.name }}{{ annotation(var) }}{{ default_value(var) }}
+```
+{% enddefaultmacro %}
+{% defaultmacro submodule(mod, nesting_lvl) %}
+{% set nesting_header = "#" * nesting_lvl %}
+## Sumbodule: {{ nesting_header }} {{ mod.name }}
+
+**taken from:** `{{ mod.taken_from[0] }}`
+
+{{ docstring(mod, 0) }}
+
+{% for m in mod.flattened_own_members if is_public(m) | trim %}
+{{ member(m, nesting_lvl) }}
+    {% if m.type == "class" %}
+        {% for m in m.own_members if m.type != "class" and is_public(m) | trim %}
+{{ member(m, 1 + nesting_lvl) }}
+        {% endfor %}
+        {% set inherited_members = inherited(m) | trim %}
+        {% if inherited_members %}
+###{{ "#" * nesting_lvl }} Inherited Members
+
+{{ inherited_members | safe }}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+
+{% enddefaultmacro %}
+{% defaultmacro class(cls, nesting_lvl) %}
+{% set nesting_header = "#" * nesting_lvl %}
+##{{ nesting_header }} {{ cls.qualname }}
+
+```python
+{{ decorators(cls) -}}
+class {{ cls.qualname }}{{- bases(cls) }}:
+```
+{% enddefaultmacro %}
+{% defaultmacro member(doc, nesting_lvl) %}
+    {% if doc.type == "class" %}
+{{ class(doc, nesting_lvl) }}
+    {% elif doc.type == "function" %}
+{{- function(doc, nesting_lvl) }}
+    {% elif doc.type == "module" %}
+{{- submodule(doc, nesting_lvl) }}
+    {% else %}
+{{- variable(doc, nesting_lvl) }}
+    {% endif %}
+{{ docstring(doc, nesting_lvl) }}
+    {% if doc.type != "variable" %}
+{{- view_source(doc) }}
+    {% endif %}
+{% enddefaultmacro %}
+{% defaultmacro docstring(var, nesting_lvl) %}
+    {% if var.docstring %}
+    {% set nesting_header = "#" * nesting_lvl %}
+{{ (var.docstring | to_markdown).replace("######", "###" + nesting_header) }}
+    {% endif %}
+{% enddefaultmacro %}
+{% defaultmacro nav_members(members) %}
+        {% for m in members if is_public(m) | trim %}
+                {% if m.type == "class" %}
+- [{{ m.qualname }}]({{ m.qualname }})
+                    {% if m.own_members %}
+{{ nav_members(m.own_members) | indent(12) }}
+                    {% endif %}
+                {% elif m.type == "module" %}
+[{{ m.name }}](#{{ m.name }})
+                {% elif m.name == "__init__" %}
+[{{ m.qualname.split(".")[-2] }}](#{{ m.qualname }})
+                {% else %}
+[{{ m.name }}](#{{ m.qualname }})
+                {% endif %}
+        {% endfor %}
+{% enddefaultmacro %}
+{% defaultmacro is_public(doc) %}
+    {#
+    This macro is a bit unconventional in that its output is not rendered, but treated as a boolean:
+    Returning no text is interpreted as false, returning any other text is iterpreted as true.
+    Implementing this as a macro makes it very easy to override with a custom template..
+    #}
+    {% if not doc.name.startswith("_") %}
+        {# members not starting with an underscore are considered public by default #}
+        true
+    {% elif doc.name == "__init__" %}
+        {# the constructor is our special case which we also treat as public #}
+        true
+    {% elif doc.name == "__doc__" %}
+        {# Sometimes we have __doc__ in __all__, which we want to exclude for pdoc's purposes. #}
+        {# https://github.com/mitmproxy/pdoc/issues/235 #}
+    {% elif doc.qualname is in(module.obj.__all__ or []) %}
+        {# members starting with an underscore are still public if mentioned in __all__ #}
+        true
+    {% endif %}
+{% enddefaultmacro %}
+{# fmt: off #}
+{% defaultmacro inherited(cls) %}
+    {% for base, members in cls.inherited_members.items() %}
+        {% set m = None %}{# workaround for https://github.com/pallets/jinja/issues/1427 #}
+        {% set member_output %}
+            {% for m in members if is_public(m) | trim %}
+                {% if m.type == "function" %}
+- `#!python {{ m.name.replace("__init__",base[1]) | safe }}{{ m.signature_without_self | safe }}`
+                {% else %}
+- `#!python {{ m.name }}{{ annotation(m) }}{{ default_value(m) }}`
+                {% endif %}
+            {% endfor %}
+        {% endset %}
+        {# we may not have any public members, in which case we don't want to print anything. #}
+        {% if member_output %}
+**taken from:** {{ base[0] }}:{{ base[1] }}
+
+{{ member_output }}
+        {% endif %}
+    {% endfor %}
+{% enddefaultmacro %}
+{# fmt: on #}
+{% defaultmacro view_source(doc) %}
+    {% if show_source and doc.source %}
+<details><summary>View source</summary>
+
+```python
+{{ doc.source | safe }}
+```
+
+</details>
+    {% endif %}
+{% enddefaultmacro %}
+{% defaultmacro module_name() %}
+
+# {% set parts = module.modulename.split(".") %}
+    {%- for part in parts -%}
+        {%- set fullname = ".".join(parts[:loop.index]) -%}
+        {%- if fullname in all_modules and fullname != module.modulename -%}
+            [{{ part }}]({{ "../" * loop.revindex0 }}{{ part }}.html)
+        {%- else -%}
+            {{ part }}
+        {%- endif -%}
+        {%- if loop.nextitem -%}
+            .
+        {%- endif -%}
+    {%- endfor %}
+
+{% enddefaultmacro %}
+{% block head %}{% endblock %}
+{% block body %}
+    {% block nav %}{% endblock %}
+        {% block module_info %}
+{{ module_name() }}
+{{ docstring(module, 0) }}
+{{ view_source(module) }}
+            {% block edit_button %}
+                {% if edit_url %}
+[Edit on GitHub]({{ edit_url }})
+                {% endif %}
+            {% endblock %}
+        {% endblock %}
+        {% block module_contents %}
+            {% for m in module.flattened_own_members if is_public(m) | trim %}
+{{ member(m, 0) }}
+                {% if m.type == "class" %}
+                    {% for m in m.own_members if m.type != "class" and is_public(m) | trim %}
+{{ member(m, 1) }}
+                    {% endfor %}
+                    {% set inherited_members = inherited(m) | trim %}
+                    {% if inherited_members %}
+### Inherited Members
+
+{{ inherited_members | safe }}
+                    {% endif %}
+                {% endif %}
+            {% endfor %}
+        {% endblock %}
+    {% block search_js %}
+    {% endblock %}
+{% endblock %}

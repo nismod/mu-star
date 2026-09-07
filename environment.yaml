@@ -7,8 +7,9 @@ channels:
 dependencies:
   - python=3.12
   - pip:
-      - -e .
+      - -e .[dev]
       - nismod-snail
+      - osmium
   - geopandas
   - hatchling
   - highspy
@@ -22,6 +23,7 @@ dependencies:
   - openpyxl
   - osmnx>=2
   - pandas>=2,<3
+  - pdoc
   - plotly>=6
   - pre-commit
   - pyarrow
@@ -30,6 +32,7 @@ dependencies:
   - scipy
   - shapely
   - bioconda::snakemake
+  - terracotta==0.9.1
   - tqdm
   - xarray
   - zarr
