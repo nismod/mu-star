@@ -889,6 +889,7 @@ def _build_inferred_network(
     region: str,
     allow_download: bool,
     network_type: str,
+    roads_path: Path | None = None,
     nightlight_aoi_path: Path,
     nightlights_path: Path,
     nightlight_targets: gpd.GeoDataFrame | str | Path | None,
@@ -905,7 +906,9 @@ def _build_inferred_network(
 ) -> NetworkBuildOutputs:
     if source not in {"inferred-osm", "inferred-provided"}:
         raise ValueError(f"Unsupported inferred source: {source}")
-    roads_result = osm.fetch_osm_roads(region, network_type=network_type, allow_download=allow_download)
+    roads_result = osm.fetch_osm_roads(
+        region, network_type=network_type, allow_download=allow_download, path=roads_path
+    )
     roads_cache_path = _fetch_result_path(roads_result)
     osm_road_envelope = _coerce_vector_fetch_result(roads_result)
     if osm_road_envelope is None:
@@ -1187,6 +1190,7 @@ def build_network(
     overwrite: bool = False,
     allow_download: bool = False,
     network_type: str = "drive",
+    roads_path: Path | None = None,
     nightlight_aoi_path: Path | None = None,
     nightlights_path: Path | None = None,
     nightlight_targets: gpd.GeoDataFrame | str | Path | None = None,
@@ -1214,7 +1218,9 @@ def build_network(
     nightlight targets to retain a dense, cyclic OSM road subnetwork;
     the inferred-provided product also preserves the CEB backbone. Existing
     outputs are not overwritten unless ``overwrite`` is set, and OSM data is
-    only downloaded when ``allow_download`` is True. Every build also writes
+    only downloaded when ``allow_download`` is True. ``roads_path`` reads the
+    road envelope from a specific file instead of the cached OSM location.
+    Every build also writes
     checksum-linked node and edge GeoParquet views in a ``geoparquet``
     subdirectory. Each named result is packaged under
     ``<output_dir>/<output_name>/``. When ``export_root`` is supplied, the
@@ -1278,6 +1284,7 @@ def build_network(
         region=region,
         allow_download=allow_download,
         network_type=network_type,
+        roads_path=roads_path,
         nightlight_aoi_path=nightlight_aoi_path,
         nightlights_path=nightlights_path,
         nightlight_targets=nightlight_targets,

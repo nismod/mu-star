@@ -124,6 +124,7 @@ def fetch_osm_roads(
     network_type: str = "drive",
     overwrite: bool = False,
     allow_download: bool = False,
+    path: Path | None = None,
 ) -> OSMRoadsOutput:
     """Fetch the OSM road network for a region and cache it as LineStrings.
 
@@ -138,14 +139,22 @@ def fetch_osm_roads(
     When the data is not cached and ``allow_download`` is False, this raises
     ``OSMDownloadRequired`` instead of contacting OSM, so a run never downloads
     without being asked. Regions with no mapped roads (e.g. St Brandon) cache an
-    empty layer.
+    empty layer. Pass ``path`` to read a specific user-supplied roads file
+    instead of the cached location; a missing explicit ``path`` is reported
+    rather than downloaded or overwritten.
     """
     region = _require_region(region)
     slug = region_slug(region)
 
-    path = osm_roads_path(region, network_type)
+    explicit_path = path is not None
+    path = Path(path) if explicit_path else osm_roads_path(region, network_type)
     if path.exists() and not overwrite:
         return OSMRoadsOutput(region, path, len(gpd.read_parquet(path)))
+    if explicit_path:
+        raise FileNotFoundError(
+            f"Configured roads file {path} does not exist; a user-supplied roads "
+            "path is never downloaded or overwritten."
+        )
     members = region_members(region)
     if len(members) > 1:
         member_frames = [

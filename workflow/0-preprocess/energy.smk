@@ -72,7 +72,13 @@ ENERGY_OSM_ROOT = f"incoming/energy/osm/{ENERGY_INFERRED_REGION_SLUG}"
 _ENERGY_ROADS_SUFFIX = (
     "" if ENERGY_INFERRED_NETWORK_TYPE == "drive" else f"-{_energy_slug(ENERGY_INFERRED_NETWORK_TYPE)}"
 )
-ENERGY_OSM_ROADS = f"{ENERGY_OSM_ROOT}/roads{_ENERGY_ROADS_SUFFIX}.parquet"
+# A user-supplied energy.nightlight.roads path (relative to data_root) overrides
+# the cached OSM extract. Both inferred rules declare it as the roads input and
+# pass it into build_network, so the declared input and the file the builder
+# reads stay in step. Leave it null to use the cached OSM roads.
+ENERGY_OSM_ROADS = (
+    ENERGY_NIGHTLIGHT.get("roads") or f"{ENERGY_OSM_ROOT}/roads{_ENERGY_ROADS_SUFFIX}.parquet"
+)
 ENERGY_OSM_POWER = f"{ENERGY_OSM_ROOT}/power.parquet"
 
 # --- Nightlight target settings --------------------------------------------
@@ -110,6 +116,13 @@ for label, relative_path, suffixes in (
         raise ValueError(f"{label} must use one of: {expected}")
 
 
+# Sidecars required to read a provided ESRI shapefile. The optional .cpg
+# (codepage) sidecar is deliberately excluded: energy.intake.prepare_provided_data
+# reads these shapefiles without it, so requiring it here would reject
+# otherwise-valid inputs that omit it.
+PROVIDED_SHAPEFILE_EXTENSIONS = ("shp", "shx", "dbf", "prj")
+
+
 rule prepare_energy_assets:
     """
     Clean the provided energy source data and write reviewable asset tables.
@@ -121,19 +134,19 @@ rule prepare_energy_assets:
         workbook="{data}/incoming/energy/provided/power_demand/Power Demand.xlsx",
         substations=[
             f"{{data}}/incoming/energy/provided/substation/Substation.{extension}"
-            for extension in ("shp", "shx", "dbf", "prj", "cpg")
+            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
         ],
         routes=[
             f"{{data}}/incoming/energy/provided/power_transmission/PowerGrid.{extension}"
-            for extension in ("shp", "shx", "dbf", "prj", "cpg")
+            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
         ],
         generation_points=[
             f"{{data}}/incoming/energy/provided/generation_source/GenSource1.{extension}"
-            for extension in ("shp", "shx", "dbf", "prj", "cpg")
+            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
         ],
         generation_areas=[
             f"{{data}}/incoming/energy/provided/generation_source/GenSource2.{extension}"
-            for extension in ("shp", "shx", "dbf", "prj", "cpg")
+            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
         ],
         capacity_reference="src/energy/resources/generator_capacity_reference.csv",
     output:
@@ -283,8 +296,9 @@ rule build_inferred_osm_energy_network:
 
         from energy.network_source import build_network
 
-        # Resolve the OSM cache that build_network reads internally against the
-        # same data root Snakemake declares the roads/power inputs under.
+        # build_network reads the declared roads input from the path passed
+        # below; set the data root so any remaining internally-resolved OSM
+        # inputs (inferred-osm power features) resolve under the same tree.
         os.environ["MU_STAR_DATA_ROOT"] = str(Path(wildcards.data).resolve())
 
         build_network(
@@ -296,6 +310,7 @@ rule build_inferred_osm_energy_network:
             output_name=params.output_name,
             overwrite=True,
             network_type=params.network_type,
+            roads_path=Path(input.roads),
             nightlight_targets=Path(input.nightlight_targets),
             nightlight_support_distance_m=float(params.nightlight_support_distance_m),
             max_anchor_distance_m=float(params.max_anchor_distance_m),
@@ -356,8 +371,9 @@ rule build_inferred_provided_energy_network:
 
         from energy.network_source import build_network
 
-        # Resolve the OSM cache that build_network reads internally against the
-        # same data root Snakemake declares the roads input under.
+        # build_network reads the declared roads input from the path passed
+        # below; set the data root so any remaining internally-resolved OSM
+        # lookups resolve under the same tree.
         os.environ["MU_STAR_DATA_ROOT"] = str(Path(wildcards.data).resolve())
 
         build_network(
@@ -369,6 +385,7 @@ rule build_inferred_provided_energy_network:
             output_name=params.output_name,
             overwrite=True,
             network_type=params.network_type,
+            roads_path=Path(input.roads),
             nightlight_targets=Path(input.nightlight_targets),
             nightlight_support_distance_m=float(params.nightlight_support_distance_m),
             max_anchor_distance_m=float(params.max_anchor_distance_m),

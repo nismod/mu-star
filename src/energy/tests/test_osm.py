@@ -40,6 +40,32 @@ def test_uncached_region_requires_download():
         fetch_osm_power_features("Nowhere Test Region 99999")
 
 
+def test_fetch_osm_roads_reads_explicit_path(tmp_path):
+    """An explicit ``path`` (e.g. a configured energy.nightlight.roads) is read as-is."""
+    roads = gpd.GeoDataFrame(
+        {
+            "source": ["osm_roads"],
+            "region": ["rodrigues"],
+            "highway": ["residential"],
+            "geometry": [LineString([(63.42, -19.72), (63.421, -19.72)])],
+        },
+        crs="EPSG:4326",
+    )
+    supplied = tmp_path / "user_roads.parquet"
+    roads.to_parquet(supplied)
+
+    result = fetch_osm_roads("Rodrigues", path=supplied)
+
+    assert result.path == supplied
+    assert result.edge_count == 1
+
+
+def test_fetch_osm_roads_explicit_missing_path_is_reported(tmp_path):
+    """A configured roads path that does not exist is reported, never downloaded."""
+    with pytest.raises(FileNotFoundError):
+        fetch_osm_roads("Rodrigues", path=tmp_path / "absent.parquet")
+
+
 def test_fetch_osm_roads_preserves_highway_class(monkeypatch, tmp_path):
     ox = pytest.importorskip("osmnx")
     monkeypatch.setenv("MU_STAR_DATA_ROOT", str(tmp_path))
