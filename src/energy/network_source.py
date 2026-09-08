@@ -411,6 +411,7 @@ def _graph_line_frame(
     graph: nx.Graph,
     *,
     default_voltage_kv: float,
+    transmission_voltage_kv: float,
     default_capacity_mva: float,
 ) -> gpd.GeoDataFrame:
     columns = [
@@ -440,16 +441,18 @@ def _graph_line_frame(
                     (float(node1["x"]), float(node1["y"])),
                 ]
             )
+        line_source = attrs.get("source")
+        line_voltage_kv = transmission_voltage_kv if line_source == "provided_transmission" else default_voltage_kv
         rows.append(
             {
                 "line_id": str(attrs.get("edge_id") or f"inferred_line_{number:06d}"),
                 "bus0": bus0,
                 "bus1": bus1,
-                "v_nom_kv": default_voltage_kv,
+                "v_nom_kv": line_voltage_kv,
                 "length_km": max(float(attrs.get("length_km", 0.0)), 0.001),
                 "s_nom_mva": default_capacity_mva,
                 "inferred": True,
-                "source": attrs.get("source"),
+                "source": line_source,
                 "region": attrs.get("region"),
                 "stage": attrs.get("stage", "connectivity_only"),
                 "geometry": geometry,
@@ -879,6 +882,80 @@ def _highway_class_breakdown(roads: gpd.GeoDataFrame | None) -> dict[str, int]:
     return {str(name): int(count) for name, count in counts.items()}
 
 
+def _insert_transformer_junctions(
+    buses: gpd.GeoDataFrame,
+    lines: gpd.GeoDataFrame,
+    *,
+    capacity_mva: float,
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Split every bus carrying more than one line voltage into one bus per level.
+
+    A node where the transmission backbone meets distribution is physically a
+    transformer, and PyPSA needs one voltage per bus. Each such node becomes one
+    bus per voltage (the lowest keeps the original id) joined by a ``Transformer``;
+    lines reconnect to the split bus matching their own voltage.
+    """
+    transformer_columns = ["transformer_id", "bus0", "bus1", "v_nom0_kv", "v_nom1_kv", "s_nom_mva", "geometry"]
+    incident: dict[str, set[float]] = {}
+    for bus0, bus1, voltage in zip(lines["bus0"], lines["bus1"], lines["v_nom_kv"]):
+        incident.setdefault(str(bus0), set()).add(float(voltage))
+        incident.setdefault(str(bus1), set()).add(float(voltage))
+    mixed = {bus: sorted(volts) for bus, volts in incident.items() if len(volts) > 1}
+    if not mixed:
+        empty = gpd.GeoDataFrame(columns=transformer_columns, geometry="geometry", crs="EPSG:4326")
+        return buses, lines, empty
+
+    def split_id(bus: str, voltage: float, levels: list[float]) -> str:
+        return bus if voltage == levels[0] else f"{bus}::{round(voltage)}kv"
+
+    bus_lookup = buses.copy()
+    bus_lookup["bus_id"] = bus_lookup["bus_id"].astype(str)
+    bus_lookup = bus_lookup.set_index("bus_id")
+    extra_bus_rows: list[dict] = []
+    transformer_rows: list[dict] = []
+    for bus, levels in mixed.items():
+        base_row = bus_lookup.loc[bus]
+        geometry = base_row["geometry"]
+        for voltage in levels[1:]:
+            row = {column: base_row.get(column) for column in bus_lookup.columns}
+            row["bus_id"] = split_id(bus, voltage, levels)
+            row["kind"] = "transformer"
+            row["v_nom_kv"] = None
+            row["geometry"] = geometry
+            extra_bus_rows.append(row)
+        for low, high in pairwise(levels):
+            transformer_rows.append(
+                {
+                    "transformer_id": f"transformer::{bus}::{round(low)}-{round(high)}kv",
+                    "bus0": split_id(bus, high, levels),
+                    "bus1": split_id(bus, low, levels),
+                    "v_nom0_kv": float(high),
+                    "v_nom1_kv": float(low),
+                    "s_nom_mva": float(capacity_mva),
+                    "geometry": geometry,
+                }
+            )
+
+    def remap(bus: object, voltage: object) -> str:
+        bus = str(bus)
+        return split_id(bus, float(voltage), mixed[bus]) if bus in mixed else bus
+
+    lines = lines.copy()
+    lines["bus0"] = [remap(bus, voltage) for bus, voltage in zip(lines["bus0"], lines["v_nom_kv"])]
+    lines["bus1"] = [remap(bus, voltage) for bus, voltage in zip(lines["bus1"], lines["v_nom_kv"])]
+
+    extra_buses = gpd.GeoDataFrame(extra_bus_rows, geometry="geometry", crs=buses.crs)
+    buses = gpd.GeoDataFrame(
+        pd.concat([buses, extra_buses], ignore_index=True),
+        geometry="geometry",
+        crs=buses.crs,
+    )
+    transformers = gpd.GeoDataFrame(
+        transformer_rows, columns=transformer_columns, geometry="geometry", crs="EPSG:4326"
+    )
+    return buses, lines, transformers
+
+
 def _build_inferred_network(
     *,
     source: str,
@@ -897,6 +974,7 @@ def _build_inferred_network(
     nightlight_support_distance_m: float,
     max_anchor_distance_m: float,
     inferred_voltage_kv: float,
+    inferred_transmission_voltage_kv: float,
     inferred_capacity_mva: float,
     table_output_dir: Path | None,
     reference_line_length_km: float,
@@ -1018,15 +1096,17 @@ def _build_inferred_network(
         table_dir,
     )
 
-    buses = _node_bus_frame(graph)
-    buses["v_nom_kv"] = pd.to_numeric(
-        buses["v_nom_kv"],
-        errors="coerce",
-    ).fillna(inferred_voltage_kv)
     lines = _graph_line_frame(
         graph,
         default_voltage_kv=inferred_voltage_kv,
+        transmission_voltage_kv=inferred_transmission_voltage_kv,
         default_capacity_mva=inferred_capacity_mva,
+    )
+    buses = _node_bus_frame(graph)
+    # Split transmission<->distribution junctions into a bus per level joined by a
+    # transformer; build_topology_network then derives each bus's single voltage.
+    buses, lines, transformers = _insert_transformer_junctions(
+        buses, lines, capacity_mva=inferred_capacity_mva
     )
     service_weights = _equal_service_weights(buses)
     service_weights_path_out = table_dir / "service_weights.csv"
@@ -1077,7 +1157,7 @@ def _build_inferred_network(
         _write_metadata(table_outputs.validation, validation)
     if validation["errors"]:
         raise ValueError("Invalid inferred network tables:\n- " + "\n- ".join(validation["errors"]))
-    network = build_topology_network(buses, lines, _complete_generators(generators))
+    network = build_topology_network(buses, lines, _complete_generators(generators), transformers=transformers)
     anchored, unanchored = _power_asset_anchor_counts(graph)
     _write_network(network_path, network)
     spatial_dir = network_path.parent / "geoparquet"
@@ -1133,10 +1213,14 @@ def _build_inferred_network(
             "anchored_power_assets": anchored,
             "unanchored_power_assets": unanchored,
             "inferred_voltage_kv": inferred_voltage_kv,
+            "inferred_transmission_voltage_kv": inferred_transmission_voltage_kv,
             "inferred_capacity_mva": inferred_capacity_mva,
+            "transformers": len(network.transformers),
             "electrical_values_note": (
-                "Inferred voltages and capacities are non-binding topology "
-                "placeholders (see model_v_nom_kv / model_s_nom_mva)."
+                "Distribution voltages/capacities are non-binding topology "
+                "placeholders; the provided transmission backbone keeps its "
+                "voltage and joins distribution through transformers "
+                "(see model_v_nom_kv / model_s_nom_mva)."
             ),
             "max_anchor_distance_m": max_anchor_distance_m,
             "connected_components": nx.number_connected_components(graph),
@@ -1160,8 +1244,10 @@ def _build_inferred_network(
         publish_voltage=False,
         publish_capacity=False,
         electrical_values_note=(
-            "Inferred voltages and capacities are non-binding topology "
-            "placeholders (see model_v_nom_kv / model_s_nom_mva)."
+            "Distribution voltages/capacities are non-binding topology "
+            "placeholders; the provided transmission backbone keeps its "
+            "voltage and joins distribution through transformers "
+            "(see model_v_nom_kv / model_s_nom_mva)."
         ),
         stage="connectivity_only",
     )
@@ -1198,6 +1284,7 @@ def build_network(
     nightlight_support_distance_m: float = DEFAULT_NIGHTLIGHT_SUPPORT_DISTANCE_M,
     max_anchor_distance_m: float = DEFAULT_MAX_ANCHOR_DISTANCE_M,
     inferred_voltage_kv: float = 11,
+    inferred_transmission_voltage_kv: float = 66,
     inferred_capacity_mva: float = 5,
     export_root: Path | None = None,
     reference_line_length_km: float = CEB_TRANSMISSION_LENGTH_KM,
@@ -1292,6 +1379,7 @@ def build_network(
         nightlight_support_distance_m=nightlight_support_distance_m,
         max_anchor_distance_m=max_anchor_distance_m,
         inferred_voltage_kv=inferred_voltage_kv,
+        inferred_transmission_voltage_kv=inferred_transmission_voltage_kv,
         inferred_capacity_mva=inferred_capacity_mva,
         table_output_dir=table_output_dir,
         reference_line_length_km=inferred_reference_line_length_km,

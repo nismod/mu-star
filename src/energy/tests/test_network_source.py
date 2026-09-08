@@ -397,3 +397,11 @@ def test_build_inferred_provided_uses_only_provided_power_assets(tmp_path, monke
     assert set(network.generators.index) == {"plant"}
     assert network.generators.loc["plant", "bus"] == "bus::A"
     assert {"bus::A", "bus::B", "asset::plant"} <= set(network.buses.index)
+    # The provided transmission backbone keeps its own voltage and meets the
+    # distribution roads through transformers at the junction buses.
+    assert metadata["inferred_transmission_voltage_kv"] == 66
+    assert metadata["transformers"] >= 1
+    assert len(network.transformers) == metadata["transformers"]
+    bus_voltages = set(network.buses["v_nom"].round().astype(int))
+    assert 66 in bus_voltages
+    assert 11 in bus_voltages

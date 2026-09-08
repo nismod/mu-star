@@ -60,6 +60,7 @@ def build_topology_network(
     lines: gpd.GeoDataFrame,
     generators: pd.DataFrame,
     *,
+    transformers: gpd.GeoDataFrame | None = None,
     line_resistance_ohm_per_km: float = 0.01,
     line_reactance_ohm_per_km: float = 0.4,
 ) -> pypsa.Network:
@@ -196,6 +197,19 @@ def build_topology_network(
     ):
         if column in line_frame:
             network.lines[column] = line_frame[column].reindex(network.lines.index)
+
+    if transformers is not None and len(transformers):
+        transformer_frame = transformers.copy()
+        transformer_frame["transformer_id"] = transformer_frame["transformer_id"].astype(str)
+        transformer_frame = transformer_frame.set_index("transformer_id")
+        network.madd(
+            "Transformer",
+            transformer_frame.index,
+            bus0=transformer_frame["bus0"].astype(str).to_numpy(),
+            bus1=transformer_frame["bus1"].astype(str).to_numpy(),
+            s_nom=transformer_frame["s_nom_mva"].astype(float).to_numpy(),
+            x=0.1,
+        )
 
     for _, row in generators.iterrows():
         carrier = str(row["carrier"])
