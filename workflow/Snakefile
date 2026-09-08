@@ -1,9 +1,9 @@
 configfile: "config/config.yaml"
 
-
 include: "0-preprocess/osm_roads_preprocess.smk"
 include: "0-preprocess/econ_catalogue.smk"
 include: "0-preprocess/econ_utilities.smk"
+include: "0-preprocess/econ_model_setup.smk"
 include: "0-preprocess/econ_modelling.smk"
 include: "0-preprocess/econ.smk"
 include: "0-preprocess/catalogue-open-data.smk"

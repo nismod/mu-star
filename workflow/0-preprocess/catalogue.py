@@ -2,23 +2,25 @@
 
 import logging
 from pathlib import Path
+# from globdata
 
 
 def preprocess_local_catalogue(catalogue_root, output_root, country_code):
     """Write local subsets of catalogue layers that contain point coordinates."""
     import scalenav.oop as snoo
-    from globdata.parameters import load_catalogue
+    from globdata.catalogue import load_catalogue, REMOTE_ROOT
     from ibis import _
 
-    catalogue_root = str(catalogue_root)
-    if not catalogue_root.endswith("/"):
-        catalogue_root = f"{catalogue_root}/"
+    # catalogue_root = str(catalogue_root)
+    # if not catalogue_root.endswith("/"):
+    #     catalogue_root = f"{catalogue_root}/"
 
-    catalogue = load_catalogue(local=True, root=catalogue_root)
+    catalogue = load_catalogue(root=REMOTE_ROOT)
+    
     conn = snoo.connect()
 
     region = conn.read_parquet(catalogue["custom_bounds"]).filter(_.gid_0.isin([country_code]))
-    region_bound = region.geometry.unary_union().execute().set_crs("epsg:4326")[0]
+    region_bound = region.geometry.unary_union().execute()#.set_crs("epsg:4326")[0]
 
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -30,7 +32,7 @@ def preprocess_local_catalogue(catalogue_root, output_root, country_code):
 
         try:
             col_x, col_y = snoo.coords_columns(layer)
-            output_folder = output_root / "processed" / name
+            output_folder = output_root / name
             output_folder.mkdir(parents=True, exist_ok=True)
             # output_path = output_folder / f"{name}.parquet"
             layer.filter(_[col_x].point(_[col_y]).intersects(region_bound)).to_parquet_dir(
@@ -39,7 +41,8 @@ def preprocess_local_catalogue(catalogue_root, output_root, country_code):
                 str(output_folder),
                 existing_data_behavior="overwrite_or_ignore",
             )
-        except Exception:
+        except Exception as e:
+            print(e)
             missed_layers.append(name)
 
     print("Missed layers:", missed_layers)
@@ -49,13 +52,13 @@ def preprocess_local_catalogue(catalogue_root, output_root, country_code):
 
 def run_from_snakemake(snakemake):
     """Pass workflow settings to the catalogue preprocessing function."""
-    log_path = Path(str(snakemake.log[0]))
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        filename=log_path,
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
+    # log_path = Path(str(snakemake.log[0]))
+    # log_path.parent.mkdir(parents=True, exist_ok=True)
+    # logging.basicConfig(
+    #     filename=log_path,
+    #     level=logging.INFO,
+    #     format="%(asctime)s %(levelname)s %(message)s",
+    # )
 
     preprocess_local_catalogue(
         catalogue_root=snakemake.params.catalogue_root,
