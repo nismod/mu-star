@@ -2,20 +2,20 @@
 
 import logging
 from pathlib import Path
-# from globdata
+
+import scalenav.oop as snoo
+from globdata.catalogue import load_catalogue
+from ibis import _
 
 
 def preprocess_local_catalogue(catalogue_root, output_root, country_code):
-    """Write local subsets of catalogue layers that contain point coordinates."""
-    import scalenav.oop as snoo
-    from globdata.catalogue import load_catalogue, REMOTE_ROOT
-    from ibis import _
-
+    """Write local subsets of catalogue layers that contain point coordinates."""    
+    
     # catalogue_root = str(catalogue_root)
     # if not catalogue_root.endswith("/"):
     #     catalogue_root = f"{catalogue_root}/"
 
-    catalogue = load_catalogue(root=REMOTE_ROOT)
+    catalogue = load_catalogue(root=catalogue_root)
     
     conn = snoo.connect()
 

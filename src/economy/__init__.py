@@ -1,14 +1,16 @@
 """Economic data variables for MU-STAR."""
 
+model_freeze : str = 'hylas'
+
 cppRosm_roads_output_dir = "data/processed/cppRosm_network/"
 cppRosm_nodes_path: str = "data/processed/cppRosm_network/nodes.csv"
 cppRosm_edges_path: str = "data/processed/cppRosm_network/road_segments.csv"
 
-CATALOGUE_ROOT: str = "../catalogue"
-OUTPUT_ROOT: str = "../model/py/BHM"
+CATALOGUE_ROOT: str = "data/processed/Socio-Economic/CATALOGUE" #"../catalogue"
+OUTPUT_ROOT: str = "data/processed/Socio-Economic/BHM/models"
 
-local_catalogue_root: str = CATALOGUE_ROOT
-processed_local_catalogue_root: str = "data/processed/CATALOGUE"
+# local_catalogue_root: str = CATALOGUE_ROOT
+# processed_local_catalogue_root: str = "data/processed/Socio-Economic/CATALOGUE"
 osm_extract_path: str = "data/incoming/Infrastructure/Road Network/osm-extract/mauritius-260708.osm.pbf"
 
 raw_local_econ_data_path: str = "data/incoming/Socio-economic/GDP/Digest_NA_Yr2024_180625.xlsx"
@@ -27,3 +29,13 @@ main_roads = [
     # "primary",
     # 'secondary',
 ]
+
+
+# LOCAL FILES
+
+# CATALOGUE_ROOT: str = "../catalogue/datasets"
+# OUTPUT_ROOT: str = "data/processed/Socio-Economic/BHM/models"
+
+# local_catalogue_root: str = CATALOGUE_ROOT
+# processed_local_catalogue_root: str = "../catalogue/datasets"
+# osm_extract_path: str = "data/incoming/Infrastructure/Road Network/osm-extract/mauritius-260708.osm.pbf"

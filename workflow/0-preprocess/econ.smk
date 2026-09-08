@@ -1,7 +1,7 @@
 """Pre-process economic data for model constraints."""
 
 from economy import (
-    local_catalogue_root,
+    CATALOGUE_ROOT,
     processed_local_econ_data_path,
     raw_local_econ_data_path,
 )
@@ -13,7 +13,7 @@ rule preprocess_local_econ:
     output:
         table = processed_local_econ_data_path,
     params:
-        catalogue_root = lambda wildcards: local_catalogue_root,
+        catalogue_root = CATALOGUE_ROOT,
         country_code = config["local_econ"]["country_code"],
         year = config["local_econ"]["year"],
         rupees_per_usd = config["local_econ"]["rupees_per_usd"],
