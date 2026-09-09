@@ -25,7 +25,7 @@ jobs:
         run: find -name '*.ipynb' -exec nbstripout --verify {} \;
 
       - name: Test with pytest
-        # Use a 'login shell', thereforce sourcing .bashrc, necessary for umamba
+        # Use a login shell so setup-micromamba activates the test environment.
         shell: bash -l {0}
         run: |
           pytest -n auto src/

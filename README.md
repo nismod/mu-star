@@ -191,6 +191,24 @@ output files.
 
 While this workflow is in development, some of the rules are placeholders.
 
+The energy workflow builds three network products with one function,
+`build_network`: the `base-mauritius` network built from the provided CEB data,
+and two topology-only inferred coverage proxies for Mauritius and Rodrigues —
+`inferred-osm-mauritius-rodrigues` (OSM power terminals) and
+`inferred-provided-mauritius-rodrigues` (provided substations, generators and CEB
+backbone). Both inferred products retain the OSM road subnetwork supported by
+VIIRS nightlight targets, and each build writes matching GeoParquet layers:
+
+```shell
+snakemake -c1 build_energy_networks
+```
+
+The inferred electrical values are topology placeholders. Interruption analysis
+is intentionally out of scope for this migration, so energy does not yet expose
+the "given disrupted assets, output disruption metrics" interface. See
+`docs/src/infrastructure-energy.md` for inputs, provenance, the nightlight
+method (adapted from GridFinder) and current limitations.
+
 ### Testing
 
 Test the helper library and other included packages by activating the
@@ -206,6 +224,22 @@ Run auto-formatting and check for common minor problems using `ruff`:
 ruff format
 ruff check
 ```
+
+### Developer notebooks
+
+For visual debugging while developing a model, the `notebooks/` directory holds
+local, dev-only notebooks that read the pipeline's standard outputs and render
+them. They are namespaced per system (`notebooks/energy/`, and so on) and are
+not part of any workflow rule — production visualisation is the separate viewer
+at https://github.com/nismod/irv-standalone. Enable notebook output-stripping
+once per clone so committed notebooks stay diff-clean:
+
+```shell
+pre-commit install
+nbstripout --install
+```
+
+See `notebooks/README.md` for the per-system layout and conventions.
 
 ## Documentation
 

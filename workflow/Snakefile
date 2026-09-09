@@ -15,5 +15,6 @@ wildcard_constraints:
     peril=r"peril-(flood|cyclone)",
     subperil=r"subperil-(wind|fluvial|pluvial|coastal)",
     ensemble=r"ensemble-\d+",
+    scenario=r"[A-Za-z0-9][A-Za-z0-9_-]*",
     sector = r"transport|energy|water|building",
     geom_type = r"node|edge|area",
