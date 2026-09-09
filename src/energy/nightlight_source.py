@@ -1,11 +1,9 @@
 """Acquire VIIRS night-time lights: fetch monthly tiles and composite them.
 
-This module is deliberately generic so the same code serves any region or
-project: the image service, its monthly raster object IDs, the area of interest
-(bbox) and the output grid are all passed in by the caller (wired from
-``config.yaml`` in the Snakemake rules). mu-star's defaults target the
-Earth Observation Group "NighttimeLightsMDNB" ArcGIS image service over the
-Mauritius/Rodrigues bounding box, but nothing here is Mauritius-specific.
+The image service, its monthly raster object IDs, the area of interest (bbox)
+and the output grid are all supplied by the caller, wired from ``config.yaml``
+in the Snakemake rules. The service defaults to the Earth Observation Group
+"NighttimeLightsMDNB" ArcGIS image service.
 
 Acquisition is opt-in and offline-first, mirroring :mod:`energy.osm`: a build
 reads cached monthly tiles and never downloads on its own. Call

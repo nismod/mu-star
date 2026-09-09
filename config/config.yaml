@@ -45,7 +45,7 @@ energy:
     allow_osm_download: false
     max_anchor_distance_m: 1000
     topology_voltage_kv: 11
-    # Voltage for the provided CEB transmission backbone kept in inferred-provided;
+    # Voltage for the provided transmission backbone kept in inferred-provided;
     # distribution roads use topology_voltage_kv above, joined by transformers.
     transmission_voltage_kv: 66
     topology_capacity_mva: 5

@@ -1,20 +1,18 @@
-"""Prepare provided energy assets and build the base and inferred networks.
+"""Prepare the provided energy assets and build the network products.
 
-Three explicit, provenance-preserving products are built through the single
-``energy.network_source.build_network`` dispatch:
+Each network is built through ``energy.network_source.build_network``, chosen by
+its ``--source``:
 
-- ``base-mauritius`` (source ``base``): the provided CEB routed transmission
-  topology. This is the canonical operational network.
-- ``inferred-osm-<region>`` (source ``inferred-osm``): OSM substations, plants
-  and generators as power terminals, with a VIIRS-nightlight-supported OSM road
-  subnetwork.
-- ``inferred-provided-<region>`` (source ``inferred-provided``): the same nightlight
-  road method rooted on the provided substations and generators, preserving the
-  CEB backbone.
+- ``base``: built directly from the provided transmission assets.
+- ``inferred-osm``: OpenStreetMap substations, plants and generators as power
+  terminals, connected across an OSM road subnetwork filtered to VIIRS
+  night-light targets.
+- ``inferred-provided``: the same OSM-road-and-night-light method as
+  ``inferred-osm``, but rooted on the provided substations and generators and
+  keeping the provided transmission backbone.
 
-Interruption analysis is intentionally out of scope for this migration, so the
-"given disrupted assets, output disruption metrics" interface is not exposed
-yet (see docs/src/infrastructure-energy.md).
+Disruption analysis (reporting metrics for a set of disrupted assets) is not
+part of this workflow yet; see docs/src/infrastructure-energy.md.
 """
 
 
@@ -159,6 +157,7 @@ rule prepare_energy_assets:
             for extension in PROVIDED_SHAPEFILE_EXTENSIONS
         ],
         capacity_reference="src/energy/resources/generator_capacity_reference.csv",
+        script="workflow/0-preprocess/energy_prepare_assets.py",
     output:
         substations="{data}/processed/energy/provided/substations.parquet",
         snapped_substations="{data}/processed/energy/provided/snapped_substations.parquet",
@@ -175,12 +174,12 @@ rule prepare_energy_assets:
     params:
         input_dir="{data}/incoming/energy/provided",
         output_dir="{data}/processed/energy/provided",
-    run:
-        from pathlib import Path
-
-        from energy.intake import prepare_provided_data
-
-        prepare_provided_data(Path(params.input_dir), Path(params.output_dir))
+    shell:
+        """
+        python {input.script} \
+            --input-dir {params.input_dir} \
+            --output-dir {params.output_dir}
+        """
 
 
 rule build_base_energy_network:
@@ -194,6 +193,7 @@ rule build_base_energy_network:
         buses="{data}/processed/energy/provided/snapped_substations.parquet",
         routes="{data}/processed/energy/provided/transmission_routes.parquet",
         generators="{data}/processed/energy/provided/generators.csv",
+        script="workflow/0-preprocess/energy_build_network.py",
     output:
         network=f"{ENERGY_NETWORKS_DIR}/{ENERGY_BASE_NAME}/{ENERGY_BASE_NAME}.nc",
         metadata=f"{ENERGY_NETWORKS_DIR}/{ENERGY_BASE_NAME}/{ENERGY_BASE_NAME}_metadata.json",
@@ -211,22 +211,19 @@ rule build_base_energy_network:
         route_gap_tolerance_m=ENERGY_BASE_NETWORK.get("route_gap_tolerance_m", 75),
         default_voltage_kv=ENERGY_BASE_NETWORK.get("default_voltage_kv", 66),
         topology_capacity_mva=ENERGY_BASE_NETWORK.get("topology_capacity_mva", 10000),
-    run:
-        from pathlib import Path
-
-        from energy.network_source import build_network
-
-        build_network(
-            "base",
-            input_dir=Path(params.input_dir),
-            output_dir=Path(params.output_dir),
-            export_root=Path(params.export_root),
-            output_name=params.output_name,
-            overwrite=True,
-            base_route_gap_tolerance_m=float(params.route_gap_tolerance_m),
-            base_default_voltage_kv=float(params.default_voltage_kv),
-            base_topology_capacity_mva=float(params.topology_capacity_mva),
-        )
+    shell:
+        """
+        python {input.script} \
+            --source base \
+            --input-dir {params.input_dir} \
+            --output-dir {params.output_dir} \
+            --export-root {params.export_root} \
+            --output-name {params.output_name} \
+            --overwrite \
+            --base-route-gap-tolerance-m {params.route_gap_tolerance_m} \
+            --base-default-voltage-kv {params.default_voltage_kv} \
+            --base-topology-capacity-mva {params.topology_capacity_mva}
+        """
 
 
 rule fetch_energy_nightlights:
@@ -238,34 +235,29 @@ rule fetch_energy_nightlights:
     how to enable the fetch. Reproduce the tiles from scratch with:
     snakemake -c1 fetch_energy_nightlights
     """
+    input:
+        script="workflow/0-preprocess/energy_fetch_nightlights.py",
     output:
         months=ENERGY_NIGHTLIGHT_MONTHS,
     params:
         out_dir=f"{{data}}/{ENERGY_NIGHTLIGHT_MONTHLY_DIR}",
-        object_ids=ENERGY_NIGHTLIGHT_OBJECT_IDS,
-        bbox=ENERGY_NIGHTLIGHT_SOURCE.get("bbox", [57, -21, 64, -19]),
+        object_ids=",".join(str(value) for value in ENERGY_NIGHTLIGHT_OBJECT_IDS),
+        bbox=",".join(str(value) for value in ENERGY_NIGHTLIGHT_SOURCE.get("bbox", [57, -21, 64, -19])),
         pixel_size_degrees=ENERGY_NIGHTLIGHT_SOURCE.get("pixel_size_degrees", 0.004166666666666667),
-        service=ENERGY_NIGHTLIGHT_SOURCE.get("service"),
-        rendering_rule=ENERGY_NIGHTLIGHT_SOURCE.get("rendering_rule"),
-        allow_download=bool(ENERGY_NIGHTLIGHT_SOURCE.get("allow_download", False)),
-    run:
-        from pathlib import Path
-
-        from energy.nightlight_source import (
-            DEFAULT_RENDERING_RULE,
-            DEFAULT_SERVICE,
-            fetch_nightlight_months,
-        )
-
-        fetch_nightlight_months(
-            object_ids=list(params.object_ids),
-            bbox=list(params.bbox),
-            pixel_size_degrees=float(params.pixel_size_degrees),
-            out_dir=Path(params.out_dir),
-            service=params.service or DEFAULT_SERVICE,
-            rendering_rule=params.rendering_rule or DEFAULT_RENDERING_RULE,
-            allow_download=params.allow_download,
-        )
+        service=ENERGY_NIGHTLIGHT_SOURCE.get("service") or "",
+        rendering_rule=ENERGY_NIGHTLIGHT_SOURCE.get("rendering_rule") or "",
+        allow_download="--allow-download" if bool(ENERGY_NIGHTLIGHT_SOURCE.get("allow_download", False)) else "",
+    shell:
+        """
+        python {input.script} \
+            --out-dir {params.out_dir} \
+            --object-ids {params.object_ids} \
+            --bbox {params.bbox} \
+            --pixel-size-degrees {params.pixel_size_degrees} \
+            --service {params.service:q} \
+            --rendering-rule {params.rendering_rule:q} \
+            {params.allow_download}
+        """
 
 
 rule build_energy_nightlight_composite:
@@ -278,14 +270,13 @@ rule build_energy_nightlight_composite:
     """
     input:
         months=ENERGY_NIGHTLIGHT_MONTHS,
+        script="workflow/0-preprocess/energy_build_nightlight_composite.py",
     output:
         composite=ENERGY_NIGHTLIGHT_BUILT_COMPOSITE,
-    run:
-        from pathlib import Path
-
-        from energy.nightlight_source import build_nightlight_composite
-
-        build_nightlight_composite([Path(p) for p in input.months], Path(output.composite))
+    shell:
+        """
+        python {input.script} {input.months} --output {output.composite}
+        """
 
 
 rule build_energy_nightlight_targets:
@@ -300,6 +291,7 @@ rule build_energy_nightlight_targets:
     input:
         nightlights=ENERGY_NIGHTLIGHT_COMPOSITE,
         aoi=f"{{data}}/{ENERGY_NIGHTLIGHT_AOI_RELATIVE}",
+        script="workflow/0-preprocess/energy_build_nightlight_targets.py",
     output:
         targets_raster=f"{ENERGY_NIGHTLIGHT_DIR}/targets.tif",
         targets=f"{ENERGY_NIGHTLIGHT_DIR}/targets.geoparquet",
@@ -308,18 +300,15 @@ rule build_energy_nightlight_targets:
         output_dir=ENERGY_NIGHTLIGHT_DIR,
         region=ENERGY_NIGHTLIGHT_REGION,
         nightlight_threshold=ENERGY_NIGHTLIGHT.get("nightlight_threshold", 0.1),
-    run:
-        from pathlib import Path
-
-        from energy.nightlight_targets import build_nightlight_targets
-
-        build_nightlight_targets(
-            Path(input.nightlights),
-            Path(params.output_dir),
-            aoi_path=Path(input.aoi),
-            region=params.region,
-            nightlight_threshold=float(params.nightlight_threshold),
-        )
+    shell:
+        """
+        python {input.script} \
+            --nightlights {input.nightlights} \
+            --aoi {input.aoi} \
+            --output-dir {params.output_dir} \
+            --region {params.region:q} \
+            --nightlight-threshold {params.nightlight_threshold}
+        """
 
 
 rule build_inferred_osm_energy_network:
@@ -333,6 +322,7 @@ rule build_inferred_osm_energy_network:
         roads=f"{{data}}/{ENERGY_OSM_ROADS}",
         power=f"{{data}}/{ENERGY_OSM_POWER}",
         nightlight_targets=ENERGY_NIGHTLIGHT_TARGETS,
+        script="workflow/0-preprocess/energy_build_network.py",
     output:
         network=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_OSM_NAME}/{ENERGY_INFERRED_OSM_NAME}.nc",
         metadata=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_OSM_NAME}/{ENERGY_INFERRED_OSM_NAME}_metadata.json",
@@ -359,35 +349,27 @@ rule build_inferred_osm_energy_network:
         reference_line_length_km=ENERGY_INFERRED.get("ceb_total_line_length_km", 10492.2),
         line_length_tolerance_fraction=ENERGY_INFERRED.get("line_length_tolerance_fraction", 0.10),
         nightlight_support_distance_m=ENERGY_NIGHTLIGHT.get("nightlight_support_distance_m", 1000),
-    run:
-        import os
-        from pathlib import Path
-
-        from energy.network_source import build_network
-
-        # build_network reads the declared roads input from the path passed
-        # below; set the data root so any remaining internally-resolved OSM
-        # inputs (inferred-osm power features) resolve under the same tree.
-        os.environ["MU_STAR_DATA_ROOT"] = str(Path(wildcards.data).resolve())
-
-        build_network(
-            "inferred-osm",
-            region=params.region,
-            input_dir=Path(params.input_dir),
-            output_dir=Path(params.output_dir),
-            export_root=Path(params.export_root),
-            output_name=params.output_name,
-            overwrite=True,
-            network_type=params.network_type,
-            roads_path=Path(input.roads),
-            nightlight_targets=Path(input.nightlight_targets),
-            nightlight_support_distance_m=float(params.nightlight_support_distance_m),
-            max_anchor_distance_m=float(params.max_anchor_distance_m),
-            inferred_voltage_kv=float(params.inferred_voltage_kv),
-            inferred_capacity_mva=float(params.inferred_capacity_mva),
-            inferred_reference_line_length_km=float(params.reference_line_length_km),
-            line_length_tolerance_fraction=float(params.line_length_tolerance_fraction),
-        )
+    shell:
+        """
+        python {input.script} \
+            --source inferred-osm \
+            --data-root {wildcards.data} \
+            --input-dir {params.input_dir} \
+            --output-dir {params.output_dir} \
+            --export-root {params.export_root} \
+            --output-name {params.output_name} \
+            --overwrite \
+            --region {params.region:q} \
+            --network-type {params.network_type} \
+            --roads-path {input.roads} \
+            --nightlight-targets {input.nightlight_targets} \
+            --nightlight-support-distance-m {params.nightlight_support_distance_m} \
+            --max-anchor-distance-m {params.max_anchor_distance_m} \
+            --inferred-voltage-kv {params.inferred_voltage_kv} \
+            --inferred-capacity-mva {params.inferred_capacity_mva} \
+            --inferred-reference-line-length-km {params.reference_line_length_km} \
+            --line-length-tolerance-fraction {params.line_length_tolerance_fraction}
+        """
 
 
 rule build_inferred_provided_energy_network:
@@ -405,6 +387,7 @@ rule build_inferred_provided_energy_network:
         generators="{data}/processed/energy/provided/generators.csv",
         roads=f"{{data}}/{ENERGY_OSM_ROADS}",
         nightlight_targets=ENERGY_NIGHTLIGHT_TARGETS,
+        script="workflow/0-preprocess/energy_build_network.py",
     output:
         network=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/{ENERGY_INFERRED_PROVIDED_NAME}.nc",
         metadata=f"{ENERGY_NETWORKS_DIR}/{ENERGY_INFERRED_PROVIDED_NAME}/{ENERGY_INFERRED_PROVIDED_NAME}_metadata.json",
@@ -435,39 +418,29 @@ rule build_inferred_provided_energy_network:
             "generation_capacity_tolerance_fraction", 0.10
         ),
         nightlight_support_distance_m=ENERGY_NIGHTLIGHT.get("nightlight_support_distance_m", 1000),
-    run:
-        import os
-        from pathlib import Path
-
-        from energy.network_source import build_network
-
-        # build_network reads the declared roads input from the path passed
-        # below; set the data root so any remaining internally-resolved OSM
-        # lookups resolve under the same tree.
-        os.environ["MU_STAR_DATA_ROOT"] = str(Path(wildcards.data).resolve())
-
-        build_network(
-            "inferred-provided",
-            region=params.region,
-            input_dir=Path(params.input_dir),
-            output_dir=Path(params.output_dir),
-            export_root=Path(params.export_root),
-            output_name=params.output_name,
-            overwrite=True,
-            network_type=params.network_type,
-            roads_path=Path(input.roads),
-            nightlight_targets=Path(input.nightlight_targets),
-            nightlight_support_distance_m=float(params.nightlight_support_distance_m),
-            max_anchor_distance_m=float(params.max_anchor_distance_m),
-            inferred_voltage_kv=float(params.inferred_voltage_kv),
-            inferred_transmission_voltage_kv=float(params.inferred_transmission_voltage_kv),
-            inferred_capacity_mva=float(params.inferred_capacity_mva),
-            inferred_reference_line_length_km=float(params.reference_line_length_km),
-            line_length_tolerance_fraction=float(params.line_length_tolerance_fraction),
-            generation_capacity_tolerance_fraction=float(
-                params.generation_capacity_tolerance_fraction
-            ),
-        )
+    shell:
+        """
+        python {input.script} \
+            --source inferred-provided \
+            --data-root {wildcards.data} \
+            --input-dir {params.input_dir} \
+            --output-dir {params.output_dir} \
+            --export-root {params.export_root} \
+            --output-name {params.output_name} \
+            --overwrite \
+            --region {params.region:q} \
+            --network-type {params.network_type} \
+            --roads-path {input.roads} \
+            --nightlight-targets {input.nightlight_targets} \
+            --nightlight-support-distance-m {params.nightlight_support_distance_m} \
+            --max-anchor-distance-m {params.max_anchor_distance_m} \
+            --inferred-voltage-kv {params.inferred_voltage_kv} \
+            --inferred-transmission-voltage-kv {params.inferred_transmission_voltage_kv} \
+            --inferred-capacity-mva {params.inferred_capacity_mva} \
+            --inferred-reference-line-length-km {params.reference_line_length_km} \
+            --line-length-tolerance-fraction {params.line_length_tolerance_fraction} \
+            --generation-capacity-tolerance-fraction {params.generation_capacity_tolerance_fraction}
+        """
 
 
 rule energy_base_network:
