@@ -125,9 +125,9 @@ if Path(ENERGY_NIGHTLIGHT_AOI_RELATIVE).suffix.lower() not in _ENERGY_AOI_SUFFIX
 
 
 # Sidecars required to read a provided ESRI shapefile. The optional .cpg
-# (codepage) sidecar is deliberately excluded: energy.intake.prepare_provided_data
-# reads these shapefiles without it, so requiring it here would reject
-# otherwise-valid inputs that omit it.
+# (codepage) sidecar is deliberately excluded: the prepare step reads these
+# shapefiles without it, so requiring it here would reject otherwise-valid
+# inputs that omit it.
 PROVIDED_SHAPEFILE_EXTENSIONS = ("shp", "shx", "dbf", "prj")
 
 
