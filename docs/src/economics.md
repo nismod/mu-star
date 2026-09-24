@@ -161,6 +161,14 @@ Visually, the model is represented as follows :
 
 ![Graph representation of the model.](img/economics/METHODS/MUS_model_graph.png)
 
+
+## Utilities Access and Network Interdependence
+
+
+Using a graph voronoi network partitioning[erwigGraphVoronoiDiagram2000], the interconnection between an economic sector and the different utilities is investigated further. This method provides a deeper understanding[@molnarCommunityDetectionDirected2023] into the spatial layout of different networked infrastructure systems and the cluster structure emerging from the facilities location and the nearest accessible region around them. This in turn provides key insights into which infrastructures support the largest economic output across the studied region.
+
+<!-- Estimating the dependence of the economic sectors on the main utilities sectors -->
+
 <!--
 ## Expanding the baseline model
 

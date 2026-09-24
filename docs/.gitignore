@@ -1,2 +1,5 @@
 book
 src/api/*
+.DS_Store
+cache/
+logs/
