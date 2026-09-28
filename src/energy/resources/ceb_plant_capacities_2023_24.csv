@@ -1,0 +1,40 @@
+# Plant capacities July 2023 to June 2024, transcribed from the CEB Annual Report 2023/2024, pages 50-51
+# ("Plant capacities, units generated and exported"). Installed and effective capacity in MW as printed.
+# group: CEB-owned or purchased (IPP), technology as in the report. site_match is filled in during site matching:
+# a name from data/processed/energy/provided/generators.csv, an OpenStreetMap power=plant name, or "distributed".
+report_name,group,technology,installed_capacity_mw,effective_capacity_mw,units_sent_out_kwh,report_page,site_match
+Champagne P/S,CEB,hydro,30.00,28.00,57146206,50,
+Ferney P/S,CEB,hydro,10.00,10.00,42730826,50,
+Tamarind Falls P/S,CEB,hydro,7.30,5.50,13496174,50,
+Le Val P/S,CEB,hydro,4.00,4.00,8866740,50,
+A.I.A P/S (ex Reduit),CEB,hydro,1.20,1.00,1838623,50,
+Cascade Cecile P/S,CEB,hydro,1.00,1.00,3247861,50,
+Magenta P/S,CEB,hydro,1.10,1.00,2524329,50,
+La Ferme P/S,CEB,hydro,1.20,1.00,561852,50,
+La Nicoliere P/S,CEB,hydro,0.35,0.35,938657,50,
+Midlands P/S,CEB,hydro,0.35,0.35,1533135,50,
+2 MW PV Henrietta,CEB,solar,2.06,1.70,2812131,50,
+8 MW PV Henrietta,CEB,solar,9.10,9.10,5385337,50,
+SSDG/MSDG CEB Generation,CEB,solar,7.03,7.03,5205516,50,distributed
+St.Louis P/S,CEB,thermal,110.00,102.70,362094434,50,
+Fort Victoria P/S,CEB,thermal,109.60,103.00,305328202,50,
+Fort George P/S,CEB,thermal,140.00,127.00,699073662,50,
+Nicolay P/S,CEB,thermal,78.40,70.00,8577150,50,
+AEL (ex FUEL),IPP,thermal,36.70,27.00,166334269,50,
+TERRAGEN (ex CTBV),IPP,thermal,71.20,62.00,421795182,50,
+OTEOLB (ex CTSAV),IPP,thermal,90.00,74.00,572740438,50,
+OTEOSA (ex CTDS),IPP,thermal,32.50,30.00,218536691,50,
+Sotravic (Landfill Gas),IPP,thermal,3.45,3.00,11804719,50,
+Sarako,IPP,solar,15.19,15.00,18968944,51,
+Solar Field Ltd,IPP,solar,1.99,1.99,2859951,51,
+Synnove - L'Esperance,IPP,solar,1.95,1.44,754740,51,
+Synnove - Petite Retraite,IPP,solar,1.92,1.44,788450,51,
+Voltas Yellow,IPP,solar,16.33,13.60,22062252,51,
+Voltas Green,IPP,solar,15.05,12.24,20277079,51,
+Green Yellow Arsenal,IPP,solar,13.16,10.00,3751615,51,
+Helios,IPP,solar,10.26,9.00,15476137,51,
+AKUO,IPP,solar,17.53,15.00,18635271,51,
+SPV Petite Riviere,IPP,solar,4.97,4.88,7423136,51,
+EOLE - Plaine des Roches,IPP,wind,9.35,9.35,10949798,51,
+SSDG PV,distributed,solar,14.55,14.55,10895424,51,distributed
+MSDG PV (all schemes),distributed,solar,12.74,12.74,1277910,51,distributed
