@@ -191,23 +191,42 @@ output files.
 
 While this workflow is in development, some of the rules are placeholders.
 
-The energy workflow builds three network products with one function,
-`build_network`: the `base-mauritius` network built from the provided CEB data,
-and two topology-only inferred coverage proxies for Mauritius and Rodrigues —
-`inferred-osm-mauritius-rodrigues` (OSM power terminals) and
-`inferred-provided-mauritius-rodrigues` (provided substations, generators and CEB
-backbone). Both inferred products retain the OSM road subnetwork supported by
-VIIRS nightlight targets, and each build writes matching GeoParquet layers:
+The energy workflow builds three network products: `base-mauritius` from the
+provided CEB transmission data, and two inferred coverage estimates for
+Mauritius and Rodrigues, `inferred-osm-mauritius-rodrigues` (OpenStreetMap
+power features) and `inferred-provided-mauritius-rodrigues` (provided
+substations, generators and the CEB backbone). Settings live in
+`config/energy/energy.yaml`; file paths there are relative to the data root
+(`data/` unless `data_root` is set in `config/config.yaml`).
+
+Before the first build, place the provided CEB data under
+`data/incoming/energy/provided/` and fetch the OpenStreetMap and night-light
+inputs once. Each fetch needs internet and its `allow_download` flag switched
+on in `config/energy/energy.yaml` (`energy.osm.allow_download` and
+`energy.nightlight.source.allow_download`); switch them off again afterwards so
+later runs stay offline:
+
+```shell
+snakemake -c1 fetch_energy_osm
+snakemake -c1 fetch_energy_nightlights
+```
+
+Then build all three products:
 
 ```shell
 snakemake -c1 build_energy_networks
 ```
 
-The inferred electrical values are topology placeholders. Interruption analysis
-is intentionally out of scope for this migration, so energy does not yet expose
-the "given disrupted assets, output disruption metrics" interface. See
-`docs/src/infrastructure-energy.md` for inputs, provenance, the nightlight
-method (adapted from GridFinder) and current limitations.
+To build a single product, ask for its output file, for example:
+
+```shell
+snakemake -c1 data/processed/energy/networks/base-mauritius/base-mauritius.nc
+```
+
+The code entry point is `energy.build.build_network`. Inferred voltages and
+capacities are placeholders, and energy has no disruption analysis yet. See
+`docs/src/infrastructure-energy.md` for the method, inputs, outputs and current
+limitations.
 
 ### Testing
 
@@ -229,9 +248,12 @@ ruff check
 
 For visual debugging while developing a model, the `notebooks/` directory holds
 local, dev-only notebooks that read the pipeline's standard outputs and render
-them. They are namespaced per system (`notebooks/energy/`, and so on) and are
-not part of any workflow rule — production visualisation is the separate viewer
-at https://github.com/nismod/irv-standalone. Enable notebook output-stripping
+them. They are namespaced per system and are not part of any workflow rule;
+production visualisation is the separate viewer at
+https://github.com/nismod/irv-standalone. The energy notebooks live in
+`notebooks/energy/`: `00-data-review` looks at the inputs, and
+`01-build-network` runs the build (from a cell or the terminal) and inspects a
+product. Notebook outputs are stripped on commit via `nbstripout`; enable this
 once per clone so committed notebooks stay diff-clean:
 
 ```shell
