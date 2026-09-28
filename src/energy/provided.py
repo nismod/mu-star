@@ -13,7 +13,6 @@ from shapely.ops import nearest_points
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 METRIC_CRS = "EPSG:32740"
 GEOGRAPHIC_CRS = "EPSG:4326"
-GENERATOR_CAPACITY_REFERENCE = Path(__file__).parent / "resources" / "generator_capacity_reference.csv"
 CEB_ANNUAL_REPORT_URL = "https://ceb.mu/files/files/publications/Annual%20Report/CEB%20AR%202023-2024.pdf"
 REQUIRED_PROVIDED_FILES = (
     "power_demand/Power Demand.xlsx",
@@ -323,43 +322,134 @@ def assign_generation_to_substations(
     return generators.to_crs(GEOGRAPHIC_CRS)
 
 
-def apply_generator_capacity_reference(
-    generation_sites: gpd.GeoDataFrame,
-    reference_path: Path = GENERATOR_CAPACITY_REFERENCE,
-) -> gpd.GeoDataFrame:
-    """Add report-backed installed capacity and a neutral VoLL dispatch cost."""
-    reference = pd.read_csv(reference_path)
-    _required = {
-        "name",
-        "output_capacity_mw",
-        "effective_capacity_mw",
-        "capacity_measure",
-        "report_period",
-        "capacity_source",
-    }
-    missing = _required - set(reference.columns)
-    if missing:
-        raise ValueError(f"generator capacity reference missing columns: {sorted(missing)}")
+# --- Generators from the CEB annual report ---------------------------------------
 
-    result = generation_sites.merge(
-        reference,
-        on="name",
-        how="left",
-        validate="many_to_one",
+CEB_PLANT_CAPACITIES = Path(__file__).parent / "resources" / "ceb_plant_capacities_2023_24.csv"
+CEB_PLANT_SITES = Path(__file__).parent / "resources" / "ceb_plant_sites.csv"
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")
+
+
+def assemble_report_generators(
+    provided_sites: pd.DataFrame,
+    substations: gpd.GeoDataFrame,
+    *,
+    osm_power: gpd.GeoDataFrame | None = None,
+    capacities_path: Path = CEB_PLANT_CAPACITIES,
+    sites_path: Path = CEB_PLANT_SITES,
+) -> pd.DataFrame:
+    """Build the generator table from the CEB annual report's plant list.
+
+    Every plant in ``ceb_plant_capacities_2023_24.csv`` becomes one generator
+    with its installed and effective capacity. Its location comes from
+    ``ceb_plant_sites.csv``: a named site in ``provided_sites`` (the cleaned
+    provided generation sites, matched by exact name or by name prefix, in
+    which case the centroid of the matching points is used), an OpenStreetMap
+    plant in ``osm_power`` matched by name, or geocoded coordinates. Located
+    plants are assigned to their nearest substation on the same island (the
+    ``region`` column of ``substations``, "mauritius" when absent); an island
+    with no substation (Rodrigues) leaves ``bus_id`` empty and the inferred
+    network connects the plant at its own node. Distributed or unmatched
+    plants keep an empty ``bus_id`` and are spread by demand share later.
+    """
+    capacities = pd.read_csv(capacities_path, comment="#")
+    if "region" not in capacities:
+        capacities["region"] = "mauritius"
+    sites = pd.read_csv(sites_path, comment="#")
+    missing = set(capacities["report_name"]) - set(sites["report_name"])
+    if missing:
+        raise ValueError(f"ceb_plant_sites.csv has no row for: {sorted(missing)}")
+    table = capacities.merge(sites, on="report_name", how="left", validate="one_to_one")
+
+    provided = provided_sites.copy()
+    provided["name"] = provided["name"].astype(str)
+    osm = None
+    if osm_power is not None and "name" in osm_power.columns:
+        osm = osm_power[osm_power["name"].notna()].to_crs(GEOGRAPHIC_CRS)
+
+    lons, lats, notes = [], [], []
+    for row in table.itertuples():
+        kind = str(row.site_kind)
+        lon = lat = float("nan")
+        note = ""
+        if kind == "provided":
+            exact = provided[provided["name"].eq(str(row.site_name))]
+            matches = exact if not exact.empty else provided[provided["name"].str.startswith(str(row.site_name))]
+            if matches.empty:
+                raise ValueError(f"{row.report_name}: no provided site named {row.site_name!r}")
+            lon, lat = float(matches["lon"].mean()), float(matches["lat"].mean())
+            note = f"provided site {row.site_name!r}"
+            if len(matches) > 1:
+                note += f" ({len(matches)} points, centroid)"
+        elif kind == "osm":
+            if osm is None:
+                raise ValueError(f"{row.report_name}: OSM power features with names are needed to place it")
+            matches = osm[osm["name"].astype(str).eq(str(row.site_name))]
+            if matches.empty:
+                raise ValueError(f"{row.report_name}: no OpenStreetMap plant named {row.site_name!r}")
+            point = matches.geometry.union_all().centroid
+            lon, lat = float(point.x), float(point.y)
+            note = f"OpenStreetMap plant {row.site_name!r}"
+        elif kind == "geocoded":
+            lon, lat = float(row.lon), float(row.lat)
+            note = str(row.location_basis)
+        elif kind in {"distributed", "unmatched"}:
+            note = "no single site; spread over substations by demand share"
+        else:
+            raise ValueError(f"{row.report_name}: unknown site_kind {kind!r}")
+        lons.append(lon)
+        lats.append(lat)
+        notes.append(note)
+
+    generator_ids = [f"{_slug(group)}-{_slug(name)}" for group, name in zip(table["group"], table["report_name"])]
+    generators = pd.DataFrame(
+        {
+            "generator_id": generator_ids,
+            "name": table["report_name"],
+            "group": table["group"],
+            "region": table["region"].astype(str),
+            "carrier": table["technology"],
+            "output_capacity_mw": table["installed_capacity_mw"].astype(float),
+            "effective_capacity_mw": table["effective_capacity_mw"].astype(float),
+            "capacity_basis": "electrical_output",
+            "capacity_measure": "installed_capacity",
+            "capacity_source": [f"CEB Annual Report 2023-2024 p. {p}" for p in table["report_page"]],
+            "capacity_source_url": CEB_ANNUAL_REPORT_URL,
+            "marginal_cost": 0.0,
+            "marginal_cost_basis": "equal_dispatch_proxy_for_voll",
+            "site_kind": table["site_kind"],
+            "site_note": notes,
+            "lon": lons,
+            "lat": lats,
+        }
     )
-    duplicate_count = result.groupby("name")["generator_id"].transform("count")
-    for column in ("output_capacity_mw", "effective_capacity_mw"):
-        result[column] = result[column] / duplicate_count
-    has_capacity = result["output_capacity_mw"].notna()
-    result["marginal_cost"] = np.where(has_capacity, 0.0, np.nan)
-    result["marginal_cost_basis"] = np.where(
-        has_capacity,
-        "equal_dispatch_proxy_for_voll",
-        pd.NA,
+    located = generators["lon"].notna() & generators["lat"].notna()
+    generators["bus_id"] = pd.NA
+    generators["bus_assignment_distance_m"] = np.nan
+    substation_regions = (
+        substations["region"].astype(str)
+        if "region" in substations
+        else pd.Series("mauritius", index=substations.index)
     )
-    result["capacity_source_url"] = np.where(
-        has_capacity,
-        CEB_ANNUAL_REPORT_URL,
-        pd.NA,
-    )
-    return gpd.GeoDataFrame(result, geometry="geometry", crs=generation_sites.crs)
+    for region_name in sorted(generators.loc[located, "region"].unique()):
+        in_region = located & generators["region"].eq(region_name)
+        candidates = substations[substation_regions.eq(region_name).to_numpy()]
+        if candidates.empty:
+            # No substation on this island (Rodrigues): the plant is the network's
+            # connection point itself, and the inferred network attaches it at its own node.
+            generators.loc[in_region, "site_note"] += f"; no substation on {region_name}, connected at its own node"
+            continue
+        sited = gpd.GeoDataFrame(
+            generators.loc[in_region, ["generator_id"]],
+            geometry=gpd.points_from_xy(generators.loc[in_region, "lon"], generators.loc[in_region, "lat"]),
+            crs=GEOGRAPHIC_CRS,
+        )
+        assigned = assign_generation_to_substations(sited, candidates).set_index("generator_id")
+        ids = generators.loc[in_region, "generator_id"]
+        generators.loc[in_region, "bus_id"] = assigned.loc[ids, "bus_id"].to_numpy()
+        generators.loc[in_region, "bus_assignment_distance_m"] = assigned.loc[
+            ids, "bus_assignment_distance_m"
+        ].to_numpy()
+    return generators

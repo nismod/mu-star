@@ -35,6 +35,7 @@ from energy.distribution_network import (
 )
 from energy.network import assert_fixed_capacity, build_topology_network
 from energy.network_tables import (
+    CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW,
     CEB_REPORTED_INSTALLED_GENERATION_MW,
     CEB_TOTAL_NETWORK_LENGTH_KM,
     CEB_TOTAL_NETWORK_LENGTH_SOURCE,
@@ -370,7 +371,19 @@ def _graph_line_frame(
     default_voltage_kv: float,
     transmission_voltage_kv: float,
     default_capacity_mva: float,
+    transmission_capacity_mva: float | None = None,
+    anchor_capacity_mva: float | None = None,
 ) -> gpd.GeoDataFrame:
+    """Turn graph edges into a PyPSA lines table.
+
+    Voltage and rating depend on what the edge is: the provided transmission
+    backbone gets ``transmission_voltage_kv`` / ``transmission_capacity_mva``,
+    an asset-to-road connector gets ``anchor_capacity_mva`` (the substation's
+    transformer rating), and every road segment gets the distribution
+    placeholders ``default_voltage_kv`` / ``default_capacity_mva``.
+    """
+    transmission_capacity_mva = default_capacity_mva if transmission_capacity_mva is None else transmission_capacity_mva
+    anchor_capacity_mva = default_capacity_mva if anchor_capacity_mva is None else anchor_capacity_mva
     columns = [
         "line_id",
         "bus0",
@@ -398,8 +411,13 @@ def _graph_line_frame(
                     (float(node1["x"]), float(node1["y"])),
                 ]
             )
-        line_source = attrs.get("source")
-        line_voltage_kv = transmission_voltage_kv if line_source == "provided_transmission" else default_voltage_kv
+        line_source = str(attrs.get("source") or "")
+        is_transmission = line_source == "provided_transmission"
+        is_anchor = line_source.endswith("_anchor")
+        line_voltage_kv = transmission_voltage_kv if is_transmission else default_voltage_kv
+        line_capacity_mva = (
+            transmission_capacity_mva if is_transmission else anchor_capacity_mva if is_anchor else default_capacity_mva
+        )
         rows.append(
             {
                 "line_id": str(attrs.get("edge_id") or f"inferred_line_{number:06d}"),
@@ -407,7 +425,7 @@ def _graph_line_frame(
                 "bus1": bus1,
                 "v_nom_kv": line_voltage_kv,
                 "length_km": max(float(attrs.get("length_km", 0.0)), 0.001),
-                "s_nom_mva": default_capacity_mva,
+                "s_nom_mva": line_capacity_mva,
                 "inferred": True,
                 "source": line_source,
                 "region": attrs.get("region"),
@@ -564,20 +582,15 @@ def _provided_power_assets(
         crs="EPSG:4326",
     )
     generators = pd.read_csv(input_dir / "generators.csv")
-    if {"lon", "lat"} <= set(generators):
-        has_coordinates = (
-            pd.to_numeric(generators["lon"], errors="coerce").notna()
-            & pd.to_numeric(generators["lat"], errors="coerce").notna()
-        )
-        coordinate_rows = generators.loc[has_coordinates].copy()
-    else:
-        coordinate_rows = generators.iloc[0:0].copy()
+    if "region" not in generators:
+        generators["region"] = "mauritius"
+    coordinate_rows = generators.loc[_has_coordinates(generators)].copy()
     generator_assets = gpd.GeoDataFrame(
         {
             "asset_id": coordinate_rows["generator_id"].astype(str),
             "asset_kind": "generator",
             "source": "provided_generator",
-            "region": "mauritius",
+            "region": coordinate_rows["region"].astype(str).to_numpy(),
             "provisional_root": False,
             "geometry": [
                 Point(float(lon), float(lat))
@@ -593,6 +606,34 @@ def _provided_power_assets(
         crs="EPSG:4326",
     )
     return assets, generators
+
+
+def reported_generation_reference_mw(source: str, region: str | None) -> float:
+    """CEB's reported installed capacity for the islands a product covers.
+
+    The base product covers Mauritius. An inferred product covers the members
+    of its region, so ``mauritius-rodrigues`` adds the Rodrigues total. A
+    region with no reported figure falls back to the Mauritius total.
+    """
+    if source == "base" or not region:
+        return CEB_REPORTED_INSTALLED_GENERATION_MW
+    members = [osm.region_slug(member) for member in osm.region_members(region)]
+    covered = [
+        CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW[member]
+        for member in members
+        if member in CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW
+    ]
+    return round(float(sum(covered)), 2) if covered else CEB_REPORTED_INSTALLED_GENERATION_MW
+
+
+def _has_coordinates(generators: pd.DataFrame) -> pd.Series:
+    """True for every generator row with a numeric ``lon`` and ``lat``."""
+    if not {"lon", "lat"} <= set(generators):
+        return pd.Series(False, index=generators.index)
+    return (
+        pd.to_numeric(generators["lon"], errors="coerce").notna()
+        & pd.to_numeric(generators["lat"], errors="coerce").notna()
+    )
 
 
 def _provisional_power_root(region: str, roads: gpd.GeoDataFrame | None) -> gpd.GeoDataFrame:
@@ -821,11 +862,23 @@ def _nightlight_supported_roads(
 
 def _provided_generators_for_inferred(
     generators: pd.DataFrame,
+    *,
+    substation_regions: set[str],
 ) -> pd.DataFrame:
-    """Point provided generators at the graph's ``bus::<id>`` node names; a blank bus id stays blank."""
+    """Point provided generators at the graph's node names.
+
+    A generator assigned to a substation attaches at that substation's
+    ``bus::<id>`` node. A located generator on an island with no provided
+    substation at all (Rodrigues) is the network's connection point itself, so
+    it attaches at its own ``asset::<generator_id>`` node. Any other generator
+    without a bus keeps a blank bus id and is retained for review.
+    """
     prepared = generators.copy()
     bus_id = prepared["bus_id"]
+    region = prepared["region"].astype(str) if "region" in prepared else pd.Series("mauritius", index=prepared.index)
+    own_node = bus_id.isna() & _has_coordinates(prepared) & ~region.isin(substation_regions)
     prepared["bus_id"] = bus_id.where(bus_id.isna(), "bus::" + bus_id.astype(str))
+    prepared.loc[own_node, "bus_id"] = "asset::" + prepared.loc[own_node, "generator_id"].astype(str)
     return prepared
 
 
@@ -934,6 +987,8 @@ def _build_inferred_network(
     inferred_voltage_kv: float,
     inferred_transmission_voltage_kv: float,
     inferred_capacity_mva: float,
+    inferred_transmission_capacity_mva: float,
+    inferred_anchor_capacity_mva: float,
     base_route_gap_tolerance_m: float,
     table_output_dir: Path | None,
     reference_line_length_km: float,
@@ -965,6 +1020,8 @@ def _build_inferred_network(
         provided_generator_records = len(provided_generators)
         methodology = INFERRED_PROVIDED_METHODOLOGY
         power_asset_source = "provided_substations_and_generators"
+    # Islands that have a real substation; a located generator elsewhere becomes its own connection point.
+    substation_regions = set(power_assets.loc[power_assets["asset_kind"].eq("substation"), "region"].astype(str))
 
     # A region member without any power asset gets one stand-in root on its road network.
     member_roots: list[gpd.GeoDataFrame] = []
@@ -1051,6 +1108,8 @@ def _build_inferred_network(
         default_voltage_kv=inferred_voltage_kv,
         transmission_voltage_kv=inferred_transmission_voltage_kv,
         default_capacity_mva=inferred_capacity_mva,
+        transmission_capacity_mva=inferred_transmission_capacity_mva,
+        anchor_capacity_mva=inferred_anchor_capacity_mva,
     )
     buses = _node_bus_frame(graph)
     # A junction that carries both the backbone and distribution voltage becomes
@@ -1065,7 +1124,9 @@ def _build_inferred_network(
     service_weights.to_csv(service_weights_path_out, index=False)
 
     generators = (
-        _provided_generators_for_inferred(provided_generators) if source == "inferred-provided" else _empty_generators()
+        _provided_generators_for_inferred(provided_generators, substation_regions=substation_regions)
+        if source == "inferred-provided"
+        else _empty_generators()
     )
     table_outputs = None
     validation_kwargs = {
@@ -1170,6 +1231,8 @@ def _build_inferred_network(
             "inferred_voltage_kv": inferred_voltage_kv,
             "inferred_transmission_voltage_kv": inferred_transmission_voltage_kv,
             "inferred_capacity_mva": inferred_capacity_mva,
+            "inferred_transmission_capacity_mva": inferred_transmission_capacity_mva,
+            "inferred_anchor_capacity_mva": inferred_anchor_capacity_mva,
             "transformers": len(network.transformers),
             "electrical_values_note": electrical_values_note,
             "max_anchor_distance_m": max_anchor_distance_m,
@@ -1228,11 +1291,13 @@ def build_network(
     inferred_voltage_kv: float = 11,
     inferred_transmission_voltage_kv: float = 66,
     inferred_capacity_mva: float = 5,
+    inferred_transmission_capacity_mva: float = 50,
+    inferred_anchor_capacity_mva: float = 137,
     export_root: Path | None = None,
     reference_line_length_km: float = CEB_TRANSMISSION_LENGTH_KM,
     inferred_reference_line_length_km: float = CEB_TOTAL_NETWORK_LENGTH_KM,
     line_length_tolerance_fraction: float = 0.35,
-    reference_generation_capacity_mw: float = CEB_REPORTED_INSTALLED_GENERATION_MW,
+    reference_generation_capacity_mw: float | None = None,
     generation_capacity_tolerance_fraction: float = 0.10,
     base_route_gap_tolerance_m: float = 75,
     base_default_voltage_kv: float = 66,
@@ -1269,6 +1334,9 @@ def build_network(
         raise ValueError("region can only be used with an inferred source")
     if source != "base" and not region:
         raise ValueError(f"source={source!r} requires a region, e.g. region='mauritius-rodrigues'.")
+    if reference_generation_capacity_mw is None:
+        # CEB's total for the islands this product covers (Mauritius, or both islands).
+        reference_generation_capacity_mw = reported_generation_reference_mw(source, region)
 
     input_dir = Path(input_dir or processed_energy_dir() / "provided")
     output_dir = Path(output_dir or network_output_dir())
@@ -1343,6 +1411,8 @@ def build_network(
         inferred_voltage_kv=inferred_voltage_kv,
         inferred_transmission_voltage_kv=inferred_transmission_voltage_kv,
         inferred_capacity_mva=inferred_capacity_mva,
+        inferred_transmission_capacity_mva=inferred_transmission_capacity_mva,
+        inferred_anchor_capacity_mva=inferred_anchor_capacity_mva,
         base_route_gap_tolerance_m=base_route_gap_tolerance_m,
         table_output_dir=table_output_dir,
         reference_line_length_km=inferred_reference_line_length_km,

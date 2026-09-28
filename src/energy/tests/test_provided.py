@@ -6,7 +6,6 @@ from shapely.geometry import LineString, Point
 from energy.provided import (
     _extract_route_capacity_mw,
     _extract_route_voltage_kv,
-    apply_generator_capacity_reference,
     assign_generation_to_substations,
     classify_generation,
     extract_demand_workbook,
@@ -104,23 +103,6 @@ def test_generation_sites_are_assigned_to_nearest_substation():
     assert result.loc[0, "bus_assignment_distance_m"] < 200
 
 
-def test_report_capacity_is_split_across_duplicate_site_geometries():
-    generators = gpd.GeoDataFrame(
-        {
-            "generator_id": ["G1", "G2"],
-            "name": ["Sarako", "Sarako"],
-            "geometry": [Point(57.42, -20.26), Point(57.43, -20.26)],
-        },
-        crs="EPSG:4326",
-    )
-
-    result = apply_generator_capacity_reference(generators)
-
-    assert result["output_capacity_mw"].sum() == pytest.approx(15.19)
-    assert result["marginal_cost"].eq(0.0).all()
-    assert result["marginal_cost_basis"].eq("equal_dispatch_proxy_for_voll").all()
-
-
 def test_demand_workbook_total_row_is_not_a_sector(tmp_path):
     rows = [
         ["Year", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
@@ -140,3 +122,72 @@ def test_demand_workbook_total_row_is_not_a_sector(tmp_path):
     assert monthly_peak.loc[2012, "Dec"] == 410
     assert set(annual["category"]) == {"Domestic", "Commercial"}
     assert annual.groupby("year")["demand_gwh"].sum().loc[2012] == 1500
+
+
+def test_report_generators_are_placed_and_assigned(tmp_path):
+    from energy.provided import assemble_report_generators
+
+    capacities = tmp_path / "capacities.csv"
+    capacities.write_text(
+        "report_name,group,technology,installed_capacity_mw,effective_capacity_mw,units_sent_out_kwh,report_page,region\n"
+        "Big P/S,CEB,thermal,100,90,1,50,mauritius\n"
+        "Wind farm,IPP,wind,9,9,1,51,mauritius\n"
+        "Village PV,IPP,solar,2,2,1,51,mauritius\n"
+        "Rooftops,distributed,solar,10,10,1,51,mauritius\n"
+        "Island P/S,CEB,thermal,6,6,1,97,rodrigues\n"
+    )
+    sites = tmp_path / "sites.csv"
+    sites.write_text(
+        "report_name,site_kind,site_name,lat,lon,location_basis\n"
+        "Big P/S,provided,Big Power Station,,,\n"
+        "Wind farm,provided,Turbine,,,\n"
+        "Village PV,geocoded,,-20.30,57.60,Nominatim: Village\n"
+        "Rooftops,distributed,,,,\n"
+        "Island P/S,geocoded,,-19.68,63.42,Nominatim: Island town\n"
+    )
+    provided_sites = pd.DataFrame(
+        {
+            "name": ["Big Power Station", "Turbine 01", "Turbine 02"],
+            "lon": [57.50, 57.70, 57.72],
+            "lat": [-20.20, -20.10, -20.10],
+        }
+    )
+    substations = gpd.GeoDataFrame(
+        {"bus_id": ["A", "B"], "geometry": [Point(57.5, -20.2), Point(57.7, -20.1)]}, crs="EPSG:4326"
+    )
+
+    generators = assemble_report_generators(provided_sites, substations, capacities_path=capacities, sites_path=sites)
+
+    by_name = generators.set_index("name")
+    expected_ids = ["ceb-big-p-s", "ipp-wind-farm", "ipp-village-pv", "distributed-rooftops", "ceb-island-p-s"]
+    assert list(generators["generator_id"]) == expected_ids
+    assert list(generators["region"]) == ["mauritius"] * 4 + ["rodrigues"]
+    assert by_name.loc["Big P/S", "bus_id"] == "A"
+    assert by_name.loc["Big P/S", "output_capacity_mw"] == 100 and by_name.loc["Big P/S", "effective_capacity_mw"] == 90
+    assert by_name.loc["Wind farm", "lon"] == pytest.approx(57.71)  # centroid of the two turbine points
+    assert by_name.loc["Wind farm", "bus_id"] == "B"
+    assert by_name.loc["Village PV", "bus_id"] in {"A", "B"}
+    assert pd.isna(by_name.loc["Rooftops", "bus_id"]) and pd.isna(by_name.loc["Rooftops", "lon"])
+    # The other island has no substation: the plant keeps its coordinates and no bus,
+    # instead of being tied to a substation across the sea.
+    assert pd.isna(by_name.loc["Island P/S", "bus_id"]) and by_name.loc["Island P/S", "lon"] == 63.42
+    assert "no substation on rodrigues" in by_name.loc["Island P/S", "site_note"]
+    assert generators["capacity_basis"].eq("electrical_output").all()
+    assert generators["marginal_cost"].eq(0.0).all()
+
+
+def test_report_generators_reject_an_unknown_site(tmp_path):
+    from energy.provided import assemble_report_generators
+
+    capacities = tmp_path / "capacities.csv"
+    capacities.write_text(
+        "report_name,group,technology,installed_capacity_mw,effective_capacity_mw,units_sent_out_kwh,report_page,region\n"
+        "Big P/S,CEB,thermal,100,90,1,50,mauritius\n"
+    )
+    sites = tmp_path / "sites.csv"
+    sites.write_text("report_name,site_kind,site_name,lat,lon,location_basis\nBig P/S,provided,Nowhere,,,\n")
+    substations = gpd.GeoDataFrame({"bus_id": ["A"], "geometry": [Point(57.5, -20.2)]}, crs="EPSG:4326")
+
+    provided_sites = pd.DataFrame({"name": ["Big Power Station"], "lon": [57.5], "lat": [-20.2]})
+    with pytest.raises(ValueError, match="no provided site named"):
+        assemble_report_generators(provided_sites, substations, capacities_path=capacities, sites_path=sites)

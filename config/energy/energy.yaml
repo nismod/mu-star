@@ -41,16 +41,44 @@ energy:
   inferred:
     # A power asset is connected to the nearest road within this distance.
     max_anchor_distance_m: 1000
-    # Placeholder electrical values for the inferred distribution lines and
-    # for the CEB backbone kept in the inferred-provided product.
+    # Electrical values for the three kinds of line in the inferred products.
+    # Distribution: every road segment stands in for an 11 kV feeder; 5 MVA is a
+    # typical rating for one overhead 11 kV feeder (about 260 A). Placeholder.
     topology_voltage_kv: 11
-    transmission_voltage_kv: 66
     topology_capacity_mva: 5
+    # Transmission: the CEB backbone kept in inferred-provided. CEB does not
+    # publish per-line ratings; 50 MVA is a typical single-circuit 66 kV rating
+    # for the 150 mm2 conductors the annual report mentions (2023-24, p. 74).
+    # Replace with CEB ratings per line when they are provided.
+    transmission_voltage_kv: 66
+    transmission_capacity_mva: 50
+    # Connectors from a substation or generator to the road network carry the
+    # whole site: rated as an average major substation, 2,595 MVA of installed
+    # transformer capacity across the 19 major substations (annual report
+    # 2023-24, p. 71). Replace with per-substation ratings when provided.
+    anchor_capacity_mva: 137
     # Advisory checks written to validation.json and logged as warnings.
     # CEB reports 10,492.2 km of transmission plus MV/LV distribution circuits.
     ceb_total_line_length_km: 10492.2
     line_length_tolerance_fraction: 0.10
     generation_capacity_tolerance_fraction: 0.10
+
+  population:
+    # WorldPop 2020 "constrained" grid, people per 100 m cell, UN-adjusted; one
+    # file for the whole country including Rodrigues. Relative to the data root.
+    raster: incoming/energy/population/mus_ppp_2020_UNadj_constrained.tif
+    url: https://data.worldpop.org/GIS/Population/Global_2000_2020_Constrained/2020/maxar_v1/MUS/mus_ppp_2020_UNadj_constrained.tif
+    # Allow the fetch_energy_population rule to download the raster. Needs internet.
+    allow_download: false
+
+  demand:
+    # How the system demand is spread over substations and network nodes: the
+    # PyPSA-Earth distribution key with night-light radiance in place of GDP
+    # (see src/energy/demand.py). The two weights are normalised as given.
+    weight_nightlights: 0.6
+    weight_population: 0.4
+    # Demand levels (peak and average, MW) used by the interruption analysis.
+    levels: src/energy/resources/ceb_demand_levels_2023_24.csv
 
   nightlight:
     # Roads within this distance of a lit target or a power asset are kept.

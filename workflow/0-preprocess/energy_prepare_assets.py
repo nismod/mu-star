@@ -12,8 +12,8 @@ import geopandas as gpd
 import pandas as pd
 
 from energy.network_tables import write_input_templates
+from energy.osm import read_vector
 from energy.provided import (
-    GENERATOR_CAPACITY_REFERENCE,
     GEOGRAPHIC_CRS,
     METRIC_CRS,
     _clean_label,
@@ -21,7 +21,7 @@ from energy.provided import (
     _extract_route_voltage_kv,
     _read_gdf,
     _station_points_from_areas,
-    apply_generator_capacity_reference,
+    assemble_report_generators,
     assign_generation_to_substations,
     classify_generation,
     extract_demand_workbook,
@@ -45,14 +45,12 @@ from energy.service_weights import build_service_weights
     type=click.Path(file_okay=False, path_type=str),
 )
 @click.option(
-    "--capacity-reference",
-    "capacity_reference",
-    default=str(GENERATOR_CAPACITY_REFERENCE),
-    show_default=True,
+    "--osm-power",
+    "osm_power",
     type=click.Path(exists=True, dir_okay=False, path_type=str),
-    help="CSV of report-backed installed capacities, joined to generation sites by name.",
+    help="Cached OpenStreetMap power features (with names), used to place plants the provided data lacks.",
 )
-def main(input_dir, output_dir, capacity_reference):
+def main(input_dir, output_dir, osm_power):
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
     validate_provided_inputs(input_dir)
@@ -104,18 +102,17 @@ def main(input_dir, output_dir, capacity_reference):
         geometry="geometry",
         crs=GEOGRAPHIC_CRS,
     ).rename(columns={"asset_id": "generator_id"})
-    generation_sites = apply_generator_capacity_reference(generation_sites, Path(capacity_reference))
-    generation_sites["capacity_basis"] = "electrical_output"
-    generation_sites["capacity_unit"] = "MW_e"
-    generation_sites["carrier"] = generation_sites["asset_type"]
-    generation_sites["fuel_energy_basis"] = pd.NA
     generation_sites["source"] = "provided_geometry"
-    generation_sites = assign_generation_to_substations(
-        generation_sites,
-        snapped_substations,
-    )
+    generation_sites = assign_generation_to_substations(generation_sites, snapped_substations)
     generation_sites["lon"] = generation_sites.geometry.x
     generation_sites["lat"] = generation_sites.geometry.y
+    # The generator list itself comes from the CEB annual report's plant table;
+    # the provided sites (and named OSM plants) only say where each plant is.
+    generators = assemble_report_generators(
+        generation_sites,
+        snapped_substations,
+        osm_power=read_vector(Path(osm_power)) if osm_power else None,
+    )
 
     monthly_peak, annual_demand = extract_demand_workbook(input_dir / "power_demand" / "Power Demand.xlsx")
 
@@ -125,6 +122,7 @@ def main(input_dir, output_dir, capacity_reference):
     route_path = output_dir / "transmission_routes.parquet"
     point_path = output_dir / "generation_points.parquet"
     area_path = output_dir / "generation_areas.parquet"
+    generation_sites_path = output_dir / "generation_sites.csv"
     generators_path = output_dir / "generators.csv"
     peak_path = output_dir / "monthly_peak_demand_mw.csv"
     annual_path = output_dir / "annual_sector_demand_gwh.csv"
@@ -176,7 +174,8 @@ def main(input_dir, output_dir, capacity_reference):
     ].to_parquet(route_path)
     points[["asset_id", "name", "asset_type", "PopupInfo", "geometry"]].to_parquet(point_path)
     areas[["asset_id", "label", "category", "area_m2", "is_named", "geometry"]].to_parquet(area_path)
-    generation_sites.drop(columns="geometry").to_csv(generators_path, index=False)
+    generation_sites.drop(columns="geometry").to_csv(generation_sites_path, index=False)
+    generators.to_csv(generators_path, index=False)
     monthly_peak.to_csv(peak_path)
     annual_demand.to_csv(annual_path, index=False)
     build_service_weights(snapped_substations).to_csv(

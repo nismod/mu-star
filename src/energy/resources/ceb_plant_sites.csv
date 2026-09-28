@@ -1,0 +1,54 @@
+# Where each plant of the CEB Annual Report 2023-24 capacity table sits. One row per report_name in
+# ceb_plant_capacities_2023_24.csv. site_kind says how the location was found:
+#   provided   - a named generation site in the provided CEB shapefiles (matched by site_name)
+#   osm        - an OpenStreetMap power=plant feature (matched by its name tag, see the OSM cache)
+#   geocoded   - lat/lon looked up by hand: the village, reservoir or estate geocoded with OpenStreetMap
+#                Nominatim (approximate: the plant is within a few kilometres), or the position of unnamed
+#                OpenStreetMap features such as wind turbines; location_basis records which
+#   distributed - rooftop or small-scale generation with no single site; spread over substations by demand share
+#   unmatched  - no location found yet; treated like distributed until one is supplied
+report_name,site_kind,site_name,lat,lon,location_basis
+Champagne P/S,provided,Champagne Hydro Power Station,,,
+Ferney P/S,provided,Ferney Power Station,,,
+Tamarind Falls P/S,provided,Tamarin Falls Hydro Power Station,,,
+Le Val P/S,geocoded,,-20.3651,57.6308,"Nominatim: Le Val, Grand Port, Mauritius"
+A.I.A P/S (ex Reduit),provided,Reduit Hydroelectric power station,,,
+Cascade Cecile P/S,unmatched,,,,
+Magenta P/S,geocoded,,-20.2318,57.4124,"Nominatim: Magenta, Mauritius"
+La Ferme P/S,geocoded,,-20.2560,57.4305,"Nominatim: La Ferme reservoir, Mauritius"
+La Nicoliere P/S,geocoded,,-20.1577,57.6157,"Nominatim: La Nicoliere reservoir, Mauritius"
+Midlands P/S,geocoded,,-20.3209,57.5961,"Nominatim: Midlands Dam, Mauritius"
+2 MW PV Henrietta,provided,Henrietta Solar Farm,,,
+8 MW PV Henrietta,provided,Henrietta Solar Farm,,,
+SSDG/MSDG CEB Generation,distributed,,,,
+St.Louis P/S,provided,Saint Louis Power Station,,,
+Fort Victoria P/S,provided,CEB Fort Victoria Power Plant,,,
+Fort George P/S,provided,Fort George Power Station,,,
+Nicolay P/S,provided,Nicolay Power Station,,,
+AEL (ex FUEL),geocoded,,-20.2120,57.6929,"Nominatim: Alteo Union Flacq, Mauritius"
+TERRAGEN (ex CTBV),geocoded,,-20.0667,57.5978,"Nominatim: Terragen, Belle Vue Harel, Mauritius"
+OTEOLB (ex CTSAV),geocoded,,-20.4850,57.5847,"Nominatim: La Baraque, Savanne, Mauritius"
+OTEOSA (ex CTDS),geocoded,,-20.4945,57.5498,"Nominatim: Saint Aubin, Mauritius (Omnicane Saint Aubin thermal plant)"
+Sotravic (Landfill Gas),geocoded,,-20.3889,57.6305,"Nominatim: Mare Chicose landfill, Mauritius"
+Sarako,provided,Sarako,,,
+Solar Field Ltd,unmatched,,,,
+Synnove - L'Esperance,geocoded,,-20.0904,57.6396,"Nominatim: L'Esperance, Mauritius"
+Synnove - Petite Retraite,geocoded,,-20.1636,57.7004,"Nominatim: Petite Retraite, Mauritius"
+Voltas Yellow,unmatched,,,,
+Voltas Green,unmatched,,,,
+Green Yellow Arsenal,geocoded,,-20.1067,57.5405,"Nominatim: Arsenal, Mauritius"
+Helios,unmatched,,,,
+AKUO,osm,Henrietta Solar Farm,,,OSM plant operated by Akuo Energy / Medine Group
+SPV Petite Riviere,osm,Petite Rivière Solar PV Farm by Corexsolar,,,
+EOLE - Plaine des Roches,provided,Gamesa G58/850 wind,,,centroid of the eleven provided turbine points
+SSDG PV,distributed,,,,
+MSDG PV (all schemes),distributed,,,,
+Port Mathurin P/S,geocoded,,-19.6808,63.4221,"Nominatim: Port Mathurin, Rodrigues (the town; the station is not mapped in OpenStreetMap)"
+Port Mathurin P/S (solar),geocoded,,-19.6808,63.4221,"rooftop PV at Port Mathurin power station (same point)"
+Pointe Monnier P/S,osm,Pointe Monnier Power Station,,,
+Pointe Monnier P/S (solar),osm,Pointe Monnier Power Station,,,"rooftop PV at Pointe Monnier power station"
+Trefles Wind Farm,unmatched,,,,
+Grenade Wind Farm,geocoded,,-19.6842,63.4802,"OpenStreetMap: centroid of the four unnamed Vergnet GEV MP 275 kW turbines at Grenade (nodes 6802555680 to 6802555683)"
+Grenade PV Plant,geocoded,,-19.6842,63.4802,"next to the Grenade wind turbines; the PV plant itself is not mapped in OpenStreetMap"
+MSDG Rodrigues,distributed,,,,
+SSDG Rodrigues,distributed,,,,
