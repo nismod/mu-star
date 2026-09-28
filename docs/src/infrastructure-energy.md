@@ -58,11 +58,7 @@ CEB backbone) and line capacities are placeholders. They are published in the
   transmission routes and generation sites, shared under licence. They sit in
   the `Substation`, `Power Transmission`, `Generation Source` and
   `Power Demand` folders of `<data>/incoming/Infrastructure/Energy/`, as on
-  the project's shared drive. Generator capacities are CEB
-  annual report figures held in
-  `src/energy/resources/generator_capacity_reference.csv`. A generation site
-  with no reference capacity is kept in `generators.csv` for review but left
-  out of the PyPSA network.
+  the project's shared drive. The generator list is the plant table of the CEB Annual Report 2023-24 (`src/energy/resources/ceb_plant_capacities_2023_24.csv`, installed and effective capacity per plant); each plant is placed by `src/energy/resources/ceb_plant_sites.csv`, using a provided site, a named OpenStreetMap plant or a geocoded village. Rooftop solar and plants with no location yet keep an empty `bus_id` and are spread by demand share.
 - **OpenStreetMap**: the drivable road network, mapped power features and the
   outline of each island, downloaded into
   `<data>/incoming/Infrastructure/Energy/OpenStreetMap/<region>/`.
@@ -74,6 +70,10 @@ CEB backbone) and line capacities are placeholders. They are published in the
   from the provider: a zero radiance can mean "no cloud-free observations that
   month" rather than darkness. The median over twelve months reduces this
   problem but does not remove it.
+- **WorldPop population**: the 2020 "constrained" grid of people per 100 m
+  cell, adjusted to UN totals, downloaded into
+  `<data>/incoming/Infrastructure/Energy/Population/`. It covers Rodrigues as
+  well.
 
 `<data>` is the data root: `data/` in this repository unless `data_root` is set
 in `config/config.yaml`. `<data>/incoming/Infrastructure/Energy/` mirrors the
@@ -85,6 +85,28 @@ You do not need any of these inputs to use the networks. A ready-made pack of
 the processed files (`yyyymmdd-model-data` under
 `Processed Data/Infrastructure/Energy` on the shared drive) can be copied to
 `<data>/processed/energy`; the README shows both routes.
+
+## Where the demand is
+
+The interruption analysis needs to know how much of the system demand sits
+behind each substation and at each node of the road network. Nobody has
+metered that for us, so it is estimated the way PyPSA-Earth does it:
+
+1. Each substation serves the area closer to it than to any other substation,
+   clipped to the island outline. Rodrigues, which has no CEB substation in the
+   provided data, is one area around its stand-in root.
+2. Each area is scored by the people who live in it (WorldPop) and by how
+   brightly it is lit at night (the VIIRS composite, standing in for economic
+   activity; PyPSA-Earth uses a GDP raster, which is far too coarse for a 50 km
+   island). The score is 0.6 times the normalised radiance plus 0.4 times the
+   normalised population, the weights PyPSA-Earth uses for GDP and population.
+3. Inside each area the same score, computed per node from the raster cells
+   nearest to it, splits the area's share between the nodes.
+
+The system totals come from the CEB Annual Report 2023-24: a peak of 525.7 MW
+(16 February 2024) and an average of 346.8 MW (units sent out over the year).
+The shares and the service-area polygons are written under
+`<data>/processed/energy/demand/<product>/` for review.
 
 ## Outputs
 

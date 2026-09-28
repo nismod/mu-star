@@ -211,7 +211,8 @@ set it up, and you can use either or both:
   `Incoming Data/Infrastructure/Energy` from the shared drive to
   `data/incoming/Infrastructure/Energy`. It holds the provided CEB data, which
   is not public. The public inputs (OpenStreetMap roads and power features,
-  VIIRS night lights) are downloaded by the workflow when they are missing.
+  VIIRS night lights, WorldPop population) are downloaded by the workflow when
+  they are missing.
 
 For example, with the shared drive synced to your computer:
 
@@ -240,9 +241,17 @@ snakemake -c1 data/processed/energy/networks/base-mauritius/base-mauritius.nc
 ```
 
 The code entry point is `energy.build.build_network`. Inferred voltages and
-capacities are placeholders, and energy has no disruption analysis yet. See
-`docs/src/infrastructure-energy.md` for the method, inputs, outputs and current
-limitations.
+capacities are placeholders, and energy has no disruption analysis yet. The
+demand shares that the coming interruption analysis will use (a share of the
+system demand per substation and per network node, from population and night
+lights) are written by:
+
+```shell
+snakemake -c1 data/processed/energy/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv
+```
+
+See `docs/src/infrastructure-energy.md` for the method, inputs, outputs and
+current limitations.
 
 ### Testing
 
