@@ -32,8 +32,15 @@ def _bus_voltage_kv(
     bus_id: str,
     bus_row: pd.Series,
     connected_voltages: set[float],
+    *,
+    default_voltage_kv: float,
 ) -> float:
-    """Return one nominal bus voltage consistent with its connected AC lines."""
+    """Return one nominal bus voltage consistent with its connected AC lines.
+
+    A bus with an explicit ``v_nom_kv`` keeps it (and its lines must agree); a
+    bus without one takes the single voltage of its lines; a bus with no lines
+    at all takes ``default_voltage_kv``.
+    """
     connected_voltage_values = np.array(sorted(connected_voltages), dtype=float)
 
     explicit_voltage = bus_row.get("v_nom_kv")
@@ -43,7 +50,11 @@ def _bus_voltage_kv(
             connected_voltage_values,
             explicit_voltage,
         ):
-            raise ValueError(f"Bus {bus_id} voltage does not match its connected line voltages")
+            raise ValueError(
+                f"Bus {bus_id} is {explicit_voltage:g} kV but its lines are "
+                f"{sorted(set(connected_voltage_values.tolist()))} kV. Give the bus the lines' voltage, "
+                "or represent each voltage level as a separate bus joined by a Transformer."
+            )
         return explicit_voltage
     if connected_voltage_values.size == 1:
         return float(connected_voltage_values[0])
@@ -52,7 +63,7 @@ def _bus_voltage_kv(
             f"Bus {bus_id} has multiple line voltages. Represent each voltage "
             "level as a separate bus connected by a Transformer."
         )
-    return 66.0
+    return float(default_voltage_kv)
 
 
 def build_topology_network(
@@ -63,8 +74,12 @@ def build_topology_network(
     transformers: gpd.GeoDataFrame | None = None,
     line_resistance_ohm_per_km: float = 0.01,
     line_reactance_ohm_per_km: float = 0.4,
+    default_voltage_kv: float = 66.0,
 ) -> pypsa.Network:
     """Build a fixed-capacity network topology without demand time series.
+
+    ``default_voltage_kv`` is used only for buses that have no explicit voltage
+    and no connected lines.
 
     The model cannot build extra capacity. Missing line limits or power-station
     capacities cause a clear error rather than being estimated by the model.
@@ -136,6 +151,7 @@ def build_topology_network(
             bus_id,
             row,
             connected_voltages.get(bus_id, set()),
+            default_voltage_kv=default_voltage_kv,
         )
         for bus_id, row in bus_frame.iterrows()
     ]
