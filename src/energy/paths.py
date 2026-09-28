@@ -1,48 +1,54 @@
-"""Project data path conventions aligned with mu-star.
+"""Where the data lives.
 
-Defaults follow the repository's unnumbered ``data/{incoming,processed,out}``
-layout. Snakemake rules pass explicit directories into the build functions, so
-these helpers only supply defaults (and the OSM/nightlight cache locations used
-by :mod:`energy.osm` and :mod:`energy.network_source`).
+Everything the energy pipeline reads or writes sits under one *data root*:
+
+    <data_root>/incoming/energy/...    source data as received, never edited by hand
+    <data_root>/processed/energy/...   intermediate files written by the workflow
+    <data_root>/out/energy/...         human-readable tables and reports
+
+The data root is ``data_root`` in ``config/config.yaml`` (default ``data``,
+relative to the repository). The Snakemake rules pass every path explicitly, so
+these helpers only matter when you call the Python functions yourself, for
+example from a notebook.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+"""The mu-star checkout this package was installed from (editable install)."""
 
 
 def repo_root() -> Path:
-    """Return the repository root, allowing an explicit environment override."""
-    override = os.environ.get("MU_STAR_ENERGY_REPO")
-    if override:
-        return Path(override).expanduser().resolve()
-
-    cwd = Path.cwd().resolve()
-    for candidate in (cwd, *cwd.parents):
-        if (candidate / "pyproject.toml").exists() and (candidate / "workflow").is_dir():
-            return candidate
-    raise RuntimeError("Could not locate the mu-star repository root")
+    """Return the repository root."""
+    return REPO_ROOT
 
 
 def data_root() -> Path:
-    """Return the shared data root, allowing OneDrive or another external location."""
-    override = os.environ.get("MU_STAR_DATA_ROOT")
-    return Path(override).expanduser().resolve() if override else repo_root() / "data"
+    """Return the data root from ``config/config.yaml`` (default ``<repo>/data``)."""
+    config_path = REPO_ROOT / "config" / "config.yaml"
+    configured = "data"
+    if config_path.is_file():
+        loaded = yaml.safe_load(config_path.read_text()) or {}
+        configured = str(loaded.get("data_root") or "data")
+    root = Path(configured).expanduser()
+    return root if root.is_absolute() else REPO_ROOT / root
 
 
-def incoming_energy_dir() -> Path:
-    return data_root() / "incoming" / "energy"
+def incoming_energy_dir(root: Path | None = None) -> Path:
+    return Path(root or data_root()) / "incoming" / "energy"
 
 
-def processed_energy_dir() -> Path:
-    return data_root() / "processed" / "energy"
+def processed_energy_dir(root: Path | None = None) -> Path:
+    return Path(root or data_root()) / "processed" / "energy"
 
 
-def output_energy_dir() -> Path:
-    return data_root() / "out" / "energy"
+def network_output_dir(root: Path | None = None) -> Path:
+    return processed_energy_dir(root) / "networks"
 
 
-def network_output_dir() -> Path:
-    """Built network bundles sit alongside their checksum-linked sidecars."""
-    return processed_energy_dir() / "networks"
+def output_energy_dir(root: Path | None = None) -> Path:
+    return Path(root or data_root()) / "out" / "energy"

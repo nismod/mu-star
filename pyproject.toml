@@ -32,6 +32,7 @@ dependencies = [
     "pandas>=2,<3",
     "pyarrow",
     "pypsa>=0.30,<0.31",
+    "pyyaml",
     "rasterio",
     "rioxarray",
     "scipy",
