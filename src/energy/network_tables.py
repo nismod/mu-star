@@ -59,9 +59,11 @@ CEB_TRANSMISSION_LENGTH_SOURCE = "https://ceb.mu/fact-sheets/grid-infrastructure
 # appropriate published comparator for the island-wide inferred network.
 CEB_TOTAL_NETWORK_LENGTH_KM = 10_492.2
 CEB_TOTAL_NETWORK_LENGTH_SOURCE = CEB_TRANSMISSION_LENGTH_SOURCE
-# CEB Annual Report 2023-2024, pp. 50-51: grand total installed capacity,
-# including CEB, IPP, SSDG and MSDG generation.
-CEB_REPORTED_INSTALLED_GENERATION_MW = 881.56
+# CEB Annual Report 2023-2024: grand total installed capacity including CEB,
+# IPP, SSDG and MSDG generation, per island (Mauritius pp. 50-51, Rodrigues
+# p. 97). A product is checked against the islands it covers.
+CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW = {"mauritius": 881.56, "rodrigues": 15.30}
+CEB_REPORTED_INSTALLED_GENERATION_MW = CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW["mauritius"]
 CEB_REPORTED_GENERATION_CAPACITY_SOURCE = (
     "https://ceb.mu/files/files/publications/Annual%20Report/CEB%20AR%202023-2024.pdf"
 )

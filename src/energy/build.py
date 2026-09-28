@@ -35,6 +35,7 @@ from energy.distribution_network import (
 )
 from energy.network import assert_fixed_capacity, build_topology_network
 from energy.network_tables import (
+    CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW,
     CEB_REPORTED_INSTALLED_GENERATION_MW,
     CEB_TOTAL_NETWORK_LENGTH_KM,
     CEB_TOTAL_NETWORK_LENGTH_SOURCE,
@@ -581,20 +582,15 @@ def _provided_power_assets(
         crs="EPSG:4326",
     )
     generators = pd.read_csv(input_dir / "generators.csv")
-    if {"lon", "lat"} <= set(generators):
-        has_coordinates = (
-            pd.to_numeric(generators["lon"], errors="coerce").notna()
-            & pd.to_numeric(generators["lat"], errors="coerce").notna()
-        )
-        coordinate_rows = generators.loc[has_coordinates].copy()
-    else:
-        coordinate_rows = generators.iloc[0:0].copy()
+    if "region" not in generators:
+        generators["region"] = "mauritius"
+    coordinate_rows = generators.loc[_has_coordinates(generators)].copy()
     generator_assets = gpd.GeoDataFrame(
         {
             "asset_id": coordinate_rows["generator_id"].astype(str),
             "asset_kind": "generator",
             "source": "provided_generator",
-            "region": "mauritius",
+            "region": coordinate_rows["region"].astype(str).to_numpy(),
             "provisional_root": False,
             "geometry": [
                 Point(float(lon), float(lat))
@@ -610,6 +606,34 @@ def _provided_power_assets(
         crs="EPSG:4326",
     )
     return assets, generators
+
+
+def reported_generation_reference_mw(source: str, region: str | None) -> float:
+    """CEB's reported installed capacity for the islands a product covers.
+
+    The base product covers Mauritius. An inferred product covers the members
+    of its region, so ``mauritius-rodrigues`` adds the Rodrigues total. A
+    region with no reported figure falls back to the Mauritius total.
+    """
+    if source == "base" or not region:
+        return CEB_REPORTED_INSTALLED_GENERATION_MW
+    members = [osm.region_slug(member) for member in osm.region_members(region)]
+    covered = [
+        CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW[member]
+        for member in members
+        if member in CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW
+    ]
+    return round(float(sum(covered)), 2) if covered else CEB_REPORTED_INSTALLED_GENERATION_MW
+
+
+def _has_coordinates(generators: pd.DataFrame) -> pd.Series:
+    """True for every generator row with a numeric ``lon`` and ``lat``."""
+    if not {"lon", "lat"} <= set(generators):
+        return pd.Series(False, index=generators.index)
+    return (
+        pd.to_numeric(generators["lon"], errors="coerce").notna()
+        & pd.to_numeric(generators["lat"], errors="coerce").notna()
+    )
 
 
 def _provisional_power_root(region: str, roads: gpd.GeoDataFrame | None) -> gpd.GeoDataFrame:
@@ -838,11 +862,23 @@ def _nightlight_supported_roads(
 
 def _provided_generators_for_inferred(
     generators: pd.DataFrame,
+    *,
+    substation_regions: set[str],
 ) -> pd.DataFrame:
-    """Point provided generators at the graph's ``bus::<id>`` node names; a blank bus id stays blank."""
+    """Point provided generators at the graph's node names.
+
+    A generator assigned to a substation attaches at that substation's
+    ``bus::<id>`` node. A located generator on an island with no provided
+    substation at all (Rodrigues) is the network's connection point itself, so
+    it attaches at its own ``asset::<generator_id>`` node. Any other generator
+    without a bus keeps a blank bus id and is retained for review.
+    """
     prepared = generators.copy()
     bus_id = prepared["bus_id"]
+    region = prepared["region"].astype(str) if "region" in prepared else pd.Series("mauritius", index=prepared.index)
+    own_node = bus_id.isna() & _has_coordinates(prepared) & ~region.isin(substation_regions)
     prepared["bus_id"] = bus_id.where(bus_id.isna(), "bus::" + bus_id.astype(str))
+    prepared.loc[own_node, "bus_id"] = "asset::" + prepared.loc[own_node, "generator_id"].astype(str)
     return prepared
 
 
@@ -984,6 +1020,8 @@ def _build_inferred_network(
         provided_generator_records = len(provided_generators)
         methodology = INFERRED_PROVIDED_METHODOLOGY
         power_asset_source = "provided_substations_and_generators"
+    # Islands that have a real substation; a located generator elsewhere becomes its own connection point.
+    substation_regions = set(power_assets.loc[power_assets["asset_kind"].eq("substation"), "region"].astype(str))
 
     # A region member without any power asset gets one stand-in root on its road network.
     member_roots: list[gpd.GeoDataFrame] = []
@@ -1086,7 +1124,9 @@ def _build_inferred_network(
     service_weights.to_csv(service_weights_path_out, index=False)
 
     generators = (
-        _provided_generators_for_inferred(provided_generators) if source == "inferred-provided" else _empty_generators()
+        _provided_generators_for_inferred(provided_generators, substation_regions=substation_regions)
+        if source == "inferred-provided"
+        else _empty_generators()
     )
     table_outputs = None
     validation_kwargs = {
@@ -1257,7 +1297,7 @@ def build_network(
     reference_line_length_km: float = CEB_TRANSMISSION_LENGTH_KM,
     inferred_reference_line_length_km: float = CEB_TOTAL_NETWORK_LENGTH_KM,
     line_length_tolerance_fraction: float = 0.35,
-    reference_generation_capacity_mw: float = CEB_REPORTED_INSTALLED_GENERATION_MW,
+    reference_generation_capacity_mw: float | None = None,
     generation_capacity_tolerance_fraction: float = 0.10,
     base_route_gap_tolerance_m: float = 75,
     base_default_voltage_kv: float = 66,
@@ -1294,6 +1334,9 @@ def build_network(
         raise ValueError("region can only be used with an inferred source")
     if source != "base" and not region:
         raise ValueError(f"source={source!r} requires a region, e.g. region='mauritius-rodrigues'.")
+    if reference_generation_capacity_mw is None:
+        # CEB's total for the islands this product covers (Mauritius, or both islands).
+        reference_generation_capacity_mw = reported_generation_reference_mw(source, region)
 
     input_dir = Path(input_dir or processed_energy_dir() / "provided")
     output_dir = Path(output_dir or network_output_dir())

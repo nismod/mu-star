@@ -56,7 +56,15 @@ CEB backbone) and line capacities are placeholders. They are published in the
 
 - **Provided CEB data**: a power demand workbook and shapefiles of substations,
   transmission routes and generation sites, shared under licence and placed by
-  hand under `<data>/incoming/energy/provided/`. The generator list is the plant table of the CEB Annual Report 2023-24 (`src/energy/resources/ceb_plant_capacities_2023_24.csv`, installed and effective capacity per plant); each plant is placed by `src/energy/resources/ceb_plant_sites.csv`, using a provided site, a named OpenStreetMap plant or a geocoded village. Rooftop solar and plants with no location yet keep an empty `bus_id` and are spread by demand share.
+  hand under `<data>/incoming/energy/provided/`. The generator list is the
+  plant tables of the CEB Annual Report 2023-24, for Mauritius (pp. 50-51) and
+  Rodrigues (p. 97), in `src/energy/resources/ceb_plant_capacities_2023_24.csv`
+  with installed and effective capacity per plant. Each plant is placed by
+  `src/energy/resources/ceb_plant_sites.csv`, using a provided site, a named
+  OpenStreetMap plant, a geocoded village or the position of unnamed
+  OpenStreetMap features. A plant is tied to the nearest CEB substation on its
+  own island. Rooftop solar and plants with no location yet keep an empty
+  `bus_id` and are spread by demand share.
 - **OpenStreetMap**: the drivable road network, mapped power features and the
   outline of each island, fetched once into
   `<data>/incoming/energy/osm/<region>/`.
@@ -84,7 +92,7 @@ metered that for us, so it is estimated the way PyPSA-Earth does it:
 
 1. Each substation serves the area closer to it than to any other substation,
    clipped to the island outline. Rodrigues, which has no CEB substation in the
-   provided data, is one area around its stand-in root.
+   provided data, is divided the same way between its power stations.
 2. Each area is scored by the people who live in it (WorldPop) and by how
    brightly it is lit at night (the VIIRS composite, standing in for economic
    activity; PyPSA-Earth uses a GDP raster, which is far too coarse for a 50 km
@@ -121,8 +129,11 @@ problem is never silent.
 
 Known limits:
 
-- Rodrigues has no provided CEB data, so the provided variant gives it a
-  stand-in root (a placeholder substation) on its road network.
+- Rodrigues has no provided CEB network data. Its power stations from the
+  annual report are anchored to its roads and each feeds the island from its
+  own node; there is no substation or backbone between them. An island with no
+  power asset at all gets a stand-in root (a placeholder substation) on its
+  road network.
 - The distribution proxy follows roads, so lines that cross open country are
   not represented.
 - Voltages and capacities are placeholders, and no power flow is calculated.
