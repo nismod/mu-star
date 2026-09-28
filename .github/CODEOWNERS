@@ -26,8 +26,11 @@
 /workflow/**/transport.smk            @tomalrussell # sadien
 /docs/src/infrastructure-transport.md @tomalrussell # sadien
 
-/src/power/                           @cpalazzi # shoaib
-/workflow/**/power.smk                @cpalazzi # shoaib
+/src/energy/                          @cpalazzi # shoaib
+/workflow/**/energy.smk               @cpalazzi # shoaib
+/workflow/**/energy_*.py              @cpalazzi # shoaib
+/config/energy/                       @cpalazzi # shoaib
+/notebooks/energy/                    @cpalazzi # shoaib
 /docs/src/infrastructure-energy.md    @cpalazzi # shoaib
 
 /src/water/                           @S-col-env @apeer123
