@@ -130,7 +130,7 @@ def test_fetch_osm_power_features_handles_osmnx_multiindex(monkeypatch, tmp_path
         names=["element_type", "osmid"],
     )
     features = gpd.GeoDataFrame(
-        {"power": ["substation", "generator"]},
+        {"power": ["substation", "generator"], "name": ["Fort George", None], "operator": ["CEB", None]},
         geometry=[Point(57.55, -20.25), Point(57.58, -20.29)],
         crs="EPSG:4326",
         index=index,
@@ -148,6 +148,9 @@ def test_fetch_osm_power_features_handles_osmnx_multiindex(monkeypatch, tmp_path
     power = gpd.read_parquet(path)
     assert list(power["bus_id"]) == ["MAURITIUS_SUB_001", "MAURITIUS_SUB_002"]
     assert list(power["power"]) == ["substation", "generator"]
+    assert power["name"].iloc[0] == "Fort George" and power["operator"].iloc[0] == "CEB"
+    assert power["name"].isna().iloc[1]
+    assert power["plant_source"].isna().all()
     assert power.crs == "EPSG:4326"
 
 
