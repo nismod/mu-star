@@ -370,7 +370,19 @@ def _graph_line_frame(
     default_voltage_kv: float,
     transmission_voltage_kv: float,
     default_capacity_mva: float,
+    transmission_capacity_mva: float | None = None,
+    anchor_capacity_mva: float | None = None,
 ) -> gpd.GeoDataFrame:
+    """Turn graph edges into a PyPSA lines table.
+
+    Voltage and rating depend on what the edge is: the provided transmission
+    backbone gets ``transmission_voltage_kv`` / ``transmission_capacity_mva``,
+    an asset-to-road connector gets ``anchor_capacity_mva`` (the substation's
+    transformer rating), and every road segment gets the distribution
+    placeholders ``default_voltage_kv`` / ``default_capacity_mva``.
+    """
+    transmission_capacity_mva = default_capacity_mva if transmission_capacity_mva is None else transmission_capacity_mva
+    anchor_capacity_mva = default_capacity_mva if anchor_capacity_mva is None else anchor_capacity_mva
     columns = [
         "line_id",
         "bus0",
@@ -398,8 +410,13 @@ def _graph_line_frame(
                     (float(node1["x"]), float(node1["y"])),
                 ]
             )
-        line_source = attrs.get("source")
-        line_voltage_kv = transmission_voltage_kv if line_source == "provided_transmission" else default_voltage_kv
+        line_source = str(attrs.get("source") or "")
+        is_transmission = line_source == "provided_transmission"
+        is_anchor = line_source.endswith("_anchor")
+        line_voltage_kv = transmission_voltage_kv if is_transmission else default_voltage_kv
+        line_capacity_mva = (
+            transmission_capacity_mva if is_transmission else anchor_capacity_mva if is_anchor else default_capacity_mva
+        )
         rows.append(
             {
                 "line_id": str(attrs.get("edge_id") or f"inferred_line_{number:06d}"),
@@ -407,7 +424,7 @@ def _graph_line_frame(
                 "bus1": bus1,
                 "v_nom_kv": line_voltage_kv,
                 "length_km": max(float(attrs.get("length_km", 0.0)), 0.001),
-                "s_nom_mva": default_capacity_mva,
+                "s_nom_mva": line_capacity_mva,
                 "inferred": True,
                 "source": line_source,
                 "region": attrs.get("region"),
@@ -934,6 +951,8 @@ def _build_inferred_network(
     inferred_voltage_kv: float,
     inferred_transmission_voltage_kv: float,
     inferred_capacity_mva: float,
+    inferred_transmission_capacity_mva: float,
+    inferred_anchor_capacity_mva: float,
     base_route_gap_tolerance_m: float,
     table_output_dir: Path | None,
     reference_line_length_km: float,
@@ -1051,6 +1070,8 @@ def _build_inferred_network(
         default_voltage_kv=inferred_voltage_kv,
         transmission_voltage_kv=inferred_transmission_voltage_kv,
         default_capacity_mva=inferred_capacity_mva,
+        transmission_capacity_mva=inferred_transmission_capacity_mva,
+        anchor_capacity_mva=inferred_anchor_capacity_mva,
     )
     buses = _node_bus_frame(graph)
     # A junction that carries both the backbone and distribution voltage becomes
@@ -1170,6 +1191,8 @@ def _build_inferred_network(
             "inferred_voltage_kv": inferred_voltage_kv,
             "inferred_transmission_voltage_kv": inferred_transmission_voltage_kv,
             "inferred_capacity_mva": inferred_capacity_mva,
+            "inferred_transmission_capacity_mva": inferred_transmission_capacity_mva,
+            "inferred_anchor_capacity_mva": inferred_anchor_capacity_mva,
             "transformers": len(network.transformers),
             "electrical_values_note": electrical_values_note,
             "max_anchor_distance_m": max_anchor_distance_m,
@@ -1228,6 +1251,8 @@ def build_network(
     inferred_voltage_kv: float = 11,
     inferred_transmission_voltage_kv: float = 66,
     inferred_capacity_mva: float = 5,
+    inferred_transmission_capacity_mva: float = 50,
+    inferred_anchor_capacity_mva: float = 137,
     export_root: Path | None = None,
     reference_line_length_km: float = CEB_TRANSMISSION_LENGTH_KM,
     inferred_reference_line_length_km: float = CEB_TOTAL_NETWORK_LENGTH_KM,
@@ -1343,6 +1368,8 @@ def build_network(
         inferred_voltage_kv=inferred_voltage_kv,
         inferred_transmission_voltage_kv=inferred_transmission_voltage_kv,
         inferred_capacity_mva=inferred_capacity_mva,
+        inferred_transmission_capacity_mva=inferred_transmission_capacity_mva,
+        inferred_anchor_capacity_mva=inferred_anchor_capacity_mva,
         base_route_gap_tolerance_m=base_route_gap_tolerance_m,
         table_output_dir=table_output_dir,
         reference_line_length_km=inferred_reference_line_length_km,

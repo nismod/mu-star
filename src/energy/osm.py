@@ -178,12 +178,22 @@ def _empty_roads() -> gpd.GeoDataFrame:
     )
 
 
+# OpenStreetMap tags kept on cached power features (tag -> column). They are
+# free text and only there to help match a feature to the CEB report by name.
+POWER_FEATURE_TAGS = {
+    "name": "name",
+    "operator": "operator",
+    "plant:source": "plant_source",
+    "plant:output:electrical": "plant_output_electrical",
+    "voltage": "voltage",
+}
+
+
 def _empty_power_features() -> gpd.GeoDataFrame:
-    return gpd.GeoDataFrame(
-        {"source": [], "region": [], "bus_id": [], "power": [], "geometry": []},
-        geometry="geometry",
-        crs=GEOGRAPHIC_CRS,
-    )
+    columns = {"source": [], "region": [], "bus_id": [], "power": []}
+    columns.update({column: [] for column in POWER_FEATURE_TAGS.values()})
+    columns["geometry"] = []
+    return gpd.GeoDataFrame(columns, geometry="geometry", crs=GEOGRAPHIC_CRS)
 
 
 def _download_help(what: str, region: str, path: Path) -> str:
@@ -363,13 +373,19 @@ def fetch_osm_power_features(
                 features = features.set_crs(GEOGRAPHIC_CRS)
             metric = features.to_crs(features.estimate_utm_crs())
             power_values = features["power"].astype(str).to_numpy() if "power" in features else [""] * len(metric)
+            columns = {
+                "source": "osm_power",
+                "region": slug,
+                "bus_id": [f"{slug.upper()}_SUB_{number:03d}" for number in range(1, len(metric) + 1)],
+                "power": power_values,
+            }
+            # Descriptive tags, kept as text so a plant can be matched to the CEB report by name.
+            for tag, column in POWER_FEATURE_TAGS.items():
+                columns[column] = (
+                    features[tag].astype("string").to_numpy() if tag in features else pd.array([pd.NA] * len(metric))
+                )
             power = gpd.GeoDataFrame(
-                {
-                    "source": "osm_power",
-                    "region": slug,
-                    "bus_id": [f"{slug.upper()}_SUB_{number:03d}" for number in range(1, len(metric) + 1)],
-                    "power": power_values,
-                },
+                columns,
                 geometry=metric.geometry.centroid.reset_index(drop=True),
                 crs=metric.crs,
             ).to_crs(GEOGRAPHIC_CRS)
