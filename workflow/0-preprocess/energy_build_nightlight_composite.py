@@ -4,7 +4,7 @@ from pathlib import Path
 
 import click
 
-from energy.nightlight_source import build_nightlight_composite
+from energy.nightlights import build_nightlight_composite
 
 
 @click.command()

@@ -3,12 +3,13 @@ import pandas as pd
 import pytest
 from shapely.geometry import LineString, Point
 
-from energy.intake import (
+from energy.provided import (
     _extract_route_capacity_mw,
     _extract_route_voltage_kv,
     apply_generator_capacity_reference,
     assign_generation_to_substations,
     classify_generation,
+    extract_demand_workbook,
     snap_substations_to_routes,
     validate_provided_inputs,
 )
@@ -118,3 +119,24 @@ def test_report_capacity_is_split_across_duplicate_site_geometries():
     assert result["output_capacity_mw"].sum() == pytest.approx(15.19)
     assert result["marginal_cost"].eq(0.0).all()
     assert result["marginal_cost_basis"].eq("equal_dispatch_proxy_for_voll").all()
+
+
+def test_demand_workbook_total_row_is_not_a_sector(tmp_path):
+    rows = [
+        ["Year", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+        [2012, 300, 310, 320, 330, 340, 350, 360, 370, 380, 390, 400, 410],
+        [None] * 13,
+        ["Unit : GWh"] + [None] * 12,
+        [None, 2012, 2013] + [None] * 10,
+        ["Electricity demand - Domestic", 700, 710] + [None] * 10,
+        ["Electricity demand - Commercial", 800, 810] + [None] * 10,
+        ["Electricity demand \n(final)", 1500, 1520] + [None] * 10,
+    ]
+    workbook = tmp_path / "Power Demand.xlsx"
+    pd.DataFrame(rows).to_excel(workbook, header=False, index=False)
+
+    monthly_peak, annual = extract_demand_workbook(workbook)
+
+    assert monthly_peak.loc[2012, "Dec"] == 410
+    assert set(annual["category"]) == {"Domestic", "Commercial"}
+    assert annual.groupby("year")["demand_gwh"].sum().loc[2012] == 1500

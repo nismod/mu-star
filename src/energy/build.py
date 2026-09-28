@@ -1,9 +1,16 @@
-"""Build and save PyPSA networks from named input sources (base or inferred)."""
+"""Build and save one energy network product: the provided base network or an inferred one.
+
+``build_network(source, ...)`` is the single entry point used by the workflow
+rules and the notebooks. It reads prepared inputs, assembles buses and lines,
+validates them, writes the PyPSA network plus GeoParquet layers and metadata,
+and logs every advisory warning so a run is never silently "fine".
+"""
 
 from __future__ import annotations
 
+import hashlib
 import json
-from calendar import month_abbr
+import logging
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -37,12 +44,13 @@ from energy.network_tables import (
     validate_model_tables,
     write_model_tables,
 )
-from energy.nightlight_targets import build_nightlight_targets
-from energy.paths import incoming_energy_dir, network_output_dir, processed_energy_dir
+from energy.paths import network_output_dir, processed_energy_dir
 from energy.spatial_export import (
     spatial_export_paths,
     write_network_geoparquet,
 )
+
+logger = logging.getLogger(__name__)
 
 BASE_REQUIRED_FILES = (
     "snapped_substations.parquet",
@@ -89,36 +97,15 @@ class NetworkBuildOutputs:
     validation: Path | None = None
 
 
-def _coerce_vector_fetch_result(result: object) -> gpd.GeoDataFrame | None:
-    if isinstance(result, gpd.GeoDataFrame):
-        return result
-    path = getattr(result, "path", result)
-    if path is None:
-        return None
-    return _read_optional_vector(Path(path))
+def _file_sha256(path: Path) -> str:
+    with Path(path).open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def _fetch_result_path(result: object) -> str | None:
-    path = getattr(result, "path", result)
-    return str(path) if isinstance(path, (str, Path)) else None
-
-
-def _coerce_optional_vector(
-    value: gpd.GeoDataFrame | str | Path | None,
-) -> gpd.GeoDataFrame | None:
-    if isinstance(value, gpd.GeoDataFrame):
-        return value
-    if value is None:
-        return None
-    return _read_optional_vector(Path(value))
-
-
-def _read_optional_vector(path: Path | None) -> gpd.GeoDataFrame | None:
-    if path is None or not path.exists():
-        return None
-    if path.suffix.lower() in {".parquet", ".geoparquet"}:
-        return gpd.read_parquet(path)
-    return gpd.read_file(path)
+def _log_validation(product: str, validation: dict[str, object]) -> None:
+    """Log advisory warnings so they show up in the Snakemake log, not only in validation.json."""
+    for warning in validation.get("warnings", []):
+        logger.warning("%s: %s", product, warning)
 
 
 def _missing_files(input_dir: Path, names: tuple[str, ...]) -> list[Path]:
@@ -257,6 +244,7 @@ def _build_base_network(
         )
     if validation["errors"]:
         raise ValueError("Invalid base network tables:\n- " + "\n- ".join(validation["errors"]))
+    _log_validation(network_path.stem, validation)
     network_generators = _complete_generators(generators)
     network = build_topology_network(buses, lines, network_generators)
     _write_network(network_path, network)
@@ -303,8 +291,7 @@ def _build_base_network(
             "default_voltage_kv": default_voltage_kv,
             "topology_capacity_mva": topology_capacity_mva,
             "electrical_values_note": (
-                "Voltages are provided CEB 66 kV values; line capacities are "
-                "non-binding topology placeholders."
+                "Voltages are provided CEB 66 kV values; line capacities are non-binding topology placeholders."
             ),
             "model_line_length_km": validation["totals"]["line_length_km"],
             "line_length_validation": validation["checks"]["line_length_against_published_ceb_total"],
@@ -326,8 +313,7 @@ def _build_base_network(
         publish_voltage=True,
         publish_capacity=False,
         electrical_values_note=(
-            "Voltages are provided CEB 66 kV values; line capacities are "
-            "non-binding topology placeholders."
+            "Voltages are provided CEB 66 kV values; line capacities are non-binding topology placeholders."
         ),
         stage="topology_only",
     )
@@ -341,35 +327,6 @@ def _build_base_network(
         lines=table_outputs.lines if table_outputs else None,
         validation=table_outputs.validation if table_outputs else None,
     )
-
-
-def provisional_demand_profile(input_dir: Path) -> pd.DataFrame:
-    path = input_dir / "monthly_peak_demand_mw.csv"
-    if not path.exists():
-        raise FileNotFoundError(
-            "monthly_peak_demand_mw.csv is missing; supply a provided demand "
-            "profile or place the monthly peak table in this input directory."
-        )
-    peaks = pd.read_csv(path)
-    value_columns = [column for column in peaks.columns if column != "year"]
-    long = peaks.melt(
-        id_vars="year",
-        value_vars=value_columns,
-        var_name="month",
-        value_name="demand_mw",
-    )
-    long["demand_mw"] = pd.to_numeric(long["demand_mw"], errors="coerce")
-    long = long.dropna(subset=["demand_mw"])
-    if long.empty:
-        raise ValueError(f"{path} does not contain a usable demand value")
-    month_order = {name: index for index, name in enumerate(month_abbr) if name}
-    long["month_number"] = long["month"].map(month_order)
-    long = long.dropna(subset=["month_number"])
-    if long.empty:
-        raise ValueError(f"{path} month columns must use abbreviated month names")
-    row = long.sort_values(["year", "month_number"]).iloc[-1]
-    timestamp = pd.Timestamp(int(row["year"]), int(row["month_number"]), 1)
-    return pd.DataFrame({"demand_mw": [float(row["demand_mw"])]}, index=[timestamp])
 
 
 def _empty_generators() -> pd.DataFrame:
@@ -478,17 +435,21 @@ def _equal_service_weights(bus_frame: gpd.GeoDataFrame) -> pd.DataFrame:
     )
 
 
-def _largest_road_component_centroid(roads: gpd.GeoDataFrame | None) -> Point:
+def _largest_road_component_centroid(roads: gpd.GeoDataFrame | None, *, region: str) -> Point:
+    """Point on the largest connected road component, used as a stand-in root for a region with no power assets."""
     if roads is None or roads.empty:
-        return Point(0.0, 0.0)
+        raise ValueError(
+            f"No roads are available for {region!r}, so no provisional power root can be placed. "
+            "Check the region name and the cached OSM roads for that region."
+        )
 
     metric_crs = roads.estimate_utm_crs()
     if metric_crs is None:
-        return Point(0.0, 0.0)
+        raise ValueError(f"Could not choose a metric CRS for the roads of {region!r}")
     prepared = roads.to_crs(metric_crs).explode(index_parts=False).copy()
     prepared = prepared[prepared.geometry.geom_type.eq("LineString")]
     if prepared.empty:
-        return Point(0.0, 0.0)
+        raise ValueError(f"The roads of {region!r} contain no LineStrings")
 
     road_graph = nx.Graph()
     for row in prepared.itertuples():
@@ -635,7 +596,7 @@ def _provided_power_assets(
 
 
 def _provisional_power_root(region: str, roads: gpd.GeoDataFrame | None) -> gpd.GeoDataFrame:
-    centroid = _largest_road_component_centroid(roads)
+    centroid = _largest_road_component_centroid(roads, region=region)
     return gpd.GeoDataFrame(
         {
             "asset_id": [f"{region.upper()}_PROVISIONAL_ROOT"],
@@ -861,8 +822,10 @@ def _nightlight_supported_roads(
 def _provided_generators_for_inferred(
     generators: pd.DataFrame,
 ) -> pd.DataFrame:
+    """Point provided generators at the graph's ``bus::<id>`` node names; a blank bus id stays blank."""
     prepared = generators.copy()
-    prepared["bus_id"] = "bus::" + prepared["bus_id"].astype(str)
+    bus_id = prepared["bus_id"]
+    prepared["bus_id"] = bus_id.where(bus_id.isna(), "bus::" + bus_id.astype(str))
     return prepared
 
 
@@ -950,9 +913,7 @@ def _insert_transformer_junctions(
         geometry="geometry",
         crs=buses.crs,
     )
-    transformers = gpd.GeoDataFrame(
-        transformer_rows, columns=transformer_columns, geometry="geometry", crs="EPSG:4326"
-    )
+    transformers = gpd.GeoDataFrame(transformer_rows, columns=transformer_columns, geometry="geometry", crs="EPSG:4326")
     return buses, lines, transformers
 
 
@@ -964,18 +925,16 @@ def _build_inferred_network(
     network_path: Path,
     metadata_path: Path,
     region: str,
-    allow_download: bool,
     network_type: str,
-    roads_path: Path | None = None,
-    nightlight_aoi_path: Path,
-    nightlights_path: Path,
-    nightlight_targets: gpd.GeoDataFrame | str | Path | None,
-    nightlight_threshold: float,
+    roads_path: Path,
+    power_path: Path | None,
+    nightlight_targets: gpd.GeoDataFrame | Path,
     nightlight_support_distance_m: float,
     max_anchor_distance_m: float,
     inferred_voltage_kv: float,
     inferred_transmission_voltage_kv: float,
     inferred_capacity_mva: float,
+    base_route_gap_tolerance_m: float,
     table_output_dir: Path | None,
     reference_line_length_km: float,
     line_length_tolerance_fraction: float,
@@ -984,29 +943,20 @@ def _build_inferred_network(
 ) -> NetworkBuildOutputs:
     if source not in {"inferred-osm", "inferred-provided"}:
         raise ValueError(f"Unsupported inferred source: {source}")
-    roads_result = osm.fetch_osm_roads(
-        region, network_type=network_type, allow_download=allow_download, path=roads_path
-    )
-    roads_cache_path = _fetch_result_path(roads_result)
-    osm_road_envelope = _coerce_vector_fetch_result(roads_result)
-    if osm_road_envelope is None:
-        raise FileNotFoundError("The OSM road envelope is unavailable")
 
-    power_cache_path = None
+    # 1. Inputs: the cached OSM road envelope, the power assets and the night-light targets.
+    osm_road_envelope = osm.read_vector(roads_path)
+    if osm_road_envelope.empty:
+        raise ValueError(f"The OSM road envelope at {roads_path} is empty")
+
     power_feature_count = 0
     provided_generator_records = 0
     provided_generators = _empty_generators()
     if source == "inferred-osm":
-        try:
-            power_result = osm.fetch_osm_power_features(
-                region,
-                allow_download=allow_download,
-            )
-        except osm.OSMDownloadRequired:
-            power_result = None
-        power_cache_path = _fetch_result_path(power_result)
-        power_features = _coerce_vector_fetch_result(power_result)
-        power_feature_count = len(power_features) if power_features is not None else 0
+        if power_path is None:
+            raise ValueError("inferred-osm needs power_path (the cached OSM power features)")
+        power_features = osm.read_vector(power_path)
+        power_feature_count = len(power_features)
         power_assets = _normalise_osm_power_assets(power_features, region=region)
         methodology = INFERRED_OSM_METHODOLOGY
         power_asset_source = "osm_power"
@@ -1016,6 +966,7 @@ def _build_inferred_network(
         methodology = INFERRED_PROVIDED_METHODOLOGY
         power_asset_source = "provided_substations_and_generators"
 
+    # A region member without any power asset gets one stand-in root on its road network.
     member_roots: list[gpd.GeoDataFrame] = []
     for member in osm.region_members(region):
         member_slug = osm.region_slug(member)
@@ -1023,8 +974,9 @@ def _build_inferred_network(
         if has_root:
             continue
         member_roads = osm_road_envelope
-        if member_roads is not None and "region" in member_roads and len(osm.region_members(region)) > 1:
+        if "region" in member_roads and len(osm.region_members(region)) > 1:
             member_roads = member_roads[member_roads["region"].astype(str).eq(member_slug)]
+        logger.warning("%s: no power assets for %s; placing a provisional root on its road network", source, member)
         member_roots.append(_provisional_power_root(member, member_roads))
     if member_roots:
         power_assets = gpd.GeoDataFrame(
@@ -1033,25 +985,21 @@ def _build_inferred_network(
             crs="EPSG:4326",
         )
 
-    if nightlight_targets is not None:
-        override_targets = _coerce_optional_vector(nightlight_targets)
-        nightlight_target_points = gpd.GeoDataFrame(
-            geometry=override_targets.to_crs("EPSG:4326").geometry.representative_point(),
-            crs="EPSG:4326",
-        )
+    if isinstance(nightlight_targets, gpd.GeoDataFrame):
+        targets_frame = nightlight_targets
         nightlight_targets_path = None
-        nightlight_targets_metadata_path = None
     else:
-        nightlight_targets_outputs = build_nightlight_targets(
-            nightlights_path,
-            output_dir / "nightlight_targets",
-            aoi_path=nightlight_aoi_path,
-            region=region,
-            nightlight_threshold=nightlight_threshold,
-        )
-        nightlight_target_points = gpd.read_parquet(nightlight_targets_outputs.targets)
-        nightlight_targets_path = nightlight_targets_outputs.targets
-        nightlight_targets_metadata_path = nightlight_targets_outputs.metadata
+        nightlight_targets_path = Path(nightlight_targets)
+        targets_frame = osm.read_vector(nightlight_targets_path)
+    nightlight_target_points = gpd.GeoDataFrame(
+        geometry=targets_frame.to_crs("EPSG:4326").geometry.representative_point(),
+        crs="EPSG:4326",
+    )
+    targets_metadata = None
+    if nightlight_targets_path is not None and (nightlight_targets_path.parent / "metadata.json").is_file():
+        targets_metadata = json.loads((nightlight_targets_path.parent / "metadata.json").read_text())
+
+    # 2. Keep the roads that lie near a lit target or a power asset.
     support_points = gpd.GeoDataFrame(
         pd.concat(
             [
@@ -1072,6 +1020,7 @@ def _build_inferred_network(
     supported_road_metadata["power_asset_support_count"] = len(power_assets)
     supported_road_metadata["highway_classes"] = _highway_class_breakdown(supported_roads)
 
+    # 3. For the provided variant, keep the CEB transmission backbone (same rules as the base product).
     provided_backbone: gpd.GeoDataFrame | None = None
     provided_backbone_edges = 0
     if source == "inferred-provided":
@@ -1079,10 +1028,13 @@ def _build_inferred_network(
         provided_topology = derive_base_topology(
             provided_substations,
             provided_routes,
+            route_gap_tolerance_m=base_route_gap_tolerance_m,
         )
         provided_backbone = provided_topology.lines.copy()
         provided_backbone["region"] = "mauritius"
         provided_backbone_edges = len(provided_backbone)
+
+    # 4. Graph: roads and backbone as edges, assets connected to the nearest road point.
     graph = build_inferred_distribution_graph(
         power_assets,
         osm_distribution_lines=supported_roads,
@@ -1091,11 +1043,9 @@ def _build_inferred_network(
         anchor_to_each_line_source=provided_backbone is not None,
     )
     table_dir = _inferred_table_dir(output_dir)
-    inferred_tables = write_inferred_distribution_tables(
-        graph,
-        table_dir,
-    )
+    inferred_tables = write_inferred_distribution_tables(graph, table_dir)
 
+    # 5. PyPSA tables. Voltages and capacities are placeholders (see electrical_values_note).
     lines = _graph_line_frame(
         graph,
         default_voltage_kv=inferred_voltage_kv,
@@ -1103,11 +1053,13 @@ def _build_inferred_network(
         default_capacity_mva=inferred_capacity_mva,
     )
     buses = _node_bus_frame(graph)
-    # Split transmission<->distribution junctions into a bus per level joined by a
-    # transformer; build_topology_network then derives each bus's single voltage.
-    buses, lines, transformers = _insert_transformer_junctions(
-        buses, lines, capacity_mva=inferred_capacity_mva
-    )
+    # A junction that carries both the backbone and distribution voltage becomes
+    # one bus per level joined by a transformer.
+    buses, lines, transformers = _insert_transformer_junctions(buses, lines, capacity_mva=inferred_capacity_mva)
+    # A bus with no line (an asset that could not be anchored) sits at the distribution voltage.
+    connected_buses = set(lines["bus0"].astype(str)) | set(lines["bus1"].astype(str))
+    isolated = ~buses["bus_id"].astype(str).isin(connected_buses) & buses["v_nom_kv"].isna()
+    buses.loc[isolated, "v_nom_kv"] = float(inferred_voltage_kv)
     service_weights = _equal_service_weights(buses)
     service_weights_path_out = table_dir / "service_weights.csv"
     service_weights.to_csv(service_weights_path_out, index=False)
@@ -1122,48 +1074,50 @@ def _build_inferred_network(
         "reference_line_length_scope": INFERRED_LINE_LENGTH_SCOPE,
         "reference_line_length_source": CEB_TOTAL_NETWORK_LENGTH_SOURCE,
         "reference_line_length_note": INFERRED_LINE_LENGTH_NOTE,
-        "reference_line_length_sources": (
-            "osm",
-            "provided_transmission",
-        ),
+        "reference_line_length_sources": ("osm", "provided_transmission"),
         "line_length_tolerance_fraction": line_length_tolerance_fraction,
         "reference_generation_capacity_mw": (
             reference_generation_capacity_mw if source == "inferred-provided" else None
         ),
-        "generation_capacity_tolerance_fraction": (generation_capacity_tolerance_fraction),
+        "generation_capacity_tolerance_fraction": generation_capacity_tolerance_fraction,
         "allow_incomplete_generators": source == "inferred-provided",
     }
     if table_output_dir is None:
-        validation = validate_model_tables(
-            buses,
-            lines,
-            generators,
-            **validation_kwargs,
-        )
+        validation = validate_model_tables(buses, lines, generators, **validation_kwargs)
     else:
-        table_outputs, validation = write_model_tables(
-            buses,
-            lines,
-            generators,
-            table_output_dir,
-            **validation_kwargs,
-        )
+        table_outputs, validation = write_model_tables(buses, lines, generators, table_output_dir, **validation_kwargs)
     envelope_validation = _osm_road_envelope_validation(
         osm_road_envelope,
         reference_line_length_km=reference_line_length_km,
         tolerance_fraction=line_length_tolerance_fraction,
     )
-    if table_outputs is not None:
-        _write_metadata(table_outputs.validation, validation)
     if validation["errors"]:
         raise ValueError("Invalid inferred network tables:\n- " + "\n- ".join(validation["errors"]))
-    network = build_topology_network(buses, lines, _complete_generators(generators), transformers=transformers)
+    _log_validation(network_path.stem, validation)
     anchored, unanchored = _power_asset_anchor_counts(graph)
+    if unanchored:
+        logger.warning(
+            "%s: %d power asset(s) are farther than %.0f m from any retained road and stay unconnected",
+            network_path.stem,
+            unanchored,
+            max_anchor_distance_m,
+        )
+
+    # 6. Write the network, its metadata and the GeoParquet layers.
+    network = build_topology_network(
+        buses,
+        lines,
+        _complete_generators(generators),
+        transformers=transformers,
+        default_voltage_kv=inferred_voltage_kv,
+    )
     _write_network(network_path, network)
     spatial_dir = network_path.parent / "geoparquet"
-    spatial_outputs = spatial_export_paths(
-        spatial_dir,
-        network_id=network_path.stem,
+    spatial_outputs = spatial_export_paths(spatial_dir, network_id=network_path.stem)
+    electrical_values_note = (
+        "Distribution voltages/capacities are non-binding topology placeholders; "
+        "the provided transmission backbone keeps its voltage and joins distribution "
+        "through transformers (see model_v_nom_kv / model_s_nom_mva)."
     )
     _write_metadata(
         metadata_path,
@@ -1171,7 +1125,7 @@ def _build_inferred_network(
             "source": source,
             "methodology": methodology,
             "distance_method": "WGS84 geodesic",
-            "nightlight_policy": ("viirs_targets_filter_dense_osm_roads_and_preserve_cycles"),
+            "nightlight_policy": "viirs_targets_filter_dense_osm_roads_and_preserve_cycles",
             "input_dir": str(input_dir),
             "network": str(network_path),
             "spatial_nodes": str(spatial_outputs.nodes),
@@ -1191,13 +1145,15 @@ def _build_inferred_network(
             "stage": "connectivity_only",
             "service_weights": str(service_weights_path_out),
             "road_envelope_edges": len(osm_road_envelope),
-            "osm_road_envelope_cache": roads_cache_path,
-            "nightlight_aoi": str(nightlight_aoi_path),
-            "nightlights": str(nightlights_path),
-            "nightlight_threshold": nightlight_threshold,
+            "osm_road_envelope_cache": str(roads_path),
+            "nightlight_targets": str(nightlight_targets_path) if nightlight_targets_path is not None else None,
+            "nightlight_targets_sha256": (
+                _file_sha256(nightlight_targets_path) if nightlight_targets_path is not None else None
+            ),
+            "nightlight_targets_metadata": targets_metadata,
             "nightlight_support_distance_m": nightlight_support_distance_m,
             "nightlight_supported_roads": supported_road_metadata,
-            "osm_power_cache": power_cache_path,
+            "osm_power_cache": str(power_path) if power_path is not None else None,
             "osm_power_features": power_feature_count,
             "provided_generator_records": provided_generator_records,
             "power_asset_source": power_asset_source,
@@ -1206,9 +1162,8 @@ def _build_inferred_network(
             "generator_roots": int(power_assets["asset_kind"].eq("generator").sum()),
             "provisional_roots": len(member_roots),
             "provided_backbone_edges": provided_backbone_edges,
-            "nightlight_targets_path": (str(nightlight_targets_path) if nightlight_targets_path is not None else None),
-            "nightlight_targets_metadata": (
-                str(nightlight_targets_metadata_path) if nightlight_targets_metadata_path is not None else None
+            "provided_backbone_route_gap_tolerance_m": (
+                base_route_gap_tolerance_m if source == "inferred-provided" else None
             ),
             "anchored_power_assets": anchored,
             "unanchored_power_assets": unanchored,
@@ -1216,12 +1171,7 @@ def _build_inferred_network(
             "inferred_transmission_voltage_kv": inferred_transmission_voltage_kv,
             "inferred_capacity_mva": inferred_capacity_mva,
             "transformers": len(network.transformers),
-            "electrical_values_note": (
-                "Distribution voltages/capacities are non-binding topology "
-                "placeholders; the provided transmission backbone keeps its "
-                "voltage and joins distribution through transformers "
-                "(see model_v_nom_kv / model_s_nom_mva)."
-            ),
+            "electrical_values_note": electrical_values_note,
             "max_anchor_distance_m": max_anchor_distance_m,
             "connected_components": nx.number_connected_components(graph),
             "model_line_length_km": validation["totals"]["line_length_km"],
@@ -1243,12 +1193,7 @@ def _build_inferred_network(
         source_metadata_path=metadata_path,
         publish_voltage=False,
         publish_capacity=False,
-        electrical_values_note=(
-            "Distribution voltages/capacities are non-binding topology "
-            "placeholders; the provided transmission backbone keeps its "
-            "voltage and joins distribution through transformers "
-            "(see model_v_nom_kv / model_s_nom_mva)."
-        ),
+        electrical_values_note=electrical_values_note,
         stage="connectivity_only",
     )
     return NetworkBuildOutputs(
@@ -1274,13 +1219,10 @@ def build_network(
     region: str | None = None,
     output_name: str | None = None,
     overwrite: bool = False,
-    allow_download: bool = False,
     network_type: str = "drive",
     roads_path: Path | None = None,
-    nightlight_aoi_path: Path | None = None,
-    nightlights_path: Path | None = None,
+    power_path: Path | None = None,
     nightlight_targets: gpd.GeoDataFrame | str | Path | None = None,
-    nightlight_threshold: float = 0.1,
     nightlight_support_distance_m: float = DEFAULT_NIGHTLIGHT_SUPPORT_DISTANCE_M,
     max_anchor_distance_m: float = DEFAULT_MAX_ANCHOR_DISTANCE_M,
     inferred_voltage_kv: float = 11,
@@ -1296,24 +1238,28 @@ def build_network(
     base_default_voltage_kv: float = 66,
     base_topology_capacity_mva: float = 10_000,
 ) -> NetworkBuildOutputs:
-    """Build and save a named network-source artifact.
+    """Build and save one named network product.
 
-    ``source="base"`` derives a topology from provided CEB assets.
-    ``source="inferred-osm"`` uses OSM substations, plants and generators as
-    power terminals. ``source="inferred-provided"`` instead uses the provided
-    input substations and generator sites. Both inferred products use VIIRS
-    nightlight targets to retain a dense, cyclic OSM road subnetwork;
-    the inferred-provided product also preserves the CEB backbone. Existing
-    outputs are not overwritten unless ``overwrite`` is set, and OSM data is
-    only downloaded when ``allow_download`` is True. ``roads_path`` reads the
-    road envelope from a specific file instead of the cached OSM location.
-    Every build also writes
-    checksum-linked node and edge GeoParquet views in a ``geoparquet``
-    subdirectory. Each named result is packaged under
-    ``<output_dir>/<output_name>/``. When ``export_root`` is supplied, the
-    human-readable
-    ``generators.csv``, ``lines.csv`` and validation report are written below
-    a source-named subdirectory.
+    ``source`` picks the product:
+
+    - ``"base"``: the provided CEB transmission network (substations, routes, generators).
+    - ``"inferred-osm"``: OSM substations, plants and generators joined by the
+      night-light-supported OSM road network.
+    - ``"inferred-provided"``: the provided substations and generators plus the
+      CEB backbone, joined by the same road network.
+
+    Nothing is downloaded here. The inferred sources read three cached files:
+    ``roads_path`` and ``power_path`` (see :mod:`energy.osm`, populated by the
+    ``fetch_energy_osm`` rule) and ``nightlight_targets`` (written by the
+    ``build_energy_nightlight_targets`` rule). When a path is not given, the
+    default cache location under the configured data root is used and a missing
+    file is reported with the rule that creates it.
+
+    Outputs go to ``<output_dir>/<output_name>/``: the PyPSA network, a metadata
+    JSON and checksum-linked node and edge GeoParquet layers. With
+    ``export_root`` the human-readable ``generators.csv``, ``lines.csv`` and
+    ``validation.json`` are written below ``<export_root>/<output_name>/``.
+    Existing outputs are only replaced when ``overwrite`` is set.
     """
     source = source.lower()
     valid_sources = {"base", "inferred-osm", "inferred-provided"}
@@ -1352,16 +1298,35 @@ def build_network(
             reference_line_length_km=reference_line_length_km,
             line_length_tolerance_fraction=line_length_tolerance_fraction,
             reference_generation_capacity_mw=reference_generation_capacity_mw,
-            generation_capacity_tolerance_fraction=(generation_capacity_tolerance_fraction),
+            generation_capacity_tolerance_fraction=generation_capacity_tolerance_fraction,
             route_gap_tolerance_m=base_route_gap_tolerance_m,
             default_voltage_kv=base_default_voltage_kv,
             topology_capacity_mva=base_topology_capacity_mva,
         )
-    nightlight_input_dir = incoming_energy_dir() / "osm" / osm.region_slug(region)
-    nightlight_aoi_path = Path(nightlight_aoi_path or nightlight_input_dir / "aoi.parquet")
-    nightlights_path = Path(
-        nightlights_path or incoming_energy_dir() / "nightlights" / f"viirs-{osm.region_slug(region)}-2024.tif"
-    )
+
+    roads_path = Path(roads_path) if roads_path is not None else osm.osm_roads_path(region, network_type)
+    if not roads_path.is_file():
+        raise FileNotFoundError(
+            f"Cached OSM roads are missing: {roads_path}. Run the fetch_energy_osm rule once "
+            "(with energy.osm.allow_download enabled) or pass roads_path."
+        )
+    if source == "inferred-osm":
+        power_path = Path(power_path) if power_path is not None else osm.osm_power_path(region)
+        if not power_path.is_file():
+            raise FileNotFoundError(
+                f"Cached OSM power features are missing: {power_path}. Run the fetch_energy_osm rule once "
+                "(with energy.osm.allow_download enabled) or pass power_path."
+            )
+    else:
+        power_path = None
+    if nightlight_targets is None:
+        nightlight_targets = processed_energy_dir() / "nightlight" / osm.region_slug(region) / "targets.geoparquet"
+    if not isinstance(nightlight_targets, gpd.GeoDataFrame) and not Path(nightlight_targets).is_file():
+        raise FileNotFoundError(
+            f"Night-light targets are missing: {nightlight_targets}. Build them with "
+            f"'snakemake -c1 {nightlight_targets}' or pass nightlight_targets."
+        )
+
     return _build_inferred_network(
         source=source,
         input_dir=input_dir,
@@ -1369,18 +1334,16 @@ def build_network(
         network_path=network_path,
         metadata_path=metadata_path,
         region=region,
-        allow_download=allow_download,
         network_type=network_type,
         roads_path=roads_path,
-        nightlight_aoi_path=nightlight_aoi_path,
-        nightlights_path=nightlights_path,
+        power_path=power_path,
         nightlight_targets=nightlight_targets,
-        nightlight_threshold=nightlight_threshold,
         nightlight_support_distance_m=nightlight_support_distance_m,
         max_anchor_distance_m=max_anchor_distance_m,
         inferred_voltage_kv=inferred_voltage_kv,
         inferred_transmission_voltage_kv=inferred_transmission_voltage_kv,
         inferred_capacity_mva=inferred_capacity_mva,
+        base_route_gap_tolerance_m=base_route_gap_tolerance_m,
         table_output_dir=table_output_dir,
         reference_line_length_km=inferred_reference_line_length_km,
         line_length_tolerance_fraction=line_length_tolerance_fraction,

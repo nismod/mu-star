@@ -48,9 +48,8 @@ def validate_provided_inputs(input_dir: Path) -> None:
         f"Provided input data are incomplete at:\n  {input_dir}\n\n"
         f"Missing files:\n{missing_list}\n\n"
         "Place the complete source folders under "
-        "data/incoming/energy/provided, or set MU_STAR_DATA_ROOT to a "
-        "data directory containing the same incoming/energy/provided "
-        "structure."
+        "data/incoming/energy/provided (or under incoming/energy/provided of the "
+        "data_root set in config/config.yaml)."
     )
     raise FileNotFoundError(message)
 
@@ -214,6 +213,9 @@ def extract_demand_workbook(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
             continue
         label = _clean_label(str(label).replace("\n", " "))
         label = label.replace("Electricity demand - ", "").replace("Electricity demand ", "")
+        if "final" in label.lower() or "total" in label.lower():
+            # The workbook ends the sector block with a grand total; it is not a sector.
+            continue
         for year, column in zip(years, annual_year_cols, strict=True):
             annual_rows.append({"year": year, "category": label, "demand_gwh": raw.iat[row_i, column]})
     annual = pd.DataFrame(annual_rows)

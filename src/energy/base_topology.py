@@ -283,9 +283,10 @@ def _segment_source(
     if gap_distance < 0.01 and route_distance >= 0.01:
         return {
             "source": "derived_route_gap",
-            "source_route_id": pd.NA,
-            "source_route_part_id": pd.NA,
-            "circuit_id": pd.NA,
+            # None (not pd.NA): PyPSA writes these object columns to netCDF and cannot serialise NAType.
+            "source_route_id": None,
+            "source_route_part_id": None,
+            "circuit_id": None,
             "v_nom_kv": default_voltage_kv,
         }
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import click
 
-from energy.nightlight_source import (
+from energy.nightlights import (
     DEFAULT_RENDERING_RULE,
     DEFAULT_SERVICE,
     fetch_nightlight_months,

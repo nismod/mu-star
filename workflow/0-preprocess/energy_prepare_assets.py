@@ -1,7 +1,7 @@
 """Clean the provided energy source data and write the analysis-ready tables.
 
 Reads the provided shapefiles and demand workbook, applies the transforms in
-energy.intake, and writes the substation, route, generator, demand and template
+energy.provided, and writes the substation, route, generator, demand and template
 tables the network builds consume.
 """
 
@@ -11,8 +11,9 @@ import click
 import geopandas as gpd
 import pandas as pd
 
-from energy.distribution import build_service_weights
-from energy.intake import (
+from energy.network_tables import write_input_templates
+from energy.provided import (
+    GENERATOR_CAPACITY_REFERENCE,
     GEOGRAPHIC_CRS,
     METRIC_CRS,
     _clean_label,
@@ -27,7 +28,7 @@ from energy.intake import (
     snap_substations_to_routes,
     validate_provided_inputs,
 )
-from energy.network_tables import write_input_templates
+from energy.service_weights import build_service_weights
 
 
 @click.command()
@@ -43,7 +44,15 @@ from energy.network_tables import write_input_templates
     required=True,
     type=click.Path(file_okay=False, path_type=str),
 )
-def main(input_dir, output_dir):
+@click.option(
+    "--capacity-reference",
+    "capacity_reference",
+    default=str(GENERATOR_CAPACITY_REFERENCE),
+    show_default=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="CSV of report-backed installed capacities, joined to generation sites by name.",
+)
+def main(input_dir, output_dir, capacity_reference):
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
     validate_provided_inputs(input_dir)
@@ -75,16 +84,27 @@ def main(input_dir, output_dir):
     areas["area_m2"] = areas.to_crs(METRIC_CRS).area
     areas["is_named"] = ~areas["label"].isin(["Placemark", "unnamed"])
 
-    named_point_assets = points[points["name"].ne("Placemark")].rename(columns={"asset_type": "asset_type"})[
-        ["asset_id", "name", "asset_type", "geometry"]
+    # Keep every point that is named or recognised as a generation type. Unnamed
+    # points (the KML default "Placemark", e.g. the wind turbines) are named from
+    # their description so they stay distinguishable in generators.csv.
+    keep = points["name"].ne("Placemark") | points["asset_type"].ne("unspecified")
+    named_point_assets = points.loc[keep, ["asset_id", "name", "asset_type", "PopupInfo", "geometry"]].copy()
+    unnamed = named_point_assets["name"].eq("Placemark")
+    named_point_assets.loc[unnamed, "name"] = [
+        f"{_clean_label(info, 'Unnamed')} {kind} {number:02d}"
+        for number, (info, kind) in enumerate(
+            zip(named_point_assets.loc[unnamed, "PopupInfo"], named_point_assets.loc[unnamed, "asset_type"]),
+            start=1,
+        )
     ]
+    named_point_assets = named_point_assets[["asset_id", "name", "asset_type", "geometry"]]
     named_area_assets = _station_points_from_areas(areas)
     generation_sites = gpd.GeoDataFrame(
         pd.concat([named_point_assets, named_area_assets], ignore_index=True),
         geometry="geometry",
         crs=GEOGRAPHIC_CRS,
     ).rename(columns={"asset_id": "generator_id"})
-    generation_sites = apply_generator_capacity_reference(generation_sites)
+    generation_sites = apply_generator_capacity_reference(generation_sites, Path(capacity_reference))
     generation_sites["capacity_basis"] = "electrical_output"
     generation_sites["capacity_unit"] = "MW_e"
     generation_sites["carrier"] = generation_sites["asset_type"]

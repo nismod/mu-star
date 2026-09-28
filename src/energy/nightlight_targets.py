@@ -6,7 +6,7 @@ Arderne (MIT licence): https://github.com/carderne/gridfinder
 Only the nightlight target step is kept. The inferred distribution network no
 longer routes a least-cost tree over roads; instead these targets are used
 downstream to retain the road subnetwork they support (see
-``network_source._nightlight_supported_roads``).
+``build._nightlight_supported_roads``).
 """
 
 from __future__ import annotations
@@ -208,7 +208,7 @@ def build_nightlight_targets(
 
     This replaces the former GridFinder least-cost search. It writes only the
     nightlight target points (and their raster mask); road selection happens
-    later in :func:`network_source._nightlight_supported_roads`.
+    later in :func:`build._nightlight_supported_roads`.
     """
     nightlights_path = Path(nightlights_path)
     aoi_path = Path(aoi_path)

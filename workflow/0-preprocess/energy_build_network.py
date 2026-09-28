@@ -1,20 +1,23 @@
-"""Build one energy network product via energy.network_source.build_network.
+"""Build one energy network product via energy.build.build_network.
 
-``--source`` selects which network to build: ``base`` uses the provided
-transmission assets; ``inferred-osm`` uses OpenStreetMap power features; and
-``inferred-provided`` combines the provided assets with a road-based inferred
-distribution network. Each rule passes only the options its source needs, and
-the rest fall back to the build_network defaults.
+``--source`` selects the product: ``base`` (the provided CEB transmission
+network), ``inferred-osm`` (OpenStreetMap power features on the night-light
+supported OSM roads) or ``inferred-provided`` (the provided assets and CEB
+backbone on those roads). The Snakemake rules pass every input path explicitly;
+options that are not given fall back to the build_network defaults.
+
+Advisory validation warnings are logged to stderr so they appear in the
+Snakemake log as well as in validation.json.
 """
 
-import os
+import logging
 from pathlib import Path
 
 import click
 
-from energy.network_source import build_network
+from energy.build import build_network
 
-_PATH_OPTIONS = {"input_dir", "output_dir", "export_root", "roads_path", "nightlight_targets"}
+_PATH_OPTIONS = {"input_dir", "output_dir", "export_root", "roads_path", "power_path", "nightlight_targets"}
 
 
 @click.command()
@@ -26,6 +29,7 @@ _PATH_OPTIONS = {"input_dir", "output_dir", "export_root", "roads_path", "nightl
 @click.option("--region", type=str)
 @click.option("--network-type", "network_type", type=str)
 @click.option("--roads-path", "roads_path", type=click.Path(path_type=str))
+@click.option("--power-path", "power_path", type=click.Path(path_type=str))
 @click.option("--nightlight-targets", "nightlight_targets", type=click.Path(path_type=str))
 @click.option("--nightlight-support-distance-m", "nightlight_support_distance_m", type=float)
 @click.option("--max-anchor-distance-m", "max_anchor_distance_m", type=float)
@@ -39,18 +43,15 @@ _PATH_OPTIONS = {"input_dir", "output_dir", "export_root", "roads_path", "nightl
 @click.option("--base-default-voltage-kv", "base_default_voltage_kv", type=float)
 @click.option("--base-topology-capacity-mva", "base_topology_capacity_mva", type=float)
 @click.option("--overwrite", is_flag=True, default=False)
-@click.option("--data-root", "data_root", type=click.Path(path_type=str))
-def main(source, data_root, overwrite, **options):
-    # Inferred builds resolve some OSM lookups internally; point them at the
-    # same data tree the rule declared its inputs under.
-    if data_root:
-        os.environ["MU_STAR_DATA_ROOT"] = str(Path(data_root).resolve())
+def main(source, overwrite, **options):
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     kwargs = {}
     for name, value in options.items():
         if value is None:
             continue
         kwargs[name] = Path(value) if name in _PATH_OPTIONS else value
-    build_network(source, overwrite=overwrite, **kwargs)
+    outputs = build_network(source, overwrite=overwrite, **kwargs)
+    click.echo(f"wrote {outputs.network}")
 
 
 if __name__ == "__main__":

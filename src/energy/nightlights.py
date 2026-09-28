@@ -96,6 +96,11 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def tile_name(index: int, object_id: int) -> str:
+    """File name of a cached monthly tile: its position in the year and the service's object id."""
+    return f"{index:02d}-{int(object_id)}.tif"
+
+
 def fetch_nightlight_months(
     *,
     object_ids: list[int],
@@ -108,10 +113,11 @@ def fetch_nightlight_months(
     overwrite: bool = False,
     timeout: float = 120.0,
 ) -> NightlightMonths:
-    """Cache one raster per ``object_ids`` entry as ``NN.tif`` under ``out_dir``.
+    """Cache one raster per ``object_ids`` entry as ``NN-<object id>.tif`` under ``out_dir``.
 
-    Each object ID is one monthly raster in the service's mosaic catalogue. Tiles
-    already present are reused unless ``overwrite`` is set. When a tile is missing
+    Each object ID is one monthly raster in the service's mosaic catalogue, so a
+    different year or service never reuses another year's tiles. Tiles already
+    present are reused unless ``overwrite`` is set. When a tile is missing
     and ``allow_download`` is False this raises :class:`NightlightDownloadRequired`
     rather than contacting the service, so a run never downloads without being
     asked. A ``metadata.json`` recording the service, object IDs, bbox and
@@ -123,7 +129,7 @@ def fetch_nightlight_months(
     size = _tile_size(bbox, pixel_size_degrees)
     paths: list[Path] = []
     for index, object_id in enumerate(object_ids, start=1):
-        tile = out_dir / f"{index:02d}.tif"
+        tile = out_dir / tile_name(index, object_id)
         if tile.exists() and not overwrite:
             paths.append(tile)
             continue
@@ -133,9 +139,7 @@ def fetch_nightlight_months(
                 "fetch_nightlight_months(allow_download=True) to fetch the monthly rasters."
             )
         out_dir.mkdir(parents=True, exist_ok=True)
-        url = _export_image_url(
-            service, bbox=bbox, size=size, object_id=object_id, rendering_rule=rendering_rule
-        )
+        url = _export_image_url(service, bbox=bbox, size=size, object_id=object_id, rendering_rule=rendering_rule)
         _download(url, tile, timeout=timeout)
         paths.append(tile)
 
@@ -181,7 +185,8 @@ def build_nightlight_composite(
         with rasterio.open(path) as src:
             if (src.width, src.height) != (profile["width"], profile["height"]):
                 raise ValueError(f"{path} grid {(src.width, src.height)} does not match {paths[0]}")
-            layers.append(src.read(1, masked=True))
+            # Mask NaN as well as the declared nodata so one bad month does not poison the median.
+            layers.append(np.ma.masked_invalid(src.read(1, masked=True)))
 
     stack = np.ma.stack(layers)
     if aggregation == "median":
