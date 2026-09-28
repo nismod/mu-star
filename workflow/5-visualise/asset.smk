@@ -22,8 +22,10 @@ ASSET_SOURCES = {
     # ("water", "?", "edge"): (8 * UID_RANGE, "?"),
     ("transport", "road", "node"): (9 * UID_RANGE, "incoming/Infrastructure/Road Network/osm-open-gira/nodes.gpq"),
     ("transport", "road", "edge"): (10 * UID_RANGE, "incoming/Infrastructure/Road Network/osm-open-gira/edges.gpq"),
-    ("energy", "transmission", "node"): (11 * UID_RANGE, "processed/asset/energy/inferred-data-mauritius-rodrigues/geoparquet/inferred-data-mauritius-rodrigues-nodes-with-gen-type.geoparquet"),
-    ("energy", "transmission", "edge"): (12 * UID_RANGE, "incoming/Infrastructure/Energy/inferred-distribution-mauritius-rodrigues/20260728/geoparquet/inferred-data-mauritius-rodrigues-edges.geoparquet"),
+    # Energy: the provided CEB transmission network plus the inferred (OSM road)
+    # distribution network, as written by workflow/0-preprocess/energy.smk.
+    ("energy", "transmission", "node"): (11 * UID_RANGE, "processed/energy/networks/inferred-provided-mauritius-rodrigues/geoparquet/inferred-provided-mauritius-rodrigues-nodes.geoparquet"),
+    ("energy", "transmission", "edge"): (12 * UID_RANGE, "processed/energy/networks/inferred-provided-mauritius-rodrigues/geoparquet/inferred-provided-mauritius-rodrigues-edges.geoparquet"),
     ("building", "building", "area"): (13 * UID_RANGE, "processed/asset/building/building.gpq"),
 }
 
