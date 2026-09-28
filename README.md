@@ -201,14 +201,16 @@ substations, generators and the CEB backbone). Settings live in
 
 Before the first build, place the provided CEB data under
 `data/incoming/energy/provided/` and fetch the OpenStreetMap and night-light
-inputs once. Each fetch needs internet and its `allow_download` flag switched
-on in `config/energy/energy.yaml` (`energy.osm.allow_download` and
-`energy.nightlight.source.allow_download`); switch them off again afterwards so
-later runs stay offline:
+inputs and the WorldPop population raster once. Each fetch needs internet and
+its `allow_download` flag switched on in `config/energy/energy.yaml`
+(`energy.osm.allow_download`, `energy.nightlight.source.allow_download` and
+`energy.population.allow_download`); switch them off again afterwards so later
+runs stay offline:
 
 ```shell
 snakemake -c1 fetch_energy_osm
 snakemake -c1 fetch_energy_nightlights
+snakemake -c1 fetch_energy_population
 ```
 
 Then build all three products:
@@ -224,9 +226,17 @@ snakemake -c1 data/processed/energy/networks/base-mauritius/base-mauritius.nc
 ```
 
 The code entry point is `energy.build.build_network`. Inferred voltages and
-capacities are placeholders, and energy has no disruption analysis yet. See
-`docs/src/infrastructure-energy.md` for the method, inputs, outputs and current
-limitations.
+capacities are placeholders, and energy has no disruption analysis yet. The
+demand shares that the coming interruption analysis will use (a share of the
+system demand per substation and per network node, from population and night
+lights) are written by:
+
+```shell
+snakemake -c1 data/processed/energy/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv
+```
+
+See `docs/src/infrastructure-energy.md` for the method, inputs, outputs and
+current limitations.
 
 ### Testing
 

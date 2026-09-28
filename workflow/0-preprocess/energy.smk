@@ -89,6 +89,17 @@ _NIGHTLIGHT_OVERRIDE = _relative_data_path(
 )
 NIGHTLIGHT_COMPOSITE = f"{{data}}/{_NIGHTLIGHT_OVERRIDE}" if _NIGHTLIGHT_OVERRIDE else NIGHTLIGHT_BUILT_COMPOSITE
 
+# --- Population and demand ------------------------------------------------------
+POPULATION = ENERGY.get("population", {})
+POPULATION_RASTER = _relative_data_path(
+    POPULATION.get("raster", "incoming/energy/population/mus_ppp_2020_UNadj_constrained.tif"),
+    "energy.population.raster",
+    {".tif", ".tiff"},
+)
+DEMAND = ENERGY.get("demand", {})
+DEMAND_LEVELS = DEMAND.get("levels", "src/energy/resources/ceb_demand_levels_2023_24.csv")
+DEMAND_DIR = "{data}/processed/energy/demand"
+
 # --- Products -----------------------------------------------------------------
 BASE_NETWORK = ENERGY.get("base_network", {})
 INFERRED = ENERGY.get("inferred", {})
@@ -181,7 +192,11 @@ rule prepare_energy_assets:
     """
     Clean the provided CEB source data and write reviewable asset tables.
 
-    Test with:
+    generators.csv lists every plant in the CEB annual report's capacity table
+    (src/energy/resources/ceb_plant_capacities_2023_24.csv), placed with
+    ceb_plant_sites.csv; generation_sites.csv keeps the provided shapefile
+    sites as drawn. The prepare step also needs the OSM power cache, because
+    some plants are only located by their OpenStreetMap name. Test with:
     snakemake -c1 data/processed/energy/provided/generators.csv
     """
     input:
@@ -202,7 +217,9 @@ rule prepare_energy_assets:
             f"{{data}}/incoming/energy/provided/generation_source/GenSource2.{extension}"
             for extension in PROVIDED_SHAPEFILE_EXTENSIONS
         ],
-        capacity_reference="src/energy/resources/generator_capacity_reference.csv",
+        plant_capacities="src/energy/resources/ceb_plant_capacities_2023_24.csv",
+        plant_sites="src/energy/resources/ceb_plant_sites.csv",
+        osm_power=lambda wildcards: require_cached([f"{wildcards.data}/{OSM_POWER_CACHE}"], HOW_TO_FETCH_OSM)[0],
         script="workflow/0-preprocess/energy_prepare_assets.py",
     output:
         substations=f"{PROVIDED_DIR}/substations.parquet",
@@ -211,6 +228,7 @@ rule prepare_energy_assets:
         routes=f"{PROVIDED_DIR}/transmission_routes.parquet",
         generation_points=f"{PROVIDED_DIR}/generation_points.parquet",
         generation_areas=f"{PROVIDED_DIR}/generation_areas.parquet",
+        generation_sites=f"{PROVIDED_DIR}/generation_sites.csv",
         generators=f"{PROVIDED_DIR}/generators.csv",
         service_weights=f"{PROVIDED_DIR}/service_weights.csv",
         monthly_peak=f"{PROVIDED_DIR}/monthly_peak_demand_mw.csv",
@@ -225,7 +243,7 @@ rule prepare_energy_assets:
         python {input.script:q} \
             --input-dir {params.input_dir:q} \
             --output-dir {params.output_dir:q} \
-            --capacity-reference {input.capacity_reference:q}
+            --osm-power {input.osm_power:q}
         """
 
 
@@ -398,6 +416,8 @@ rule build_inferred_energy_network:
         inferred_voltage_kv=INFERRED.get("topology_voltage_kv", 11),
         inferred_transmission_voltage_kv=INFERRED.get("transmission_voltage_kv", 66),
         inferred_capacity_mva=INFERRED.get("topology_capacity_mva", 5),
+        inferred_transmission_capacity_mva=INFERRED.get("transmission_capacity_mva", 50),
+        inferred_anchor_capacity_mva=INFERRED.get("anchor_capacity_mva", 137),
         reference_line_length_km=INFERRED.get("ceb_total_line_length_km", 10492.2),
         line_length_tolerance_fraction=INFERRED.get("line_length_tolerance_fraction", 0.10),
         generation_capacity_tolerance_fraction=INFERRED.get("generation_capacity_tolerance_fraction", 0.10),
@@ -422,10 +442,79 @@ rule build_inferred_energy_network:
             --inferred-voltage-kv {params.inferred_voltage_kv} \
             --inferred-transmission-voltage-kv {params.inferred_transmission_voltage_kv} \
             --inferred-capacity-mva {params.inferred_capacity_mva} \
+            --inferred-transmission-capacity-mva {params.inferred_transmission_capacity_mva} \
+            --inferred-anchor-capacity-mva {params.inferred_anchor_capacity_mva} \
             --inferred-reference-line-length-km {params.reference_line_length_km} \
             --line-length-tolerance-fraction {params.line_length_tolerance_fraction} \
             --generation-capacity-tolerance-fraction {params.generation_capacity_tolerance_fraction} \
             --base-route-gap-tolerance-m {params.base_route_gap_tolerance_m}
+        """
+
+
+HOW_TO_FETCH_POPULATION = (
+    "Fetch it once (needs internet): set energy.population.allow_download: true in "
+    "config/energy/energy.yaml, run `snakemake -c1 fetch_energy_population`, then set it back to false."
+)
+
+
+rule fetch_energy_population:
+    """
+    Cache the WorldPop population raster. Run it once, by name:
+
+        snakemake -c1 fetch_energy_population
+
+    Downloads only when the file is missing AND energy.population.allow_download
+    is true. Like the other caches, the raster is not a Snakemake output.
+    """
+    input:
+        script="workflow/0-preprocess/energy_fetch_population.py",
+    params:
+        url=POPULATION.get("url", ""),
+        output=f"{ENERGY_DATA_ROOT}/{POPULATION_RASTER}",
+        allow_download="--allow-download" if bool(POPULATION.get("allow_download", False)) else "",
+    shell:
+        """
+        python {input.script:q} --url {params.url:q} --output {params.output:q} {params.allow_download}
+        """
+
+
+rule build_energy_demand:
+    """
+    Estimate where the demand is for the inferred-provided product: substation
+    service areas, a demand share per substation and per node, and the peak and
+    average demand levels. Test with:
+    snakemake -c1 data/processed/energy/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv
+    """
+    input:
+        nodes=f"{NETWORKS_DIR}/{INFERRED_PROVIDED_NAME}/geoparquet/{INFERRED_PROVIDED_NAME}-nodes.geoparquet",
+        aoi=lambda wildcards: require_cached([f"{wildcards.data}/{OSM_AOI}"], HOW_TO_FETCH_OSM)[0],
+        population=lambda wildcards: require_cached(
+            [f"{wildcards.data}/{POPULATION_RASTER}"], HOW_TO_FETCH_POPULATION
+        )[0],
+        nightlights=NIGHTLIGHT_COMPOSITE,
+        demand_levels=DEMAND_LEVELS,
+        script="workflow/0-preprocess/energy_build_demand.py",
+    output:
+        service_areas=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/service_areas.geoparquet",
+        substation_weights=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/service_weights_substations.csv",
+        node_weights=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/service_weights_nodes.csv",
+        demand_levels=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/demand_levels.csv",
+        metadata=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/metadata.json",
+    params:
+        output_dir=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}",
+        weight_nightlights=DEMAND.get("weight_nightlights", 0.6),
+        weight_population=DEMAND.get("weight_population", 0.4),
+    shell:
+        """
+        python {input.script:q} \
+            --nodes {input.nodes:q} \
+            --aoi {input.aoi:q} \
+            --population {input.population:q} \
+            --nightlights {input.nightlights:q} \
+            --demand-levels {input.demand_levels:q} \
+            --output-dir {params.output_dir:q} \
+            --weight-nightlights {params.weight_nightlights} \
+            --weight-population {params.weight_population}
         """
 
 
