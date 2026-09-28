@@ -344,10 +344,15 @@ def assemble_report_generators(
     provided generation sites, matched by exact name or by name prefix, in
     which case the centroid of the matching points is used), an OpenStreetMap
     plant in ``osm_power`` matched by name, or geocoded coordinates. Located
-    plants are assigned to their nearest substation; distributed or unmatched
+    plants are assigned to their nearest substation on the same island (the
+    ``region`` column of ``substations``, "mauritius" when absent); an island
+    with no substation (Rodrigues) leaves ``bus_id`` empty and the inferred
+    network connects the plant at its own node. Distributed or unmatched
     plants keep an empty ``bus_id`` and are spread by demand share later.
     """
     capacities = pd.read_csv(capacities_path, comment="#")
+    if "region" not in capacities:
+        capacities["region"] = "mauritius"
     sites = pd.read_csv(sites_path, comment="#")
     missing = set(capacities["report_name"]) - set(sites["report_name"])
     if missing:
@@ -400,6 +405,7 @@ def assemble_report_generators(
             "generator_id": generator_ids,
             "name": table["report_name"],
             "group": table["group"],
+            "region": table["region"].astype(str),
             "carrier": table["technology"],
             "output_capacity_mw": table["installed_capacity_mw"].astype(float),
             "effective_capacity_mw": table["effective_capacity_mw"].astype(float),
@@ -418,15 +424,28 @@ def assemble_report_generators(
     located = generators["lon"].notna() & generators["lat"].notna()
     generators["bus_id"] = pd.NA
     generators["bus_assignment_distance_m"] = np.nan
-    if located.any():
+    substation_regions = (
+        substations["region"].astype(str)
+        if "region" in substations
+        else pd.Series("mauritius", index=substations.index)
+    )
+    for region_name in sorted(generators.loc[located, "region"].unique()):
+        in_region = located & generators["region"].eq(region_name)
+        candidates = substations[substation_regions.eq(region_name).to_numpy()]
+        if candidates.empty:
+            # No substation on this island (Rodrigues): the plant is the network's
+            # connection point itself, and the inferred network attaches it at its own node.
+            generators.loc[in_region, "site_note"] += f"; no substation on {region_name}, connected at its own node"
+            continue
         sited = gpd.GeoDataFrame(
-            generators.loc[located, ["generator_id"]],
-            geometry=gpd.points_from_xy(generators.loc[located, "lon"], generators.loc[located, "lat"]),
+            generators.loc[in_region, ["generator_id"]],
+            geometry=gpd.points_from_xy(generators.loc[in_region, "lon"], generators.loc[in_region, "lat"]),
             crs=GEOGRAPHIC_CRS,
         )
-        assigned = assign_generation_to_substations(sited, substations).set_index("generator_id")
-        generators.loc[located, "bus_id"] = assigned.loc[generators.loc[located, "generator_id"], "bus_id"].to_numpy()
-        generators.loc[located, "bus_assignment_distance_m"] = assigned.loc[
-            generators.loc[located, "generator_id"], "bus_assignment_distance_m"
+        assigned = assign_generation_to_substations(sited, candidates).set_index("generator_id")
+        ids = generators.loc[in_region, "generator_id"]
+        generators.loc[in_region, "bus_id"] = assigned.loc[ids, "bus_id"].to_numpy()
+        generators.loc[in_region, "bus_assignment_distance_m"] = assigned.loc[
+            ids, "bus_assignment_distance_m"
         ].to_numpy()
     return generators

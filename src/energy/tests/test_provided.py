@@ -129,11 +129,12 @@ def test_report_generators_are_placed_and_assigned(tmp_path):
 
     capacities = tmp_path / "capacities.csv"
     capacities.write_text(
-        "report_name,group,technology,installed_capacity_mw,effective_capacity_mw,units_sent_out_kwh,report_page,site_match\n"
-        "Big P/S,CEB,thermal,100,90,1,50,\n"
-        "Wind farm,IPP,wind,9,9,1,51,\n"
-        "Village PV,IPP,solar,2,2,1,51,\n"
-        "Rooftops,distributed,solar,10,10,1,51,\n"
+        "report_name,group,technology,installed_capacity_mw,effective_capacity_mw,units_sent_out_kwh,report_page,region\n"
+        "Big P/S,CEB,thermal,100,90,1,50,mauritius\n"
+        "Wind farm,IPP,wind,9,9,1,51,mauritius\n"
+        "Village PV,IPP,solar,2,2,1,51,mauritius\n"
+        "Rooftops,distributed,solar,10,10,1,51,mauritius\n"
+        "Island P/S,CEB,thermal,6,6,1,97,rodrigues\n"
     )
     sites = tmp_path / "sites.csv"
     sites.write_text(
@@ -142,6 +143,7 @@ def test_report_generators_are_placed_and_assigned(tmp_path):
         "Wind farm,provided,Turbine,,,\n"
         "Village PV,geocoded,,-20.30,57.60,Nominatim: Village\n"
         "Rooftops,distributed,,,,\n"
+        "Island P/S,geocoded,,-19.68,63.42,Nominatim: Island town\n"
     )
     provided_sites = pd.DataFrame(
         {
@@ -157,14 +159,19 @@ def test_report_generators_are_placed_and_assigned(tmp_path):
     generators = assemble_report_generators(provided_sites, substations, capacities_path=capacities, sites_path=sites)
 
     by_name = generators.set_index("name")
-    expected_ids = ["ceb-big-p-s", "ipp-wind-farm", "ipp-village-pv", "distributed-rooftops"]
+    expected_ids = ["ceb-big-p-s", "ipp-wind-farm", "ipp-village-pv", "distributed-rooftops", "ceb-island-p-s"]
     assert list(generators["generator_id"]) == expected_ids
+    assert list(generators["region"]) == ["mauritius"] * 4 + ["rodrigues"]
     assert by_name.loc["Big P/S", "bus_id"] == "A"
     assert by_name.loc["Big P/S", "output_capacity_mw"] == 100 and by_name.loc["Big P/S", "effective_capacity_mw"] == 90
     assert by_name.loc["Wind farm", "lon"] == pytest.approx(57.71)  # centroid of the two turbine points
     assert by_name.loc["Wind farm", "bus_id"] == "B"
     assert by_name.loc["Village PV", "bus_id"] in {"A", "B"}
     assert pd.isna(by_name.loc["Rooftops", "bus_id"]) and pd.isna(by_name.loc["Rooftops", "lon"])
+    # The other island has no substation: the plant keeps its coordinates and no bus,
+    # instead of being tied to a substation across the sea.
+    assert pd.isna(by_name.loc["Island P/S", "bus_id"]) and by_name.loc["Island P/S", "lon"] == 63.42
+    assert "no substation on rodrigues" in by_name.loc["Island P/S", "site_note"]
     assert generators["capacity_basis"].eq("electrical_output").all()
     assert generators["marginal_cost"].eq(0.0).all()
 
@@ -174,8 +181,8 @@ def test_report_generators_reject_an_unknown_site(tmp_path):
 
     capacities = tmp_path / "capacities.csv"
     capacities.write_text(
-        "report_name,group,technology,installed_capacity_mw,effective_capacity_mw,units_sent_out_kwh,report_page,site_match\n"
-        "Big P/S,CEB,thermal,100,90,1,50,\n"
+        "report_name,group,technology,installed_capacity_mw,effective_capacity_mw,units_sent_out_kwh,report_page,region\n"
+        "Big P/S,CEB,thermal,100,90,1,50,mauritius\n"
     )
     sites = tmp_path / "sites.csv"
     sites.write_text("report_name,site_kind,site_name,lat,lon,location_basis\nBig P/S,provided,Nowhere,,,\n")

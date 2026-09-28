@@ -2,8 +2,9 @@
 # ceb_plant_capacities_2023_24.csv. site_kind says how the location was found:
 #   provided   - a named generation site in the provided CEB shapefiles (matched by site_name)
 #   osm        - an OpenStreetMap power=plant feature (matched by its name tag, see the OSM cache)
-#   geocoded   - the village, reservoir or estate geocoded with OpenStreetMap Nominatim (approximate: the
-#                query is recorded; the plant is within a few kilometres of lat/lon)
+#   geocoded   - lat/lon looked up by hand: the village, reservoir or estate geocoded with OpenStreetMap
+#                Nominatim (approximate: the plant is within a few kilometres), or the position of unnamed
+#                OpenStreetMap features such as wind turbines; location_basis records which
 #   distributed - rooftop or small-scale generation with no single site; spread over substations by demand share
 #   unmatched  - no location found yet; treated like distributed until one is supplied
 report_name,site_kind,site_name,lat,lon,location_basis
@@ -42,3 +43,12 @@ SPV Petite Riviere,osm,Petite Rivière Solar PV Farm by Corexsolar,,,
 EOLE - Plaine des Roches,provided,Gamesa G58/850 wind,,,centroid of the eleven provided turbine points
 SSDG PV,distributed,,,,
 MSDG PV (all schemes),distributed,,,,
+Port Mathurin P/S,geocoded,,-19.6808,63.4221,"Nominatim: Port Mathurin, Rodrigues (the town; the station is not mapped in OpenStreetMap)"
+Port Mathurin P/S (solar),geocoded,,-19.6808,63.4221,"rooftop PV at Port Mathurin power station (same point)"
+Pointe Monnier P/S,osm,Pointe Monnier Power Station,,,
+Pointe Monnier P/S (solar),osm,Pointe Monnier Power Station,,,"rooftop PV at Pointe Monnier power station"
+Trefles Wind Farm,unmatched,,,,
+Grenade Wind Farm,geocoded,,-19.6842,63.4802,"OpenStreetMap: centroid of the four unnamed Vergnet GEV MP 275 kW turbines at Grenade (nodes 6802555680 to 6802555683)"
+Grenade PV Plant,geocoded,,-19.6842,63.4802,"next to the Grenade wind turbines; the PV plant itself is not mapped in OpenStreetMap"
+MSDG Rodrigues,distributed,,,,
+SSDG Rodrigues,distributed,,,,

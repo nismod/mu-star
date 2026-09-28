@@ -414,6 +414,53 @@ def test_build_inferred_provided_uses_only_provided_power_assets(tmp_path):
     assert 11 in bus_voltages
 
 
+def test_build_inferred_provided_connects_an_island_plant_at_its_own_node(tmp_path):
+    input_dir = tmp_path / "processed" / "energy" / "provided"
+    island_plant = {
+        "generator_id": "island-plant",
+        "bus_id": None,
+        "region": "rodrigues",
+        "carrier": "thermal",
+        "output_capacity_mw": 6.0,
+        "capacity_basis": "electrical_output",
+        "marginal_cost": 0.0,
+        "lon": 63.42,
+        "lat": -19.68,
+    }
+    _write_base_inputs(input_dir, extra_generator_rows=[island_plant])
+    generators = pd.read_csv(input_dir / "generators.csv")
+    generators["region"] = generators["region"].fillna("mauritius")
+    generators.to_csv(input_dir / "generators.csv", index=False)
+    mauritius_roads, _ = _roads(tmp_path, [(57.5, -20.2), (57.6, -20.2)], "mauritius")
+    rodrigues_roads, _ = _roads(tmp_path, [(63.41, -19.68), (63.43, -19.68)], "rodrigues")
+    roads = gpd.GeoDataFrame(pd.concat([mauritius_roads, rodrigues_roads], ignore_index=True), crs="EPSG:4326")
+    roads_path = tmp_path / "cache" / "mauritius-rodrigues" / "roads.parquet"
+    roads_path.parent.mkdir(parents=True)
+    roads.to_parquet(roads_path)
+
+    outputs = build_network(
+        "inferred-provided",
+        region="mauritius-rodrigues",
+        input_dir=input_dir,
+        output_dir=tmp_path / "networks",
+        roads_path=roads_path,
+        nightlight_targets=roads,
+        max_anchor_distance_m=20_000,
+    )
+
+    metadata = json.loads(outputs.metadata.read_text())
+    network = pypsa.Network(outputs.network)
+    # Rodrigues has a real power asset now, so it needs no stand-in root, and
+    # its plant feeds the island's roads from its own anchored node.
+    assert metadata["provisional_roots"] == 0
+    assert network.generators.loc["island-plant", "bus"] == "asset::island-plant"
+    assert network.generators.loc["plant", "bus"] == "bus::A"
+    assert "bus::RODRIGUES_PROVISIONAL_ROOT" not in network.buses.index
+    assert (
+        network.lines["bus0"].eq("asset::island-plant").any() or network.lines["bus1"].eq("asset::island-plant").any()
+    )
+
+
 def test_build_inferred_provided_keeps_a_generator_without_bus_for_review(tmp_path):
     input_dir = tmp_path / "processed" / "energy" / "provided"
     orphan = {

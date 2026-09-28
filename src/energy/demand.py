@@ -6,8 +6,9 @@ node. Nobody has metered that for us, so the shares are estimated the way
 PyPSA-Earth does it, adapted to what we have for Mauritius:
 
 1. Each substation serves the area closer to it than to any other substation
-   (a Voronoi cell), clipped to the island outline. An island with a single
-   supply point (Rodrigues and its stand-in root) is one area.
+   (a Voronoi cell), clipped to the island outline. An island with no
+   substation in the data (Rodrigues) is served from its power stations
+   instead, and an island with a single supply point is one area.
 2. Each area is scored by the people who live in it (WorldPop population
    raster) and by how brightly it is lit at night (the VIIRS radiance
    composite, standing in for economic activity). PyPSA-Earth uses GDP for the
@@ -76,6 +77,29 @@ def distribution_key(scores: pd.DataFrame, *, weights: dict[str, float] | None =
     if combined.sum() <= 0:
         return pd.Series(1.0 / len(scores), index=scores.index) if len(scores) else combined
     return _normalised(combined)
+
+
+def supply_points(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """The nodes demand is served from: substation buses, or on an island without any, its power stations.
+
+    ``nodes`` needs ``bus_id``, ``kind`` and point geometry; ``region`` tells
+    the islands apart (one island when it is missing). An island with no
+    ``substation`` node falls back to its ``generator`` nodes. Nodes at the
+    same point (a station's rooftop PV next to its engines) count once.
+    """
+    kind = nodes["kind"].astype(str)
+    region = nodes["region"].astype(str) if "region" in nodes else pd.Series("all", index=nodes.index)
+    chosen = []
+    for name, index in nodes.groupby(region, sort=True).groups.items():
+        members = nodes.loc[index]
+        candidates = members[kind.loc[index].eq("substation").to_numpy()]
+        if candidates.empty:
+            candidates = members[kind.loc[index].eq("generator").to_numpy()]
+        if candidates.empty:
+            raise ValueError(f"{name}: no substation or generator node to serve demand from")
+        chosen.append(candidates[["bus_id", "geometry"]])
+    points = gpd.GeoDataFrame(pd.concat(chosen), geometry="geometry", crs=nodes.crs)
+    return points[~points.geometry.duplicated()].reset_index(drop=True)
 
 
 def service_areas(supply_points: gpd.GeoDataFrame, outlines: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -214,20 +238,18 @@ def build_demand_shares(
 ) -> DemandOutputs:
     """Write service areas, substation and node shares and the demand levels for one product.
 
-    ``nodes_path`` is a product's node GeoParquet layer: substation buses
-    (``kind == "substation"``) become the supply points, and every node gets a
+    ``nodes_path`` is a product's node GeoParquet layer: its substation buses
+    (or, on an island without any, its power stations; see
+    :func:`supply_points`) become the supply points, and every node gets a
     share of the system demand.
     """
     weights = dict(DEFAULT_WEIGHTS if weights is None else weights)
     nodes = gpd.read_parquet(nodes_path)
     if "bus_id" not in nodes or "kind" not in nodes:
         raise ValueError("nodes layer must contain bus_id and kind")
-    substations = nodes[nodes["kind"].astype(str).eq("substation")][["bus_id", "geometry"]]
-    if substations.empty:
-        raise ValueError("nodes layer has no substation buses to serve demand from")
     rasters = {"population": Path(population_path), "nightlights": Path(nightlights_path)}
 
-    areas = service_areas(substations, _read_outlines(aoi_path))
+    areas = service_areas(supply_points(nodes), _read_outlines(aoi_path))
     area_key = distribution_key(area_scores(areas, rasters), weights=weights)
     scores = node_scores(nodes[["bus_id", "geometry"]], areas, rasters)
     shares = node_shares(scores, area_key, weights=weights)

@@ -15,6 +15,7 @@ from energy.demand import (
     node_scores,
     node_shares,
     service_areas,
+    supply_points,
 )
 
 
@@ -95,6 +96,31 @@ def test_area_and_node_scores_follow_the_rasters(tmp_path):
     shares = node_shares(node_frame, distribution_key(scores))
     assert shares.sum() == pytest.approx(1.0)
     assert shares.loc[["W", "n1"]].sum() == pytest.approx(0.4)  # population weight 0.4 lands in the west
+
+
+def test_supply_points_fall_back_to_power_stations_on_an_island_without_a_substation():
+    nodes = gpd.GeoDataFrame(
+        {
+            "bus_id": ["bus::A", "asset::gen-a", "dist::1", "asset::island-plant", "asset::island-pv", "dist::2"],
+            "kind": ["substation", "generator", "distribution_node", "generator", "generator", "distribution_node"],
+            "region": ["mauritius"] * 3 + ["rodrigues"] * 3,
+            "geometry": [
+                Point(57.5, -20.2),
+                Point(57.51, -20.2),
+                Point(57.55, -20.2),
+                Point(63.42, -19.68),
+                Point(63.42, -19.68),  # rooftop PV at the same point as the station: counted once
+                Point(63.45, -19.7),
+            ],
+        },
+        crs="EPSG:4326",
+    )
+
+    points = supply_points(nodes)
+
+    assert list(points["bus_id"]) == ["bus::A", "asset::island-plant"]
+    with pytest.raises(ValueError, match="no substation or generator node"):
+        supply_points(nodes[nodes["kind"].eq("distribution_node")])
 
 
 def test_build_demand_shares_writes_the_review_files(tmp_path):
