@@ -1,9 +1,16 @@
 # Snakemake
 .snakemake/
+*.log
 
 # Default data directory
 data/
 tmp.*
+
+# Local working notes (not part of the published mdBook docs)
+/DEVELOPMENT_NOTES.md
+
+# Local reference symlink to the sibling repo (not committed)
+/pypsa-earth-mauritius-kestrel
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

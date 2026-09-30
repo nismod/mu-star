@@ -1,0 +1,75 @@
+# Settings for the energy network build (code in src/energy/, rules in
+# workflow/0-preprocess/energy.smk). The rules load this file with
+# `configfile:`, so everything here is available as config["energy"].
+#
+# File paths in this file are relative to the data root, which is `data_root`
+# in config/config.yaml (default: the `data/` folder of this repository).
+#
+# Nothing in the workflow downloads anything unless you switch on one of the
+# `allow_download` flags below. Turn a flag on, run the build once to fill the
+# cache, then turn it off again so later runs stay offline and reproducible.
+
+energy:
+  # The islands covered by the inferred products. "mauritius-rodrigues" is a
+  # region group: each island is fetched from OpenStreetMap separately and the
+  # results are combined (see REGION_GROUPS in src/energy/osm.py). Any other
+  # OpenStreetMap place name also works, e.g. "Rodrigues, Mauritius".
+  region: mauritius-rodrigues
+
+  osm:
+    # Road detail passed to osmnx. "drive" keeps the drivable road network,
+    # which stands in for the distribution lines; "all" would add footpaths and
+    # tracks, which distribution lines do not follow.
+    network_type: drive
+    # Allow the fetch_energy_osm rule to contact OpenStreetMap when the cache
+    # under incoming/energy/osm/<region>/ is missing. Needs internet.
+    allow_download: false
+    # Optional: use your own files instead of the OSM cache. Relative to the
+    # data root; GeoParquet, GeoPackage or GeoJSON. Leave null to use the cache.
+    roads: null   # lines: the road network
+    aoi: null     # polygons: the area of interest used to clip the night-light raster
+
+  base_network:
+    # The base product follows the provided CEB transmission routes. Breaks in
+    # the route geometry shorter than this are bridged.
+    route_gap_tolerance_m: 75
+    # The provided routes are CEB's 66 kV network. Line capacities are
+    # deliberately non-binding placeholders until reviewed ratings exist.
+    default_voltage_kv: 66
+    topology_capacity_mva: 10000
+
+  inferred:
+    # A power asset is connected to the nearest road within this distance.
+    max_anchor_distance_m: 1000
+    # Placeholder electrical values for the inferred distribution lines and
+    # for the CEB backbone kept in the inferred-provided product.
+    topology_voltage_kv: 11
+    transmission_voltage_kv: 66
+    topology_capacity_mva: 5
+    # Advisory checks written to validation.json and logged as warnings.
+    # CEB reports 10,492.2 km of transmission plus MV/LV distribution circuits.
+    ceb_total_line_length_km: 10492.2
+    line_length_tolerance_fraction: 0.10
+    generation_capacity_tolerance_fraction: 0.10
+
+  nightlight:
+    # Roads within this distance of a lit target or a power asset are kept.
+    nightlight_support_distance_m: 1000
+    # Brightness threshold of the GridFinder-style high-pass filter.
+    nightlight_threshold: 0.1
+    # Optional: a ready-made radiance composite (GeoTIFF, relative to the data
+    # root). Leave null to build one from the monthly tiles below.
+    nightlights: null
+    # Where the monthly VIIRS radiance tiles come from. The service serves the
+    # Earth Observation Group's monthly cloud-free composites; object_ids are
+    # the twelve months of 2024 in its catalogue. Change bbox for another
+    # region and object_ids for another year.
+    source:
+      service: https://di-lawimagery1.img.arcgis.com/arcgis/rest/services/NighttimeLightsMDNB/ImageServer
+      rendering_rule: "Average Monthly Radiance (Raw Values)"
+      object_ids: [120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131]
+      bbox: [57, -21, 64, -19]
+      pixel_size_degrees: 0.004166666666666667
+      monthly_dir: incoming/energy/nightlights/viirs-2024-monthly
+      # Allow the fetch_energy_nightlights rule to download missing tiles. Needs internet.
+      allow_download: false

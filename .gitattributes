@@ -1,0 +1,5 @@
+# Keep notebooks diff-clean: strip outputs/metadata on commit.
+# Requires `nbstripout --install` (git clean filter) and/or the pre-commit hook
+# in .pre-commit-config.yaml. See notebooks/README.md.
+*.ipynb filter=nbstripout
+*.ipynb diff=ipynb
