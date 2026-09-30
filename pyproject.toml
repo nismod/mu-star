@@ -32,11 +32,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "black",
     "nbstripout",
     "pre-commit",
     "pytest",
     "pytest-cov",
+    "pytest-xdist[psutil]",
     "ruff",
 ]
 

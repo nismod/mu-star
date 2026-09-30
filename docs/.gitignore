@@ -1,4 +1,5 @@
 book
+src/api
 src/api/*
 .DS_Store
 cache/

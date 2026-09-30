@@ -7,7 +7,7 @@ channels:
 dependencies:
   - python=3.12
   - pip:
-      - -e .
+      - -e .[dev]
       - nismod-snail
       - osmium
   - geopandas
@@ -17,9 +17,11 @@ dependencies:
   - notebook
   - numpy
   - matplotlib
+  - pdoc
   - pyarrow
   - pytest
   - bioconda::snakemake
+  - terracotta==0.9.1
   - tqdm
   - xarray
   - zarr
