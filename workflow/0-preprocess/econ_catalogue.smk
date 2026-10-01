@@ -3,6 +3,8 @@
 from economy import CATALOGUE_ROOT
 from globdata.catalogue import REMOTE_ROOT
 
+REMOTE_ROOT = '../catalogue/datasets/'
+
 rule econ_catalogue:
     """Subset point-based global catalogue layers to the configured country."""
     output:
