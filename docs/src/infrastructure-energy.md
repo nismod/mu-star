@@ -55,17 +55,20 @@ CEB backbone) and line capacities are placeholders. They are published in the
 ## Inputs
 
 - **Provided CEB data**: a power demand workbook and shapefiles of substations,
-  transmission routes and generation sites, shared under licence and placed by
-  hand under `<data>/incoming/energy/provided/`. Generator capacities are CEB
+  transmission routes and generation sites, shared under licence. They sit in
+  the `Substation`, `Power Transmission`, `Generation Source` and
+  `Power Demand` folders of `<data>/incoming/Infrastructure/Energy/`, as on
+  the project's shared drive. Generator capacities are CEB
   annual report figures held in
   `src/energy/resources/generator_capacity_reference.csv`. A generation site
   with no reference capacity is kept in `generators.csv` for review but left
   out of the PyPSA network.
 - **OpenStreetMap**: the drivable road network, mapped power features and the
-  outline of each island, fetched once into
-  `<data>/incoming/energy/osm/<region>/`.
-- **VIIRS night lights**: twelve monthly tiles for 2024, fetched once into
-  `<data>/incoming/energy/nightlights/viirs-2024-monthly/` from an ArcGIS image
+  outline of each island, downloaded into
+  `<data>/incoming/Infrastructure/Energy/OpenStreetMap/<region>/`.
+- **VIIRS night lights**: twelve monthly tiles for 2024, downloaded into
+  `<data>/incoming/Infrastructure/Energy/Nighttime Lights/viirs-2024-monthly/`
+  from an ArcGIS image
   service (NighttimeLightsMDNB ImageServer) that serves the Earth Observation
   Group's VIIRS DNB monthly cloud-free average-radiance composites. One caveat
   from the provider: a zero radiance can mean "no cloud-free observations that
@@ -73,8 +76,15 @@ CEB backbone) and line capacities are placeholders. They are published in the
   problem but does not remove it.
 
 `<data>` is the data root: `data/` in this repository unless `data_root` is set
-in `config/config.yaml`. Nothing is downloaded unless you switch it on in
-`config/energy/energy.yaml`; the README gives the fetch commands.
+in `config/config.yaml`. `<data>/incoming/Infrastructure/Energy/` mirrors the
+folder of the same name on the project's shared drive, so one copy of that
+folder sets it up. The public inputs are downloaded by the workflow when they
+are missing, and a file that is already there is used as it is.
+
+You do not need any of these inputs to use the networks. A ready-made pack of
+the processed files (`yyyymmdd-model-data` under
+`Processed Data/Infrastructure/Energy` on the shared drive) can be copied to
+`<data>/processed/energy`; the README shows both routes.
 
 ## Outputs
 

@@ -199,19 +199,35 @@ substations, generators and the CEB backbone). Settings live in
 `config/energy/energy.yaml`; file paths there are relative to the data root
 (`data/` unless `data_root` is set in `config/config.yaml`).
 
-Before the first build, place the provided CEB data under
-`data/incoming/energy/provided/` and fetch the OpenStreetMap and night-light
-inputs once. Each fetch needs internet and its `allow_download` flag switched
-on in `config/energy/energy.yaml` (`energy.osm.allow_download` and
-`energy.nightlight.source.allow_download`); switch them off again afterwards so
-later runs stay offline:
+The energy data lives on the project's shared drive (see
+[Getting data](CONTRIBUTING.md#getting-data) for access). There are two ways to
+set it up, and you can use either or both:
+
+- **Use a ready-made pack.** Copy the newest `yyyymmdd-model-data` folder from
+  `Processed Data/Infrastructure/Energy` on the shared drive to
+  `data/processed/energy`. Every rule that uses the energy network then runs
+  without the source data, and nothing is downloaded or rebuilt.
+- **Build from the source data.** Copy the folder
+  `Incoming Data/Infrastructure/Energy` from the shared drive to
+  `data/incoming/Infrastructure/Energy`. It holds the provided CEB data, which
+  is not public. The public inputs (OpenStreetMap roads and power features,
+  VIIRS night lights) are downloaded by the workflow when they are missing.
+
+For example, with the shared drive synced to your computer:
 
 ```shell
-snakemake -c1 fetch_energy_osm
-snakemake -c1 fetch_energy_nightlights
+mkdir -p data/processed data/incoming/Infrastructure
+cp -R "<shared drive>/Processed Data/Infrastructure/Energy/<yyyymmdd>-model-data" data/processed/energy
+cp -R "<shared drive>/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/Energy
 ```
 
-Then build all three products:
+Skip the last line if `data/incoming` already holds, or links to, the whole
+`Incoming Data` folder. A link to a shared folder works too, but Snakemake then
+writes through it into the shared drive whenever it rebuilds or downloads, so
+copy unless you only read.
+
+Then build all three products. With a pack in place this reports that there is
+nothing to do:
 
 ```shell
 snakemake -c1 build_energy_networks
