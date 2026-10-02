@@ -5,11 +5,12 @@ and the output grid are all supplied by the caller, wired from ``config.yaml``
 in the Snakemake rules. The service defaults to the Earth Observation Group
 "NighttimeLightsMDNB" ArcGIS image service.
 
-Acquisition is opt-in and offline-first, mirroring :mod:`energy.osm`: a build
-reads cached monthly tiles and never downloads on its own. Call
-:func:`fetch_nightlight_months` with ``allow_download=True`` once to populate the
-cache, then :func:`build_nightlight_composite` reduces the tiles to the single
-radiance raster the nightlight-target step consumes.
+Tiles are fetched once and reused. :func:`fetch_nightlight_months` downloads
+only the tiles that are missing, and only with ``allow_download=True`` (the
+``fetch_energy_nightlights`` workflow rule passes it, and Snakemake runs that
+rule only when a tile is missing). :func:`build_nightlight_composite` then
+reduces the tiles to the single radiance raster the nightlight-target step
+consumes.
 """
 
 from __future__ import annotations

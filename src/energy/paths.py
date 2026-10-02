@@ -2,9 +2,9 @@
 
 Everything the energy pipeline reads or writes sits under one *data root*:
 
-    <data_root>/incoming/energy/...    source data as received, never edited by hand
-    <data_root>/processed/energy/...   intermediate files written by the workflow
-    <data_root>/out/energy/...         human-readable tables and reports
+    <data_root>/incoming/Infrastructure/Energy/...   source data, laid out as on the shared drive
+    <data_root>/processed/energy/...                 intermediate files written by the workflow
+    <data_root>/out/energy/...                       human-readable tables and reports
 
 The data root is ``data_root`` in ``config/config.yaml`` (default ``data``,
 relative to the repository). The Snakemake rules pass every path explicitly, so
@@ -38,8 +38,17 @@ def data_root() -> Path:
     return root if root.is_absolute() else REPO_ROOT / root
 
 
+INCOMING_ENERGY_RELATIVE = Path("incoming") / "Infrastructure" / "Energy"
+"""Energy source data, relative to the data root.
+
+It mirrors ``Incoming Data/Infrastructure/Energy`` on the project's shared
+drive, as the other sectors' source folders do, so one link or copy of that
+folder is all a new checkout needs.
+"""
+
+
 def incoming_energy_dir(root: Path | None = None) -> Path:
-    return Path(root or data_root()) / "incoming" / "energy"
+    return Path(root or data_root()) / INCOMING_ENERGY_RELATIVE
 
 
 def processed_energy_dir(root: Path | None = None) -> Path:

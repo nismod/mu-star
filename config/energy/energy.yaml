@@ -5,9 +5,10 @@
 # File paths in this file are relative to the data root, which is `data_root`
 # in config/config.yaml (default: the `data/` folder of this repository).
 #
-# Nothing in the workflow downloads anything unless you switch on one of the
-# `allow_download` flags below. Turn a flag on, run the build once to fill the
-# cache, then turn it off again so later runs stay offline and reproducible.
+# Source data sits under incoming/Infrastructure/Energy/, laid out as on the
+# project's shared drive. The provided CEB data is copied or linked from there.
+# The public inputs (OpenStreetMap, VIIRS night lights) are downloaded by the
+# workflow when they are missing; a copy that is already there is used as it is.
 
 energy:
   # The islands covered by the inferred products. "mauritius-rodrigues" is a
@@ -21,11 +22,9 @@ energy:
     # which stands in for the distribution lines; "all" would add footpaths and
     # tracks, which distribution lines do not follow.
     network_type: drive
-    # Allow the fetch_energy_osm rule to contact OpenStreetMap when the cache
-    # under incoming/energy/osm/<region>/ is missing. Needs internet.
-    allow_download: false
-    # Optional: use your own files instead of the OSM cache. Relative to the
-    # data root; GeoParquet, GeoPackage or GeoJSON. Leave null to use the cache.
+    # Optional: use your own files instead of the OpenStreetMap download.
+    # Relative to the data root; GeoParquet, GeoPackage or GeoJSON. Leave null
+    # to use incoming/Infrastructure/Energy/OpenStreetMap/<region>/.
     roads: null   # lines: the road network
     aoi: null     # polygons: the area of interest used to clip the night-light raster
 
@@ -70,6 +69,4 @@ energy:
       object_ids: [120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131]
       bbox: [57, -21, 64, -19]
       pixel_size_degrees: 0.004166666666666667
-      monthly_dir: incoming/energy/nightlights/viirs-2024-monthly
-      # Allow the fetch_energy_nightlights rule to download missing tiles. Needs internet.
-      allow_download: false
+      monthly_dir: incoming/Infrastructure/Energy/Nighttime Lights/viirs-2024-monthly

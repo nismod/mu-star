@@ -3,22 +3,22 @@
 The inferred distribution network follows OpenStreetMap roads, uses OSM power
 features (substations, plants, generators) as connection points, and clips the
 night-light raster to the region's outline. All three come from the OSM
-Overpass and Nominatim services, so they are fetched **once** and cached under::
+Overpass and Nominatim services, so they are fetched **once** and kept under::
 
-    <data_root>/incoming/energy/osm/<region>/roads.parquet
-    <data_root>/incoming/energy/osm/<region>/power.parquet
-    <data_root>/incoming/energy/osm/<region>/aoi.parquet
+    <data_root>/incoming/Infrastructure/Energy/OpenStreetMap/<region>/roads.parquet
+    <data_root>/incoming/Infrastructure/Energy/OpenStreetMap/<region>/power.parquet
+    <data_root>/incoming/Infrastructure/Energy/OpenStreetMap/<region>/aoi.parquet
 
-Nothing here downloads unless you pass ``allow_download=True`` (from Python) or
-run the ``fetch_energy_osm`` workflow rule with ``energy.osm.allow_download``
-enabled in ``config/energy/energy.yaml``. A missing cache raises
-:class:`OSMDownloadRequired` with instructions instead of silently contacting
-the internet.
+In the workflow the ``fetch_energy_osm`` rule downloads them, and Snakemake runs
+it only when a file is missing. Called from Python, nothing here downloads
+unless you pass ``allow_download=True``; a missing file then raises
+:class:`OSMDownloadRequired` instead of silently contacting the internet.
 """
 
 from __future__ import annotations
 
 import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,7 +26,8 @@ import geopandas as gpd
 import pandas as pd
 import shapely
 
-from energy.paths import incoming_energy_dir
+from energy.paths import INCOMING_ENERGY_RELATIVE
+from energy.paths import data_root as configured_data_root
 
 GEOGRAPHIC_CRS = "EPSG:4326"
 
@@ -93,7 +94,7 @@ def _require_region(region: str) -> str:
 
 
 def osm_cache_dir_relative(region: str) -> Path:
-    return Path("incoming") / "energy" / "osm" / region_slug(region)
+    return INCOMING_ENERGY_RELATIVE / "OpenStreetMap" / region_slug(region)
 
 
 def roads_cache_relative(region: str, network_type: str = "drive") -> Path:
@@ -110,7 +111,7 @@ def aoi_cache_relative(region: str) -> Path:
 
 
 def _data_root_or_default(data_root: Path | None) -> Path:
-    return Path(data_root) if data_root is not None else incoming_energy_dir().parent.parent
+    return Path(data_root) if data_root is not None else configured_data_root()
 
 
 def osm_roads_path(region: str, network_type: str = "drive", data_root: Path | None = None) -> Path:
@@ -189,17 +190,17 @@ def _empty_power_features() -> gpd.GeoDataFrame:
 def _download_help(what: str, region: str, path: Path) -> str:
     return (
         f"OSM {what} for {region!r} are not cached at {path}.\n"
-        "Fetch them once (needs internet): set energy.osm.allow_download: true in "
-        "config/energy/energy.yaml and run the fetch_energy_osm rule, or call this "
-        "function with allow_download=True."
+        "The fetch_energy_osm workflow rule downloads them (needs internet); from "
+        "Python, call this function with allow_download=True."
     )
 
 
-def _configure_osmnx(data_root: Path | None):
+def _configure_osmnx():
     import osmnx as ox  # imported lazily: only needed when downloading
 
-    # Keep the Overpass/Nominatim response cache inside the (git-ignored) data tree.
-    ox.settings.cache_folder = str(_data_root_or_default(data_root) / "incoming" / "energy" / "osm" / ".cache")
+    # The Overpass/Nominatim response cache is disposable, so it stays out of the
+    # data folders (which may be shared).
+    ox.settings.cache_folder = str(Path(tempfile.gettempdir()) / "mu-star-osmnx-cache")
     try:
         from osmnx._errors import InsufficientResponseError
     except Exception:  # pragma: no cover - version-dependent import
@@ -283,7 +284,7 @@ def fetch_osm_roads(
     if not allow_download:
         raise OSMDownloadRequired(_download_help("roads", region, target))
 
-    ox, InsufficientResponseError = _configure_osmnx(data_root)
+    ox, InsufficientResponseError = _configure_osmnx()
     try:
         graph = ox.graph_from_place(region_query(region), network_type=network_type)
         # One edge per street: osmnx graphs are directed and hold both directions of two-way roads.
@@ -349,7 +350,7 @@ def fetch_osm_power_features(
         raise OSMDownloadRequired(_download_help("power features", region, target))
 
     slug = region_slug(region)
-    ox, InsufficientResponseError = _configure_osmnx(data_root)
+    ox, InsufficientResponseError = _configure_osmnx()
     try:
         features = ox.features_from_place(
             region_query(region),
@@ -422,7 +423,7 @@ def fetch_osm_aoi(
     if not allow_download:
         raise OSMDownloadRequired(_download_help("area of interest", region, target))
 
-    ox, _ = _configure_osmnx(data_root)
+    ox, _ = _configure_osmnx()
     geocoded = ox.geocode_to_gdf(region_query(region)).to_crs(GEOGRAPHIC_CRS)
     aoi = gpd.GeoDataFrame(
         {

@@ -13,9 +13,13 @@ import pandas as pd
 
 from energy.network_tables import write_input_templates
 from energy.provided import (
+    DEMAND_FOLDER,
+    GENERATION_FOLDER,
     GENERATOR_CAPACITY_REFERENCE,
     GEOGRAPHIC_CRS,
     METRIC_CRS,
+    SUBSTATION_FOLDER,
+    TRANSMISSION_FOLDER,
     _clean_label,
     _extract_route_capacity_mw,
     _extract_route_voltage_kv,
@@ -58,12 +62,12 @@ def main(input_dir, output_dir, capacity_reference):
     validate_provided_inputs(input_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    substations = _read_gdf(input_dir / "substation" / "Substation.shp").reset_index(drop=True)
+    substations = _read_gdf(input_dir / SUBSTATION_FOLDER / "Substation.shp").reset_index(drop=True)
     substations["bus_id"] = [f"SUB_{index + 1:03d}" for index in substations.index]
     substations["name"] = substations["bus_id"]
     substations["asset_type"] = "substation"
 
-    routes = _read_gdf(input_dir / "power_transmission" / "PowerGrid.shp").reset_index(drop=True)
+    routes = _read_gdf(input_dir / TRANSMISSION_FOLDER / "PowerGrid.shp").reset_index(drop=True)
     routes["route_id"] = [f"ROUTE_{index + 1:03d}" for index in routes.index]
     routes["name"] = routes["Name"].combine_first(routes["FolderPath"]).apply(_clean_label)
     routes["v_nom_kv"] = _extract_route_voltage_kv(routes)
@@ -72,12 +76,12 @@ def main(input_dir, output_dir, capacity_reference):
     routes["length_km"] = routes.to_crs(METRIC_CRS).length / 1000
     snapped_substations = snap_substations_to_routes(substations, routes)
 
-    points = _read_gdf(input_dir / "generation_source" / "GenSource1.shp").reset_index(drop=True)
+    points = _read_gdf(input_dir / GENERATION_FOLDER / "GenSource1.shp").reset_index(drop=True)
     points["asset_id"] = [f"GEN_POINT_{index + 1:03d}" for index in points.index]
     points["name"] = points["Name"].apply(_clean_label)
     points["asset_type"] = points.apply(classify_generation, axis=1)
 
-    areas = _read_gdf(input_dir / "generation_source" / "GenSource2.shp").reset_index(drop=True)
+    areas = _read_gdf(input_dir / GENERATION_FOLDER / "GenSource2.shp").reset_index(drop=True)
     areas["asset_id"] = [f"GEN_AREA_{index + 1:03d}" for index in areas.index]
     areas["label"] = areas["Name"].apply(_clean_label)
     areas["category"] = areas.apply(classify_generation, axis=1)
@@ -117,7 +121,7 @@ def main(input_dir, output_dir, capacity_reference):
     generation_sites["lon"] = generation_sites.geometry.x
     generation_sites["lat"] = generation_sites.geometry.y
 
-    monthly_peak, annual_demand = extract_demand_workbook(input_dir / "power_demand" / "Power Demand.xlsx")
+    monthly_peak, annual_demand = extract_demand_workbook(input_dir / DEMAND_FOLDER / "Power Demand.xlsx")
 
     substation_path = output_dir / "substations.parquet"
     snapped_substation_path = output_dir / "snapped_substations.parquet"

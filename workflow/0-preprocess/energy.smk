@@ -1,5 +1,5 @@
-"""Energy network build: prepare the provided CEB data, cache the OpenStreetMap
-inputs, find night-light targets and build three network products.
+"""Energy network build: prepare the provided CEB data, fetch the OpenStreetMap
+and night-light inputs, find night-light targets and build three network products.
 
 Products, each written under {data}/processed/energy/networks/<name>/:
 
@@ -12,8 +12,14 @@ Products, each written under {data}/processed/energy/networks/<name>/:
 
 Every build rule runs workflow/0-preprocess/energy_build_network.py, a thin
 command-line wrapper around energy.build.build_network. Settings live
-in config/energy/energy.yaml. Downloads (OpenStreetMap, VIIRS) are opt-in there and run by name:
-snakemake -c1 fetch_energy_osm / fetch_energy_nightlights.
+in config/energy/energy.yaml.
+
+Source data sits under {data}/incoming/Infrastructure/Energy/, the same layout
+as the project's shared drive. The provided CEB data is copied or linked from
+there; the public inputs (OpenStreetMap, VIIRS night lights) are downloaded by
+Snakemake when they are missing. When the processed files already exist, for
+example a model-data pack from the shared drive copied to
+{data}/processed/energy, nothing is downloaded or rebuilt.
 
 Run everything:      snakemake -c1 build_energy_networks
 One product, e.g.:   snakemake -c1 data/processed/energy/networks/base-mauritius/base-mauritius.nc
@@ -25,10 +31,16 @@ workflow yet; see docs/src/infrastructure-energy.md.
 import shlex
 from pathlib import Path
 
-from snakemake.exceptions import WorkflowError
-
 from energy import osm as energy_osm
 from energy.nightlights import tile_name
+from energy.paths import INCOMING_ENERGY_RELATIVE
+from energy.provided import (
+    DEMAND_FOLDER,
+    GENERATION_FOLDER,
+    SHAPEFILE_EXTENSIONS,
+    SUBSTATION_FOLDER,
+    TRANSMISSION_FOLDER,
+)
 
 
 configfile: "config/energy/energy.yaml"
@@ -45,7 +57,14 @@ REGION_SLUG = energy_osm.region_slug(REGION)
 
 OSM_SETTINGS = ENERGY.get("osm", {})
 NETWORK_TYPE = str(OSM_SETTINGS.get("network_type", "drive")).strip() or "drive"
-OSM_ALLOW_DOWNLOAD = bool(OSM_SETTINGS.get("allow_download", False))
+
+# Energy source data, laid out as on the project's shared drive.
+INCOMING_DIR = f"{{data}}/{INCOMING_ENERGY_RELATIVE.as_posix()}"
+
+# Files of this repository that rules read (their scripts, the capacity table) are
+# wrapped in ancient(): a fresh checkout stamps them with today's date, and that must
+# not make processed data built earlier look out of date. After editing a script,
+# re-run its rule with `snakemake -R <rule name>`.
 
 VECTOR_SUFFIXES = {".parquet", ".geoparquet", ".gpkg", ".geojson"}
 
@@ -62,13 +81,13 @@ def _relative_data_path(value, key, suffixes):
     return path.as_posix()
 
 
-# --- OpenStreetMap cache (relative to the data root) --------------------------
+# --- OpenStreetMap files (relative to the data root) --------------------------
 # The paths come from the same helpers the Python code uses, so the rules and
-# the library can never disagree about where a cached file lives.
+# the library can never disagree about where a file lives.
 OSM_ROADS_CACHE = energy_osm.roads_cache_relative(REGION, NETWORK_TYPE).as_posix()
 OSM_POWER_CACHE = energy_osm.power_cache_relative(REGION).as_posix()
 OSM_AOI_CACHE = energy_osm.aoi_cache_relative(REGION).as_posix()
-# A user-supplied roads or AOI file (energy.osm.roads / energy.osm.aoi) replaces the cache.
+# A user-supplied roads or AOI file (energy.osm.roads / energy.osm.aoi) replaces the download.
 OSM_ROADS = _relative_data_path(OSM_SETTINGS.get("roads"), "energy.osm.roads", VECTOR_SUFFIXES) or OSM_ROADS_CACHE
 OSM_AOI = _relative_data_path(OSM_SETTINGS.get("aoi"), "energy.osm.aoi", VECTOR_SUFFIXES) or OSM_AOI_CACHE
 
@@ -77,7 +96,9 @@ NIGHTLIGHT = ENERGY.get("nightlight", {})
 NIGHTLIGHT_SOURCE = NIGHTLIGHT.get("source", {})
 NIGHTLIGHT_DIR = f"{{data}}/processed/energy/nightlight/{REGION_SLUG}"
 NIGHTLIGHT_TARGETS = f"{NIGHTLIGHT_DIR}/targets.geoparquet"
-NIGHTLIGHT_MONTHLY_DIR = NIGHTLIGHT_SOURCE.get("monthly_dir", "incoming/energy/nightlights/viirs-2024-monthly")
+NIGHTLIGHT_MONTHLY_DIR = NIGHTLIGHT_SOURCE.get(
+    "monthly_dir", f"{INCOMING_ENERGY_RELATIVE.as_posix()}/Nighttime Lights/viirs-2024-monthly"
+)
 NIGHTLIGHT_OBJECT_IDS = [int(value) for value in NIGHTLIGHT_SOURCE.get("object_ids", range(120, 132))]
 NIGHTLIGHT_MONTHS = [
     f"{{data}}/{NIGHTLIGHT_MONTHLY_DIR}/{tile_name(index, object_id)}"
@@ -125,55 +146,31 @@ def network_outputs(name, *, inferred):
     return outputs
 
 
-# Sidecars needed to read a provided ESRI shapefile (the optional .cpg is not required).
-PROVIDED_SHAPEFILE_EXTENSIONS = ("shp", "shx", "dbf", "prj")
-
-
-def require_cached(paths, how):
-    """Explain, instead of a bare MissingInputException, when a cached download is absent."""
-    missing = [path for path in paths if not Path(path).is_file()]
-    if missing:
-        listed = "\n".join(f"  - {path}" for path in missing)
-        raise WorkflowError(f"Cached input file(s) missing:\n{listed}\n{how}")
-    return paths
-
-
-HOW_TO_FETCH_OSM = (
-    "Fetch them once (needs internet): set energy.osm.allow_download: true in "
-    "config/energy/energy.yaml, run `snakemake -c1 fetch_energy_osm`, then set it back to false."
-)
-HOW_TO_FETCH_NIGHTLIGHTS = (
-    "Fetch them once (needs internet): set energy.nightlight.source.allow_download: true in "
-    "config/energy/energy.yaml, run `snakemake -c1 fetch_energy_nightlights`, then set it back to false."
-)
-
-
 rule fetch_energy_osm:
     """
-    Cache the OpenStreetMap inputs for the configured region: roads, power
-    features and the area-of-interest outline. Run it once, by name:
+    Download the OpenStreetMap inputs for the configured region: roads, power
+    features and the area-of-interest outline. Needs internet.
 
-        snakemake -c1 fetch_energy_osm
+    Snakemake runs this only when one of the three files is missing and a build
+    needs it, so files copied or linked from the shared drive are used as they are.
 
-    It contacts OpenStreetMap only when a file is missing AND
-    energy.osm.allow_download is true; otherwise it explains how to enable the
-    fetch. The cache is deliberately not a Snakemake output: outputs are deleted
-    before a rule re-runs, and a download must never be thrown away by accident.
+    Test with:
+    snakemake -c1 data/incoming/Infrastructure/Energy/OpenStreetMap/mauritius-rodrigues/roads.parquet
     """
-    input:
-        script="workflow/0-preprocess/energy_fetch_osm.py",
+    output:
+        roads=f"{{data}}/{OSM_ROADS_CACHE}",
+        power=f"{{data}}/{OSM_POWER_CACHE}",
+        aoi=f"{{data}}/{OSM_AOI_CACHE}",
     params:
         region=REGION,
         network_type=NETWORK_TYPE,
-        data_root=ENERGY_DATA_ROOT,
-        allow_download="--allow-download" if OSM_ALLOW_DOWNLOAD else "",
     shell:
         """
-        python {input.script:q} \
+        python workflow/0-preprocess/energy_fetch_osm.py \
             --region {params.region:q} \
             --network-type {params.network_type:q} \
-            --data-root {params.data_root:q} \
-            {params.allow_download}
+            --data-root {wildcards.data:q} \
+            --allow-download
         """
 
 
@@ -185,25 +182,21 @@ rule prepare_energy_assets:
     snakemake -c1 data/processed/energy/provided/generators.csv
     """
     input:
-        workbook="{data}/incoming/energy/provided/power_demand/Power Demand.xlsx",
+        workbook=f"{INCOMING_DIR}/{DEMAND_FOLDER}/Power Demand.xlsx",
         substations=[
-            f"{{data}}/incoming/energy/provided/substation/Substation.{extension}"
-            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
+            f"{INCOMING_DIR}/{SUBSTATION_FOLDER}/Substation.{extension}" for extension in SHAPEFILE_EXTENSIONS
         ],
         routes=[
-            f"{{data}}/incoming/energy/provided/power_transmission/PowerGrid.{extension}"
-            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
+            f"{INCOMING_DIR}/{TRANSMISSION_FOLDER}/PowerGrid.{extension}" for extension in SHAPEFILE_EXTENSIONS
         ],
         generation_points=[
-            f"{{data}}/incoming/energy/provided/generation_source/GenSource1.{extension}"
-            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
+            f"{INCOMING_DIR}/{GENERATION_FOLDER}/GenSource1.{extension}" for extension in SHAPEFILE_EXTENSIONS
         ],
         generation_areas=[
-            f"{{data}}/incoming/energy/provided/generation_source/GenSource2.{extension}"
-            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
+            f"{INCOMING_DIR}/{GENERATION_FOLDER}/GenSource2.{extension}" for extension in SHAPEFILE_EXTENSIONS
         ],
-        capacity_reference="src/energy/resources/generator_capacity_reference.csv",
-        script="workflow/0-preprocess/energy_prepare_assets.py",
+        capacity_reference=ancient("src/energy/resources/generator_capacity_reference.csv"),
+        script=ancient("workflow/0-preprocess/energy_prepare_assets.py"),
     output:
         substations=f"{PROVIDED_DIR}/substations.parquet",
         snapped_substations=f"{PROVIDED_DIR}/snapped_substations.parquet",
@@ -218,7 +211,7 @@ rule prepare_energy_assets:
         generator_template="{data}/processed/energy/templates/generators.csv",
         line_template="{data}/processed/energy/templates/lines.csv",
     params:
-        input_dir="{data}/incoming/energy/provided",
+        input_dir=INCOMING_DIR,
         output_dir=PROVIDED_DIR,
     shell:
         """
@@ -240,7 +233,7 @@ rule build_base_energy_network:
         buses=f"{PROVIDED_DIR}/snapped_substations.parquet",
         routes=f"{PROVIDED_DIR}/transmission_routes.parquet",
         generators=f"{PROVIDED_DIR}/generators.csv",
-        script="workflow/0-preprocess/energy_build_network.py",
+        script=ancient("workflow/0-preprocess/energy_build_network.py"),
     output:
         **network_outputs(BASE_NAME, inferred=False),
     params:
@@ -268,50 +261,46 @@ rule build_base_energy_network:
 
 rule fetch_energy_nightlights:
     """
-    Cache the monthly VIIRS radiance tiles. Run it once, by name:
+    Download the monthly VIIRS radiance tiles. Needs internet.
 
-        snakemake -c1 fetch_energy_nightlights
+    Snakemake runs this only when a tile is missing and a build needs it, so
+    tiles copied or linked from the shared drive are used as they are.
 
-    It reaches the image service only when a tile is missing AND
-    energy.nightlight.source.allow_download is true; otherwise it explains how
-    to enable the fetch. Like the OSM cache, the tiles are not Snakemake outputs
-    so a script change can never delete them.
+    Test with:
+    snakemake -c1 "data/incoming/Infrastructure/Energy/Nighttime Lights/viirs-2024-monthly/01-120.tif"
     """
-    input:
-        script="workflow/0-preprocess/energy_fetch_nightlights.py",
+    output:
+        months=NIGHTLIGHT_MONTHS,
     params:
-        out_dir=f"{ENERGY_DATA_ROOT}/{NIGHTLIGHT_MONTHLY_DIR}",
+        out_dir=f"{{data}}/{NIGHTLIGHT_MONTHLY_DIR}",
         object_ids=",".join(str(value) for value in NIGHTLIGHT_OBJECT_IDS),
         bbox=",".join(str(value) for value in NIGHTLIGHT_SOURCE.get("bbox", [57, -21, 64, -19])),
         pixel_size_degrees=NIGHTLIGHT_SOURCE.get("pixel_size_degrees", 0.004166666666666667),
         service=NIGHTLIGHT_SOURCE.get("service") or "",
         rendering_rule=NIGHTLIGHT_SOURCE.get("rendering_rule") or "",
-        allow_download="--allow-download" if bool(NIGHTLIGHT_SOURCE.get("allow_download", False)) else "",
     shell:
         """
-        python {input.script:q} \
+        python workflow/0-preprocess/energy_fetch_nightlights.py \
             --out-dir {params.out_dir:q} \
             --object-ids {params.object_ids} \
             --bbox {params.bbox} \
             --pixel-size-degrees {params.pixel_size_degrees} \
             --service {params.service:q} \
             --rendering-rule {params.rendering_rule:q} \
-            {params.allow_download}
+            --allow-download
         """
 
 
 rule build_energy_nightlight_composite:
     """
-    Reduce the cached monthly VIIRS tiles to one radiance composite (pixelwise median).
+    Reduce the monthly VIIRS tiles to one radiance composite (pixelwise median).
 
     Test with:
     snakemake -c1 data/processed/energy/nightlight/mauritius-rodrigues/viirs-composite.tif
     """
     input:
-        months=lambda wildcards: require_cached(
-            [month.format(data=wildcards.data) for month in NIGHTLIGHT_MONTHS], HOW_TO_FETCH_NIGHTLIGHTS
-        ),
-        script="workflow/0-preprocess/energy_build_nightlight_composite.py",
+        months=NIGHTLIGHT_MONTHS,
+        script=ancient("workflow/0-preprocess/energy_build_nightlight_composite.py"),
     output:
         composite=NIGHTLIGHT_BUILT_COMPOSITE,
     shell:
@@ -330,8 +319,8 @@ rule build_energy_nightlight_targets:
     """
     input:
         nightlights=NIGHTLIGHT_COMPOSITE,
-        aoi=lambda wildcards: require_cached([f"{wildcards.data}/{OSM_AOI}"], HOW_TO_FETCH_OSM)[0],
-        script="workflow/0-preprocess/energy_build_nightlight_targets.py",
+        aoi=f"{{data}}/{OSM_AOI}",
+        script=ancient("workflow/0-preprocess/energy_build_nightlight_targets.py"),
     output:
         targets_raster=f"{NIGHTLIGHT_DIR}/targets.tif",
         targets=NIGHTLIGHT_TARGETS,
@@ -352,16 +341,15 @@ rule build_energy_nightlight_targets:
 
 
 def _inferred_inputs(wildcards):
-    """Inputs of one inferred product: the road cache and night-light targets for both
-    variants, plus the OSM power cache (osm) or the prepared CEB tables (provided)."""
+    """Inputs of one inferred product: the roads and night-light targets for both
+    variants, plus the OSM power features (osm) or the prepared CEB tables (provided)."""
     inputs = {
         "roads": f"{wildcards.data}/{OSM_ROADS}",
         "nightlight_targets": NIGHTLIGHT_TARGETS.format(data=wildcards.data),
-        "script": "workflow/0-preprocess/energy_build_network.py",
+        "script": ancient("workflow/0-preprocess/energy_build_network.py"),
     }
     if wildcards.variant == "osm":
         inputs["power"] = f"{wildcards.data}/{OSM_POWER_CACHE}"
-    require_cached([inputs["roads"], *([inputs["power"]] if "power" in inputs else [])], HOW_TO_FETCH_OSM)
     if wildcards.variant != "osm":
         for name in ("snapped_substations.parquet", "transmission_routes.parquet", "generators.csv"):
             inputs[name.split(".")[0]] = f"{PROVIDED_DIR.format(data=wildcards.data)}/{name}"

@@ -15,24 +15,20 @@ METRIC_CRS = "EPSG:32740"
 GEOGRAPHIC_CRS = "EPSG:4326"
 GENERATOR_CAPACITY_REFERENCE = Path(__file__).parent / "resources" / "generator_capacity_reference.csv"
 CEB_ANNUAL_REPORT_URL = "https://ceb.mu/files/files/publications/Annual%20Report/CEB%20AR%202023-2024.pdf"
+# Folders of the provided CEB data, named as on the project's shared drive
+# (Incoming Data/Infrastructure/Energy).
+SUBSTATION_FOLDER = "Substation"
+TRANSMISSION_FOLDER = "Power Transmission"
+GENERATION_FOLDER = "Generation Source"
+DEMAND_FOLDER = "Power Demand"
+# Sidecars needed to read an ESRI shapefile (the optional .cpg is not required).
+SHAPEFILE_EXTENSIONS = ("shp", "shx", "dbf", "prj")
 REQUIRED_PROVIDED_FILES = (
-    "power_demand/Power Demand.xlsx",
-    "substation/Substation.shp",
-    "substation/Substation.shx",
-    "substation/Substation.dbf",
-    "substation/Substation.prj",
-    "power_transmission/PowerGrid.shp",
-    "power_transmission/PowerGrid.shx",
-    "power_transmission/PowerGrid.dbf",
-    "power_transmission/PowerGrid.prj",
-    "generation_source/GenSource1.shp",
-    "generation_source/GenSource1.shx",
-    "generation_source/GenSource1.dbf",
-    "generation_source/GenSource1.prj",
-    "generation_source/GenSource2.shp",
-    "generation_source/GenSource2.shx",
-    "generation_source/GenSource2.dbf",
-    "generation_source/GenSource2.prj",
+    f"{DEMAND_FOLDER}/Power Demand.xlsx",
+    *(f"{SUBSTATION_FOLDER}/Substation.{extension}" for extension in SHAPEFILE_EXTENSIONS),
+    *(f"{TRANSMISSION_FOLDER}/PowerGrid.{extension}" for extension in SHAPEFILE_EXTENSIONS),
+    *(f"{GENERATION_FOLDER}/GenSource1.{extension}" for extension in SHAPEFILE_EXTENSIONS),
+    *(f"{GENERATION_FOLDER}/GenSource2.{extension}" for extension in SHAPEFILE_EXTENSIONS),
 )
 
 
@@ -47,9 +43,9 @@ def validate_provided_inputs(input_dir: Path) -> None:
     message = (
         f"Provided input data are incomplete at:\n  {input_dir}\n\n"
         f"Missing files:\n{missing_list}\n\n"
-        "Place the complete source folders under "
-        "data/incoming/energy/provided (or under incoming/energy/provided of the "
-        "data_root set in config/config.yaml)."
+        "Link or copy the folder Incoming Data/Infrastructure/Energy of the project's "
+        "shared drive to data/incoming/Infrastructure/Energy (or to "
+        "incoming/Infrastructure/Energy under the data_root set in config/config.yaml)."
     )
     raise FileNotFoundError(message)
 

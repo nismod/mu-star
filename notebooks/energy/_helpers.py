@@ -15,7 +15,7 @@ folder of this repository) and the region is ``energy.region`` in
 
 - ``DATA_ROOT``, ``REGION``, ``REGION_SLUG``
 - ``PROVIDED_DIR``    <data>/processed/energy/provided            cleaned CEB tables
-- ``OSM_CACHE_DIR``   <data>/incoming/energy/osm/<region>         roads, power features, area of interest
+- ``OSM_CACHE_DIR``   <data>/incoming/Infrastructure/Energy/OpenStreetMap/<region>  roads, power features, outline
 - ``NIGHTLIGHT_DIR``  <data>/processed/energy/nightlight/<region> radiance composite and target points
 - ``NETWORKS_DIR``    <data>/processed/energy/networks/<product>  PyPSA network, metadata, GeoParquet layers
 - ``OUT_DIR``         <data>/out/energy/<product>                 generators.csv, lines.csv, validation.json
@@ -92,7 +92,12 @@ PROVIDED_DIR = energy_paths.processed_energy_dir(DATA_ROOT) / "provided"
 OSM_CACHE_DIR = DATA_ROOT / energy_osm.osm_cache_dir_relative(REGION)
 NIGHTLIGHT_DIR = energy_paths.processed_energy_dir(DATA_ROOT) / "nightlight" / REGION_SLUG
 NIGHTLIGHT_MONTHLY_DIR = DATA_ROOT / str(
-    _setting("nightlight", "source", "monthly_dir", default="incoming/energy/nightlights/viirs-2024-monthly")
+    _setting(
+        "nightlight",
+        "source",
+        "monthly_dir",
+        default="incoming/Infrastructure/Energy/Nighttime Lights/viirs-2024-monthly",
+    )
 )
 NETWORKS_DIR = energy_paths.network_output_dir(DATA_ROOT)
 OUT_DIR = energy_paths.output_energy_dir(DATA_ROOT)
@@ -104,11 +109,8 @@ RODRIGUES_BBOX = (63.3, -19.8, 63.5, -19.6)
 
 # --- Terminal commands that create the files (printed by ``found()``) ---------
 
-FETCH_OSM = "snakemake -c1 fetch_energy_osm  (needs energy.osm.allow_download: true in config/energy/energy.yaml)"
-FETCH_NIGHTLIGHTS = (
-    "snakemake -c1 fetch_energy_nightlights  "
-    "(needs energy.nightlight.source.allow_download: true in config/energy/energy.yaml)"
-)
+FETCH_OSM = "snakemake -c1 build_energy_networks  (downloads the OpenStreetMap files when they are missing)"
+FETCH_NIGHTLIGHTS = "snakemake -c1 build_energy_networks  (downloads the night-light tiles when they are missing)"
 BUILD_ALL = "snakemake -c1 build_energy_networks"
 
 
@@ -180,9 +182,9 @@ def load_provided() -> dict[str, pd.DataFrame]:
 def osm_paths() -> dict[str, Path]:
     """Return the ``roads``, ``power`` and ``aoi`` files for the configured region.
 
-    These are the cache files the ``fetch_energy_osm`` rule writes. As in the
+    These are the files the ``fetch_energy_osm`` rule downloads. As in the
     workflow, a file named in ``energy.osm.roads`` or ``energy.osm.aoi`` replaces
-    the corresponding cache file.
+    the corresponding download.
     """
     roads_override = _setting("osm", "roads")
     aoi_override = _setting("osm", "aoi")

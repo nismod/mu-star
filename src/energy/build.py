@@ -1248,12 +1248,12 @@ def build_network(
     - ``"inferred-provided"``: the provided substations and generators plus the
       CEB backbone, joined by the same road network.
 
-    Nothing is downloaded here. The inferred sources read three cached files:
-    ``roads_path`` and ``power_path`` (see :mod:`energy.osm`, populated by the
+    Nothing is downloaded here. The inferred sources read three files:
+    ``roads_path`` and ``power_path`` (see :mod:`energy.osm`, downloaded by the
     ``fetch_energy_osm`` rule) and ``nightlight_targets`` (written by the
     ``build_energy_nightlight_targets`` rule). When a path is not given, the
-    default cache location under the configured data root is used and a missing
-    file is reported with the rule that creates it.
+    default location under the configured data root is used and a missing file
+    is reported with the rule that creates it.
 
     Outputs go to ``<output_dir>/<output_name>/``: the PyPSA network, a metadata
     JSON and checksum-linked node and edge GeoParquet layers. With
@@ -1307,15 +1307,15 @@ def build_network(
     roads_path = Path(roads_path) if roads_path is not None else osm.osm_roads_path(region, network_type)
     if not roads_path.is_file():
         raise FileNotFoundError(
-            f"Cached OSM roads are missing: {roads_path}. Run the fetch_energy_osm rule once "
-            "(with energy.osm.allow_download enabled) or pass roads_path."
+            f"OSM roads are missing: {roads_path}. The fetch_energy_osm rule downloads them "
+            "(needs internet), or pass roads_path."
         )
     if source == "inferred-osm":
         power_path = Path(power_path) if power_path is not None else osm.osm_power_path(region)
         if not power_path.is_file():
             raise FileNotFoundError(
-                f"Cached OSM power features are missing: {power_path}. Run the fetch_energy_osm rule once "
-                "(with energy.osm.allow_download enabled) or pass power_path."
+                f"OSM power features are missing: {power_path}. The fetch_energy_osm rule downloads them "
+                "(needs internet), or pass power_path."
             )
     else:
         power_path = None
