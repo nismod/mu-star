@@ -24,7 +24,7 @@ from energy.osm import (
 def test_region_shortcuts_and_paths(tmp_path):
     assert {"rodrigues", "agalega", "st_brandon"} <= set(REGIONS)
     assert region_query("mauritius") == "Mauritius Island, Mauritius"
-    # Open-ended: any query is accepted, and slugged for cache/output paths.
+    # Any query is accepted and turned into a file-name-safe key.
     assert region_query("Rodrigues, Mauritius") == "Rodrigues, Mauritius"
     assert region_slug("Rodrigues, Mauritius") == "rodrigues_mauritius"
     assert region_slug("drive_service") == "drive_service"
@@ -91,8 +91,7 @@ def test_fetch_osm_roads_preserves_highway_class_and_drops_reverse_twins(monkeyp
 
     edges = gpd.GeoDataFrame(
         {
-            # osmnx yields a plain string for most ways and a list for merged
-            # edges; missing tags come through as None.
+            # osmnx gives a string for most ways, a list for merged edges and None if missing.
             "highway": ["residential", ["tertiary", "service"], "Primary", None, "residential"],
             "geometry": [
                 LineString([(57.50, -20.20), (57.501, -20.20)]),

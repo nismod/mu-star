@@ -1,10 +1,7 @@
-"""Build the inferred distribution graph: roads as candidate lines, power assets connected to them.
+"""Build the estimated distribution network: roads as lines, power assets joined to the nearest road point.
 
-The graph is topology only. Road segments become edges between junction nodes,
-provided or OSM power assets become root nodes, and each asset is connected to
-the nearest point on the nearest road (splitting that road there) when it lies
-within ``max_anchor_distance_m``. No power flow is run and nothing here is a
-confirmed engineering asset; every node and edge is labelled ``inferred``.
+The graph holds connections only (``stage="connectivity_only"``), no voltages or ratings. Road nodes
+and all edges have ``inferred=True``; power-asset nodes (CEB or OpenStreetMap) have ``inferred=False``.
 """
 
 from __future__ import annotations
@@ -26,10 +23,9 @@ from shapely.ops import substring
 GEOGRAPHIC_CRS = "EPSG:4326"
 DEFAULT_MAX_ANCHOR_DISTANCE_M = 1000.0
 WGS84_GEOD = Geod(ellps="WGS84")
-# Coordinates are rounded to 6 decimal degrees (about 0.1 m) to make node keys.
+# Node keys round coordinates to 6 decimal places of a degree (about 0.1 m).
 NODE_KEY_DECIMALS = 6
-# An asset projecting within this distance of a road end reuses that end node
-# instead of splitting the road.
+# A connection point within this distance of a line end uses the end node instead of splitting the line.
 SPLIT_SNAP_TOLERANCE_M = 1.0
 
 
@@ -41,7 +37,7 @@ class InferredDistributionOutputs:
 
 
 def node_key(x: float, y: float) -> str:
-    """Node id for a road junction at geographic coordinates ``x``, ``y``."""
+    """Return the node id of a road junction at longitude ``x``, latitude ``y``."""
     return f"dist::{round(x, NODE_KEY_DECIMALS)}::{round(y, NODE_KEY_DECIMALS)}"
 
 
@@ -51,12 +47,12 @@ def line_endpoints(line: LineString) -> tuple[tuple[float, float], tuple[float, 
 
 
 def geodesic_length_km(line: LineString) -> float:
-    """Measure a geographic line on the WGS84 ellipsoid (no UTM zone assumption)."""
+    """Return the length in km of a lon/lat line, measured on the WGS84 ellipsoid (no UTM zone needed)."""
     return abs(float(WGS84_GEOD.geometry_length(line))) / 1000
 
 
 def _asset_node_id(row) -> str:
-    """Graph node id for a power asset row: ``bus::<id>`` for substations, ``asset::<id>`` otherwise."""
+    """Return a power asset's node id: ``bus::<id>`` for a substation, ``asset::<id>`` otherwise."""
     asset_id = str(getattr(row, "asset_id", getattr(row, "bus_id", "")))
     asset_kind = str(getattr(row, "asset_kind", getattr(row, "kind", "substation"))).lower()
     return f"{'bus' if asset_kind == 'substation' else 'asset'}::{asset_id}"
@@ -82,7 +78,7 @@ def _add_junction(graph: nx.MultiGraph, node: str, x: float, y: float, *, source
 
 
 def _add_distribution_lines(graph: nx.MultiGraph, lines: gpd.GeoDataFrame | None, *, source: str) -> None:
-    """Add every LineString as an edge keyed by its edge id; parallel roads stay separate edges."""
+    """Add each LineString as an edge keyed by its id (``osm_000001`` etc.), so parallel lines stay separate."""
     if lines is None or lines.empty:
         return
     prepared = lines.to_crs(GEOGRAPHIC_CRS).explode(index_parts=False)
@@ -122,13 +118,11 @@ def _edge_table(graph: nx.MultiGraph, sources: set[str] | None = None) -> pd.Dat
 
 
 def _oriented_ends(graph: nx.MultiGraph, u: str, v: str, geometry: LineString) -> tuple[str, str]:
-    """Return the two end nodes of an edge in the direction of its geometry.
+    """Return the edge's two end nodes in the order its geometry runs.
 
-    networkx lists the ends of an undirected edge in either order, and about a
-    third of the roads come out against their geometry. Distances along an
-    edge are measured from the geometry's first coordinate, so the node at
-    that end must come first; otherwise a cut at the start of the line would
-    be attached to the far end.
+    networkx may list an undirected edge's ends either way round (about a third of roads come out
+    reversed). Cut distances are measured from the geometry's first point, so that end must come
+    first, or a connection near the start of a line is attached to its far end.
     """
     first_x, first_y = geometry.coords[0][:2]
 
@@ -147,11 +141,10 @@ def _split_edge_at(
     metric_line: LineString,
     to_geographic,
 ) -> list[str]:
-    """Replace edge ``(u, v, key)`` by consecutive pieces cut at the given distances along ``metric_line``.
+    """Replace edge ``(u, v, key)`` by pieces cut at the distances in ``split_points_m``.
 
-    ``split_points_m`` holds ``(distance_along_m, asset_node, geographic_point)``
-    sorted by distance. Returns the junction node created (or reused) for each
-    split point, in the same order.
+    ``split_points_m`` holds ``(metres along metric_line, asset node, lon/lat point)``, sorted by
+    distance. Returns the junction node made or reused for each cut, in the same order.
     """
     attrs = dict(graph.edges[u, v, key])
     u, v = _oriented_ends(graph, u, v, attrs["geometry"])
@@ -160,7 +153,7 @@ def _split_edge_at(
     edge_id = attrs["edge_id"]
     length_m = metric_line.length
 
-    # Node for each cut; road ends are reused when the cut is within the snap tolerance.
+    # A cut within SPLIT_SNAP_TOLERANCE_M of a line end uses that end node.
     cut_nodes: list[str] = []
     cut_positions: list[float] = []
     for distance_m, _, point in split_points_m:
@@ -207,11 +200,10 @@ def _anchor_assets(
     max_anchor_distance_m: float,
     anchor_to_each_line_source: bool,
 ) -> None:
-    """Connect each asset to the nearest point on the nearest road within ``max_anchor_distance_m``.
+    """Connect each asset to the nearest point on the nearest line within ``max_anchor_distance_m``.
 
-    With ``anchor_to_each_line_source`` an asset gets one connection per line
-    source (for example the nearest OSM road *and* the nearest provided
-    transmission line), which is how a substation joins both levels.
+    With ``anchor_to_each_line_source`` an asset gets one connection per line ``source``, so a
+    substation joins both the OSM roads and the CEB 66 kV lines.
     """
     edges = _edge_table(graph)
     asset_nodes = [_asset_node_id(row) for row in assets.itertuples()]
@@ -232,9 +224,9 @@ def _anchor_assets(
         return gpd.GeoSeries([geometry], crs=metric_crs).to_crs(GEOGRAPHIC_CRS).iloc[0]
 
     groups = sorted(set(source_of_edge.dropna())) if anchor_to_each_line_source else ["all"]
-    # (edge row index) -> list of (distance along, asset node, geographic point)
+    # edge row -> [(metres along the line, asset node, lon/lat point)]
     cuts: dict[int, list[tuple[float, str, Point]]] = {}
-    anchor_requests: list[tuple[str, int, float, str]] = []  # asset node, edge row, distance, source label
+    anchor_requests: list[tuple[str, int, float, str]] = []  # (asset node, edge row, distance in m, line source)
     for group in groups:
         member_rows = np.flatnonzero(source_of_edge.eq(group).to_numpy()) if group != "all" else np.arange(len(edges))
         tree = shapely.STRtree(edges_metric.to_numpy()[member_rows])
@@ -252,7 +244,7 @@ def _anchor_assets(
             cuts.setdefault(edge_row, []).append((along_m, asset_node, snapped))
             anchor_requests.append((asset_node, edge_row, distance_m, group))
 
-    # Distance to the nearest road for assets left unanchored, for review.
+    # For unconnected assets, record the distance to the nearest line, for review.
     tree_all = shapely.STRtree(edges_metric.to_numpy())
     anchored_nodes = {request[0] for request in anchor_requests}
     unanchored = [n for n in asset_nodes if n not in anchored_nodes]
@@ -264,7 +256,7 @@ def _anchor_assets(
         for node, distance_m in zip(unanchored, distances, strict=True):
             graph.nodes[node]["anchor_distance_m"] = float(distance_m)
 
-    # Split each road once at all its cut points, then add the anchor connectors.
+    # Split each line once at all its cuts, then add the connecting edges.
     junction_for_request: dict[tuple[str, int], str] = {}
     for edge_row, points in cuts.items():
         points = sorted(points, key=lambda item: item[0])
@@ -310,13 +302,12 @@ def build_inferred_distribution_graph(
     max_anchor_distance_m: float = DEFAULT_MAX_ANCHOR_DISTANCE_M,
     anchor_to_each_line_source: bool = False,
 ) -> nx.MultiGraph:
-    """Build a labelled topology-only distribution graph.
+    """Return the estimated distribution network as a networkx MultiGraph (lon/lat, EPSG:4326).
 
-    ``power_assets`` (substations and generator sites) become root nodes. Every
-    line in the supplied layers becomes an edge between junction nodes; roads
-    that run in parallel between the same two junctions are kept as separate
-    edges. Each asset within ``max_anchor_distance_m`` of a road is connected to
-    the nearest point on that road, splitting the road there.
+    Each line becomes an edge with ``source`` ``precomputed``, ``osm`` or ``provided_transmission``;
+    parallel lines between the same two nodes stay separate. ``power_assets`` (substations and
+    generators) become nodes with ``is_root=True``. An asset within ``max_anchor_distance_m`` of a
+    line is connected to the nearest point on it, and the line is split there.
     """
     if "asset_id" not in power_assets.columns and "bus_id" not in power_assets.columns:
         raise ValueError("power_assets must contain asset_id or bus_id")
@@ -368,9 +359,9 @@ def assign_proxy_demand_to_graph(
     *,
     demand_column: str = "demand_mw",
 ) -> nx.MultiGraph:
-    """Attach demand proxy values to the nearest inferred distribution node.
+    """Return a copy of ``graph`` with each point's demand (MW) added to the nearest road node.
 
-    Kept for the interruption step, which places demand on the graph.
+    Kept for the interruption step. Raises ValueError for negative demand or a graph with no road nodes.
     """
     if demand_column not in demand_points.columns:
         raise ValueError(f"demand_points must contain {demand_column}")
@@ -401,9 +392,9 @@ def topology_disconnection_impacts(
     failed_bus_ids: list[str] | tuple[str, ...] = (),
     failed_edge_ids: list[str] | tuple[str, ...] = (),
 ) -> pd.DataFrame:
-    """Return demand on graph components disconnected from every power root.
+    """Return the demand (MW) of each graph component cut off from every power asset by the failures.
 
-    Kept for the interruption step (a connectivity-only view of lost supply).
+    ``failed_bus_ids`` are substation ids. Kept for the interruption step.
     """
     scenario = graph.copy()
     failed_bus_nodes = {f"bus::{bus_id}" for bus_id in failed_bus_ids}
@@ -445,7 +436,7 @@ def topology_disconnection_impacts(
 
 
 def write_inferred_distribution_tables(graph: nx.MultiGraph, output_dir: Path) -> InferredDistributionOutputs:
-    """Write graph nodes, edges and metadata to CSV/JSON review files."""
+    """Write ``inferred_distribution_{nodes,edges}.csv`` and ``inferred_distribution_metadata.json``."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 

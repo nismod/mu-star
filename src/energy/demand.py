@@ -1,25 +1,20 @@
-"""Where the electricity demand is: substation service areas and demand shares.
+"""Estimate each substation's and each network node's share of system demand.
 
-The interruption analysis needs to know how much of the system demand sits
-behind each substation and, within a substation's area, at each road-network
-node. Nobody has metered that for us, so the shares are estimated the way
-PyPSA-Earth does it, adapted to what we have for Mauritius:
+The method is PyPSA-Earth's ``build_demand_profiles.upsample`` (0.6 GDP + 0.4 population), with
+VIIRS night-light radiance in place of GDP as the measure of economic activity: a GDP raster is
+too coarse for a 50 km island.
 
-1. Each substation serves the area closer to it than to any other substation
-   (a Voronoi cell), clipped to the island outline. An island with no
-   substation in the data (Rodrigues) is served from its power stations
-   instead, and an island with a single supply point is one area.
-2. Each area is scored by the people who live in it (WorldPop population
-   raster) and by how brightly it is lit at night (the VIIRS radiance
-   composite, standing in for economic activity). PyPSA-Earth uses GDP for the
-   second term; a GDP raster is too coarse for a 50 km island.
-3. The score is ``w_lights * normalised radiance + w_people * normalised
-   population``, normalised again so the shares add to one.
-4. Inside each area the same score, computed per road-network node from the
-   raster cells nearest to it, splits the area's share between the nodes.
+1. Each substation serves the area nearer to it than to any other substation (a Voronoi cell
+   clipped to the island outline). An island with no substation (Rodrigues) is served from its
+   power stations; an island with one supply point is one area.
+2. An area's score is ``0.6 * radiance + 0.4 * population`` (default weights), each term being the
+   area's fraction of the total over all areas. Scores are normalised again into shares that add to
+   one. Radiance is the VIIRS composite; population is the WorldPop raster.
+3. Within an area, the same formula, using the raster cells nearest each node, splits the area's
+   share between its nodes.
 
-System totals (a peak level and an average level) come from the CEB annual
-report; see ``CEB Annual Report/ceb_demand_levels_2023_24.csv`` in the incoming energy data.
+Peak and average system demand come from ``CEB Annual Report/ceb_demand_levels_2023_24.csv`` in
+the incoming energy data.
 """
 
 from __future__ import annotations
@@ -59,13 +54,11 @@ def _normalised(values: pd.Series) -> pd.Series:
 
 
 def distribution_key(scores: pd.DataFrame, *, weights: dict[str, float] | None = None) -> pd.Series:
-    """Combine one column per indicator into shares that add to one.
+    """Combine indicator columns into shares that add to one, as PyPSA-Earth's ``upsample`` does.
 
-    ``scores`` has one row per area (or node) and one column per indicator
-    (``nightlights``, ``population``). Each column is normalised to sum to one,
-    weighted, summed and normalised again, exactly as PyPSA-Earth's
-    ``upsample`` does with GDP and population. If every indicator is zero, the
-    shares are equal.
+    ``scores`` has one row per area or node and one column per indicator (``nightlights``,
+    ``population``). Each column is normalised to sum to one, weighted, summed and normalised
+    again. All-zero scores give equal shares.
     """
     weights = dict(DEFAULT_WEIGHTS if weights is None else weights)
     unknown = set(weights) - set(scores.columns)
@@ -80,12 +73,10 @@ def distribution_key(scores: pd.DataFrame, *, weights: dict[str, float] | None =
 
 
 def supply_points(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """The nodes demand is served from: substation buses, or on an island without any, its power stations.
+    """Return the supply points: ``substation`` nodes, or an island's ``generator`` nodes if it has none.
 
-    ``nodes`` needs ``bus_id``, ``kind`` and point geometry; ``region`` tells
-    the islands apart (one island when it is missing). An island with no
-    ``substation`` node falls back to its ``generator`` nodes. Nodes at the
-    same point (a station's rooftop PV next to its engines) count once.
+    ``nodes`` needs ``bus_id``, ``kind`` and point geometry; ``region`` separates the islands (one
+    island if absent). Nodes at the same point (a station and its rooftop PV) count once.
     """
     kind = nodes["kind"].astype(str)
     region = nodes["region"].astype(str) if "region" in nodes else pd.Series("all", index=nodes.index)
@@ -103,12 +94,10 @@ def supply_points(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 
 def service_areas(supply_points: gpd.GeoDataFrame, outlines: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Voronoi cell of each supply point, clipped to the outline polygon it lies in.
+    """Return the Voronoi cell of each supply point, clipped to its island outline (EPSG:4326).
 
-    ``supply_points`` needs ``bus_id`` and point geometry; ``outlines`` are the
-    island polygons (the OSM area of interest). A point outside every outline
-    is attached to the nearest one. An outline with a single supply point is
-    served entirely by it.
+    ``outlines`` are the island polygons of the OSM area of interest. A point outside every
+    outline belongs to the nearest one; an island with one supply point is a single area.
     """
     points = supply_points.to_crs(GEOGRAPHIC_CRS)
     island_shapes = list(outlines.to_crs(GEOGRAPHIC_CRS).geometry)
@@ -131,7 +120,7 @@ def service_areas(supply_points: gpd.GeoDataFrame, outlines: gpd.GeoDataFrame) -
 
 
 def _raster_cells(raster_path: Path, outlines: gpd.GeoDataFrame | None = None) -> gpd.GeoDataFrame:
-    """Centre point and value of every raster cell with a positive value (inside ``outlines`` if given)."""
+    """Return the centre point and value of every positive raster cell (inside ``outlines`` if given)."""
     with rasterio.open(raster_path) as source:
         values = np.ma.filled(source.read(1, masked=True).astype("float64"), 0.0)
         if outlines is not None:
@@ -145,7 +134,7 @@ def _raster_cells(raster_path: Path, outlines: gpd.GeoDataFrame | None = None) -
 
 
 def _sum_by_nearest(cells: gpd.GeoDataFrame, targets: gpd.GeoDataFrame) -> np.ndarray:
-    """Sum cell values onto the nearest target point; returns one total per target row."""
+    """Return one total per ``targets`` row: the sum of the cell values nearest to that point."""
     totals = np.zeros(len(targets))
     if cells.empty or targets.empty:
         return totals
@@ -168,10 +157,10 @@ def area_scores(areas: gpd.GeoDataFrame, rasters: dict[str, Path]) -> pd.DataFra
 
 
 def node_scores(nodes: gpd.GeoDataFrame, areas: gpd.GeoDataFrame, rasters: dict[str, Path]) -> pd.DataFrame:
-    """Score each node by the raster cells nearest to it, with the service area each node falls in.
+    """Return each node's raster sums from the cells nearest to it, and the service area it is in.
 
-    ``nodes`` needs ``bus_id`` and point geometry. The returned frame has one
-    row per node with the indicator columns and an ``area_bus_id`` column.
+    One row per node, indexed by ``bus_id``: one column per raster and ``area_bus_id``. A node
+    outside every area joins the nearest one.
     """
     points = nodes.to_crs(GEOGRAPHIC_CRS)[["bus_id", "geometry"]].copy()
     points["bus_id"] = points["bus_id"].astype(str)
@@ -189,8 +178,7 @@ def node_scores(nodes: gpd.GeoDataFrame, areas: gpd.GeoDataFrame, rasters: dict[
         {"area_bus_id": located["area_bus_id"].astype(str).to_numpy()},
         index=located["bus_id"].to_numpy(),
     )
-    # Cells are credited to the nearest node *within the same service area*, so
-    # an area's demand never leaks to a node across the boundary.
+    # Each cell goes to the nearest node in its own service area, not one across the boundary.
     area_lookup = areas[["bus_id", "geometry"]].rename(columns={"bus_id": "area_bus_id"})
     for indicator, path in rasters.items():
         cells = gpd.sjoin(_raster_cells(path, areas), area_lookup, how="inner", predicate="within")
@@ -210,7 +198,7 @@ def node_shares(
     *,
     weights: dict[str, float] | None = None,
 ) -> pd.Series:
-    """Split each area's share between its nodes using the same distribution key."""
+    """Split each area's share between its nodes with :func:`distribution_key`; the result adds to one."""
     indicators = [column for column in node_score_frame.columns if column != "area_bus_id"]
     shares = pd.Series(0.0, index=node_score_frame.index)
     for area_bus_id, block in node_score_frame.groupby("area_bus_id"):
@@ -236,12 +224,11 @@ def build_demand_shares(
     output_dir: Path,
     weights: dict[str, float] | None = None,
 ) -> DemandOutputs:
-    """Write service areas, substation and node shares and the demand levels for one product.
+    """Write one network's service areas, demand shares and demand levels to ``output_dir``.
 
-    ``nodes_path`` is a product's node GeoParquet layer: its substation buses
-    (or, on an island without any, its power stations; see
-    :func:`supply_points`) become the supply points, and every node gets a
-    share of the system demand.
+    ``nodes_path`` is the network's node GeoParquet layer. Writes ``service_areas.geoparquet``,
+    ``service_weights_substations.csv``, ``service_weights_nodes.csv``, ``demand_levels.csv`` (copied
+    from ``demand_levels_path``) and ``metadata.json``.
     """
     weights = dict(DEFAULT_WEIGHTS if weights is None else weights)
     nodes = gpd.read_parquet(nodes_path)

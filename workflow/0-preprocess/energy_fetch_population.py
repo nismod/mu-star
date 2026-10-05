@@ -1,8 +1,7 @@
-"""Download the WorldPop population raster for the region.
+"""Download the WorldPop population raster: "constrained" 2020 grid, people per 100 m cell, UN-adjusted.
 
-WorldPop's "constrained" 2020 grids give people per 100 m cell, adjusted to UN
-totals. One file covers the whole country including Rodrigues. The
-fetch_energy_population rule runs this only when the file is missing.
+One file covers the whole country, Rodrigues included. The fetch_energy_population rule runs this
+only when the file is missing.
 """
 
 import urllib.request

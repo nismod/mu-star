@@ -1,15 +1,11 @@
-"""Where the data lives.
-
-Everything the energy pipeline reads or writes sits under one *data root*:
+"""Paths of the energy data folders, all under one data root:
 
     <data_root>/incoming/Infrastructure/Energy/...   source data, laid out as on the shared drive
-    <data_root>/processed/energy/...                 intermediate files written by the workflow
-    <data_root>/out/energy/...                       human-readable tables and reports
+    <data_root>/processed/energy/...                 files written by the workflow
+    <data_root>/out/energy/...                       tables and reports for people to read
 
-The data root is ``data_root`` in ``config/config.yaml`` (default ``data``,
-relative to the repository). The Snakemake rules pass every path explicitly, so
-these helpers only matter when you call the Python functions yourself, for
-example from a notebook.
+The data root is ``data_root`` in ``config/config.yaml`` (default ``<repo>/data``). The
+Snakemake rules pass every path; these helpers are for calling the Python code directly.
 """
 
 from __future__ import annotations
@@ -39,12 +35,7 @@ def data_root() -> Path:
 
 
 INCOMING_ENERGY_RELATIVE = Path("incoming") / "Infrastructure" / "Energy"
-"""Energy source data, relative to the data root.
-
-It mirrors ``Incoming Data/Infrastructure/Energy`` on the project's shared
-drive, as the other sectors' source folders do, so one link or copy of that
-folder is all a new checkout needs.
-"""
+"""Energy source data, relative to the data root (``Incoming Data/Infrastructure/Energy`` on the shared drive)."""
 
 
 def incoming_energy_dir(root: Path | None = None) -> Path:

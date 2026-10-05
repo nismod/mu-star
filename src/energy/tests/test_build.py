@@ -244,7 +244,7 @@ def test_build_inferred_network_for_region_uses_cached_osm_files(tmp_path):
     assert metadata["generator_roots"] == 0
     assert metadata["anchored_power_assets"] == 1
     assert metadata["has_demand"] is False
-    # Provenance names the targets file actually read, its checksum and its own metadata.
+    # The metadata records the targets file, its SHA-256 and its metadata.json.
     assert metadata["nightlight_targets"] == str(targets_path)
     assert len(metadata["nightlight_targets_sha256"]) == 64
     assert metadata["nightlight_targets_metadata"]["nightlight_threshold"] == 0.2
@@ -404,8 +404,7 @@ def test_build_inferred_provided_uses_only_provided_power_assets(tmp_path):
     assert set(network.generators.index) == {"plant"}
     assert network.generators.loc["plant", "bus"] == "bus::A"
     assert {"bus::A", "bus::B", "asset::plant"} <= set(network.buses.index)
-    # The provided transmission backbone keeps its own voltage and meets the
-    # distribution roads through transformers at the junction buses.
+    # The CEB 66 kV lines keep 66 kV and meet the 11 kV roads through transformers.
     assert metadata["inferred_transmission_voltage_kv"] == 66
     assert metadata["transformers"] >= 1
     assert len(network.transformers) == metadata["transformers"]
@@ -450,8 +449,8 @@ def test_build_inferred_provided_connects_an_island_plant_at_its_own_node(tmp_pa
 
     metadata = json.loads(outputs.metadata.read_text())
     network = pypsa.Network(outputs.network)
-    # Rodrigues has a real power asset now, so it needs no stand-in root, and
-    # its plant feeds the island's roads from its own anchored node.
+    # The Rodrigues plant is a power asset, so no placeholder substation is added;
+    # the plant connects to the island's roads from its own node.
     assert metadata["provisional_roots"] == 0
     assert network.generators.loc["island-plant", "bus"] == "asset::island-plant"
     assert network.generators.loc["plant", "bus"] == "bus::A"

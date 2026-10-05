@@ -1,4 +1,4 @@
-"""Deterministic GeoParquet views of validated PyPSA network topology."""
+"""Write a network's buses and lines as GeoParquet node and edge layers (EPSG:4326) with a manifest."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ EDGE_COLUMNS = (
 
 @dataclass(frozen=True)
 class SpatialExportOutputs:
-    """Paths comprising one versioned spatial view of a network."""
+    """Paths of one network's node layer, edge layer and manifest."""
 
     nodes: Path
     edges: Path
@@ -75,7 +75,7 @@ def spatial_export_paths(
     *,
     network_id: str,
 ) -> SpatialExportOutputs:
-    """Return the conventional sidecar paths for one network identifier."""
+    """Return ``<network_id>-nodes.geoparquet``, ``-edges.geoparquet`` and ``-spatial-manifest.json`` paths."""
     output_dir = Path(output_dir)
     return SpatialExportOutputs(
         nodes=output_dir / f"{network_id}-nodes.geoparquet",
@@ -136,9 +136,8 @@ def _prepare_geometry(
         raise ValueError(f"{label} geometries must all be {geometry_type}; found {found}")
     invalid = ~geometry.is_valid
     if invalid.any():
-        # A root exactly coincident with its OSM node is represented in the
-        # connectivity model by a zero-length logical anchor. Retain that
-        # topology edge; reject every other invalid map geometry.
+        # An asset sitting exactly on its road connection point has a zero-length
+        # ``*_anchor`` line, which is invalid; keep it and reject any other invalid geometry.
         logical_anchor = pd.Series(False, index=frame.index)
         if label == "lines" and "source" in frame:
             logical_anchor = frame["source"].astype("string").str.endswith("_anchor", na=False)
@@ -349,7 +348,11 @@ def write_network_geoparquet(
     stage: str | None = None,
     source_metadata_path: Path | None = None,
 ) -> SpatialExportOutputs:
-    """Publish validated topology as a checksum-linked GeoParquet sidecar bundle."""
+    """Write the node and edge layers and a manifest with SHA-256 checksums of them and the source files.
+
+    ``v_nom_kv`` / ``s_nom_mva`` stay empty unless ``publish_voltage`` / ``publish_capacity``;
+    the ``model_*`` columns always hold the values.
+    """
     if not network_id.strip():
         raise ValueError("network_id must be non-blank")
     source_network_path = Path(source_network_path)

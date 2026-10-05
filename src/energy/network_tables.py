@@ -1,4 +1,4 @@
-"""Human-readable network tables and lightweight model validation."""
+"""Write each network's ``generators.csv``, ``lines.csv`` and ``validation.json``."""
 
 from __future__ import annotations
 
@@ -54,14 +54,12 @@ LINE_TEMPLATE_COLUMNS = (
 # CEB reports 442 km of overhead and 36.9 km of underground 66 kV lines.
 CEB_TRANSMISSION_LENGTH_KM = 478.9
 CEB_TRANSMISSION_LENGTH_SOURCE = "https://ceb.mu/fact-sheets/grid-infrastructure"
-# The same CEB fact sheet reports 10,492.2 circuit-km across transmission,
-# medium-voltage distribution and low-voltage distribution. This is the
-# appropriate published comparator for the island-wide inferred network.
+# The same fact sheet reports 10,492.2 circuit-km of transmission plus medium- and low-voltage
+# distribution; the inferred networks are compared with this.
 CEB_TOTAL_NETWORK_LENGTH_KM = 10_492.2
 CEB_TOTAL_NETWORK_LENGTH_SOURCE = CEB_TRANSMISSION_LENGTH_SOURCE
-# CEB Annual Report 2023-2024: grand total installed capacity including CEB,
-# IPP, SSDG and MSDG generation, per island (Mauritius pp. 50-51, Rodrigues
-# p. 97). A product is checked against the islands it covers.
+# CEB Annual Report 2023-2024: grand total installed capacity of CEB, IPP, SSDG and MSDG generation
+# by island (Mauritius pp. 50-51, Rodrigues p. 97). A network is checked against the islands it covers.
 CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW = {"mauritius": 881.56, "rodrigues": 15.30}
 CEB_REPORTED_INSTALLED_GENERATION_MW = CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW["mauritius"]
 CEB_REPORTED_GENERATION_CAPACITY_SOURCE = (
@@ -90,7 +88,7 @@ def _ordered_csv_frame(
     frame: pd.DataFrame,
     preferred_columns: tuple[str, ...],
 ) -> pd.DataFrame:
-    """Return a CSV-safe frame with the public columns first."""
+    """Return ``frame`` without geometry and with ``preferred_columns`` first (added empty if missing)."""
     result = pd.DataFrame(frame.drop(columns="geometry", errors="ignore")).copy()
     for column in preferred_columns:
         if column not in result:
@@ -100,7 +98,10 @@ def _ordered_csv_frame(
 
 
 def normalise_generator_table(generators: pd.DataFrame) -> pd.DataFrame:
-    """Keep the human schema stable while retaining useful source columns."""
+    """Return generators with ``GENERATOR_EXPORT_COLUMNS`` first and every other column kept.
+
+    ``capacity_unit`` (``MW_e``) and ``capacity_basis`` (``electrical_output``) are filled in when absent.
+    """
     result = _ordered_csv_frame(generators, GENERATOR_EXPORT_COLUMNS)
     if "capacity_unit" not in generators:
         result["capacity_unit"] = "MW_e"
@@ -110,12 +111,12 @@ def normalise_generator_table(generators: pd.DataFrame) -> pd.DataFrame:
 
 
 def normalise_line_table(lines: pd.DataFrame) -> pd.DataFrame:
-    """Keep the human line schema stable while retaining provenance columns."""
+    """Return lines with ``LINE_TEMPLATE_COLUMNS`` first and every other column kept."""
     return _ordered_csv_frame(lines, LINE_TEMPLATE_COLUMNS)
 
 
 def write_input_templates(output_dir: Path) -> InputTemplateOutputs:
-    """Write header-only CSVs that document accepted user-input schemas."""
+    """Write header-only ``generators.csv`` and ``lines.csv`` templates for user-supplied tables."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     generators_path = output_dir / "generators.csv"
@@ -182,10 +183,10 @@ def validate_model_tables(
     generation_capacity_tolerance_fraction: float = 0.10,
     allow_incomplete_generators: bool = False,
 ) -> dict[str, object]:
-    """Validate the public tables and return a human-reviewable report.
+    """Check the bus, line and generator tables; return the report that goes into ``validation.json``.
 
-    The published CEB length comparison is deliberately advisory: mapped route
-    length and CEB circuit length are not guaranteed to use the same basis.
+    A line length or installed capacity outside its tolerance of the CEB figure gives a warning, not an
+    error, as mapped route length and CEB circuit length may be measured differently.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -384,7 +385,7 @@ def write_model_tables(
     generation_capacity_tolerance_fraction: float = 0.10,
     allow_incomplete_generators: bool = False,
 ) -> tuple[ModelTableOutputs, dict[str, object]]:
-    """Write source-specific human tables and their validation report."""
+    """Write ``generators.csv``, ``lines.csv`` and ``validation.json``; return their paths and the report."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     generators_path = output_dir / "generators.csv"

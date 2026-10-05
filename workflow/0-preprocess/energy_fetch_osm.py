@@ -1,8 +1,7 @@
-"""Cache the OpenStreetMap inputs for one region: roads, power features and the area of interest.
+"""Download a region's OpenStreetMap roads, power features and area-of-interest outline, if missing.
 
-A file that already exists is kept. A missing one is downloaded only when
-``--allow-download`` is given, which the fetch_energy_osm rule always passes;
-without it the missing file is reported instead.
+Existing files are kept unless ``--overwrite`` is given. Without ``--allow-download`` (which the
+fetch_energy_osm rule passes) a missing file is an error.
 """
 
 from pathlib import Path

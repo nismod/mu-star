@@ -1,42 +1,33 @@
-"""Helpers for the energy developer notebooks (``notebooks/energy/**``).
+"""Helpers for the energy notebooks (``notebooks/energy/**``), imported as ``h``.
 
-Import this module as ``h`` from a notebook. It knows where the energy pipeline
-keeps its files, loads them into GeoPandas / pandas objects and draws quick maps.
-It never builds or downloads anything, and it is not part of the packaged
-``energy`` model or of any Snakemake rule: production visualisation lives in the
-separate viewer (nismod/irv-standalone), so plotting code belongs here rather
-than in ``src/energy/``.
+They find, load and map the pipeline's files; they never build or download anything, and neither the
+``energy`` package nor the workflow uses them. Production maps come from the separate viewer
+(nismod/irv-standalone), so notebook plotting code belongs here, not in ``src/energy/``.
 
-Where the files are
--------------------
-The data root is ``data_root`` in ``config/config.yaml`` (default: the ``data/``
-folder of this repository) and the region is ``energy.region`` in
-``config/energy/energy.yaml``. Both are read once, when this module is imported:
+Paths, read on import from ``data_root`` in ``config/config.yaml`` (default: this repository's ``data/``)
+and ``energy.region`` in ``config/energy/energy.yaml``:
 
 - ``DATA_ROOT``, ``REGION``, ``REGION_SLUG``
 - ``PROVIDED_DIR``    <data>/processed/energy/provided            cleaned CEB tables
 - ``OSM_CACHE_DIR``   <data>/incoming/Infrastructure/Energy/OpenStreetMap/<region>  roads, power features, outline
-- ``NIGHTLIGHT_DIR``  <data>/processed/energy/nightlight/<region> radiance composite and target points
-- ``NETWORKS_DIR``    <data>/processed/energy/networks/<product>  PyPSA network, metadata, GeoParquet layers
-- ``OUT_DIR``         <data>/out/energy/<product>                 generators.csv, lines.csv, validation.json
+- ``NIGHTLIGHT_DIR``  <data>/processed/energy/nightlight/<region> radiance composite and lit pixels
+- ``NETWORKS_DIR``    <data>/processed/energy/networks/<network>  PyPSA network, metadata, GeoParquet layers
+- ``OUT_DIR``         <data>/out/energy/<network>                 generators.csv, lines.csv, validation.json
 
-Inputs (notebook 00)
---------------------
-- ``load_provided()``            dict of the cleaned CEB tables that exist.
-- ``load_osm_cache()``           dict(roads, power, aoi) of the cached OSM layers that exist.
-- ``nightlight_paths()``         dict(composite, targets, metadata) of Paths.
-- ``load_nightlight_targets()``  the night-light target points.
-- ``found(path, how)``           True if ``path`` exists, otherwise prints what to run.
+Inputs (notebook 00):
 
-Built products (notebook 01)
-----------------------------
-- ``available_products()`` / ``list_products()``  which products are built.
-- ``load_layers(name)``                            ``(nodes, edges)`` GeoDataFrames of one product.
-- ``load_validation(name)`` / ``load_pypsa(name)`` / ``summarise(name)``.
-- ``explore_network(name)``                        interactive Plotly map on an OpenStreetMap basemap.
-- ``plot_network(name)``                           static matplotlib map.
-- ``quick_map(**layers)``                          static map of any GeoDataFrames (used for the inputs).
-- ``MAURITIUS_BBOX`` / ``RODRIGUES_BBOX``          bounding boxes for the ``clip=`` argument.
+- ``load_provided()``, ``load_osm_cache()``: the cleaned CEB tables and OSM layers that exist.
+- ``osm_paths()``, ``nightlight_paths()``, ``nightlight_monthly_tiles()``: where the input files are.
+- ``load_nightlight_targets()``: the lit pixels as points.
+- ``found(path, how)``: True if ``path`` exists, else prints the command ``how`` (``FETCH_OSM`` etc.).
+
+Built networks (notebook 01):
+
+- ``available_products()``, ``list_products()``: the built networks.
+- ``load_layers(name)``: ``(nodes, edges)`` GeoDataFrames; ``anchor_nodes(nodes)`` drops the road nodes.
+- ``load_validation(name)``, ``load_pypsa(name)``, ``summarise(name)``.
+- ``explore_network(name)``: interactive Plotly map; ``plot_network(name)``, ``quick_map(**layers)``: static maps.
+- ``MAURITIUS_BBOX``, ``RODRIGUES_BBOX``: boxes for the ``clip=`` argument.
 """
 
 from __future__ import annotations
@@ -102,8 +93,7 @@ NIGHTLIGHT_MONTHLY_DIR = DATA_ROOT / str(
 NETWORKS_DIR = energy_paths.network_output_dir(DATA_ROOT)
 OUT_DIR = energy_paths.output_energy_dir(DATA_ROOT)
 
-# Rough WGS84 bounding boxes to zoom a multi-island layer to a single island
-# (Mauritius and Rodrigues are ~560 km apart, so the full extent is mostly ocean).
+# Rough lon/lat boxes for zooming to one island (Mauritius and Rodrigues are about 560 km apart).
 MAURITIUS_BBOX = (57.3, -20.6, 57.9, -19.9)
 RODRIGUES_BBOX = (63.3, -19.8, 63.5, -19.6)
 
@@ -115,7 +105,7 @@ BUILD_ALL = "snakemake -c1 build_energy_networks"
 
 
 def build_command(path: Path) -> str:
-    """Return the terminal command that builds ``path``: a Snakemake target named by the file it writes."""
+    """Return ``snakemake -c1 <path>``, with ``path`` relative to the repository where possible."""
     path = Path(path)
     try:
         target = path.relative_to(REPO_ROOT)
@@ -159,14 +149,10 @@ def _read_table(path: Path) -> pd.DataFrame | gpd.GeoDataFrame:
 
 
 def load_provided() -> dict[str, pd.DataFrame]:
-    """Return the cleaned CEB tables that exist in ``PROVIDED_DIR``, keyed by file name without extension.
+    """Return the ``PROVIDED_FILES`` that exist in ``PROVIDED_DIR``, keyed by file name without extension.
 
-    The GeoParquet layers come back as GeoDataFrames (``substations``,
-    ``snapped_substations``, ``transmission_routes``, ``generation_points``,
-    ``generation_areas``) and the CSV files as DataFrames (``generators``,
-    ``monthly_peak_demand_mw``, ``annual_sector_demand_gwh``, ``service_weights``,
-    ``substation_snap_distances``). The ``prepare_energy_assets`` rule writes them;
-    ``PREPARE_PROVIDED`` is the command that runs it.
+    Parquet files load as GeoDataFrames and CSVs as DataFrames. The ``prepare_energy_assets`` rule
+    writes them; ``PREPARE_PROVIDED`` is the command that runs it.
     """
     tables = {}
     for name in PROVIDED_FILES:
@@ -180,11 +166,9 @@ def load_provided() -> dict[str, pd.DataFrame]:
 
 
 def osm_paths() -> dict[str, Path]:
-    """Return the ``roads``, ``power`` and ``aoi`` files for the configured region.
+    """Return the ``roads``, ``power`` and ``aoi`` paths that the ``fetch_energy_osm`` rule downloads.
 
-    These are the files the ``fetch_energy_osm`` rule downloads. As in the
-    workflow, a file named in ``energy.osm.roads`` or ``energy.osm.aoi`` replaces
-    the corresponding download.
+    As in the workflow, a path set in ``energy.osm.roads`` or ``energy.osm.aoi`` replaces the download.
     """
     roads_override = _setting("osm", "roads")
     aoi_override = _setting("osm", "aoi")
@@ -210,12 +194,9 @@ def nightlight_monthly_tiles() -> list[Path]:
 
 
 def nightlight_paths() -> dict[str, Path]:
-    """Return dict(composite, targets, metadata) of Paths.
+    """Return the paths of the radiance ``composite``, the lit pixels (``targets``) and their ``metadata``.
 
-    ``composite`` is the radiance composite built from the monthly tiles, or the
-    ready-made raster named in ``energy.nightlight.nightlights`` when that is set.
-    ``targets`` and ``metadata`` are the night-light target points and the
-    ``metadata.json`` written next to them.
+    ``composite`` is the raster set in ``energy.nightlight.nightlights``, else the one built from the monthly tiles.
     """
     override = _setting("nightlight", "nightlights")
     return {
@@ -230,14 +211,14 @@ BUILD_NIGHTLIGHT_TARGETS = build_command(nightlight_paths()["targets"])
 
 
 def load_nightlight_targets() -> gpd.GeoDataFrame:
-    """Return the night-light target points: one per bright pixel inside the area of interest."""
+    """Return the lit pixels ("targets") inside the area of interest, one point each."""
     path = nightlight_paths()["targets"]
     if not path.is_file():
         raise FileNotFoundError(f"{path} does not exist; run: {BUILD_NIGHTLIGHT_TARGETS}")
     return gpd.read_parquet(path)
 
 
-# --- Built products -----------------------------------------------------------
+# --- Built networks -----------------------------------------------------------
 
 
 def _geoparquet_dir(name: str) -> Path:
@@ -245,10 +226,9 @@ def _geoparquet_dir(name: str) -> Path:
 
 
 def available_products() -> list[str]:
-    """Return the names of the products that are built, e.g. ``["base-mauritius", "inferred-osm-mauritius-rodrigues"]``.
+    """Return the names of the built networks, e.g. ``["base-mauritius", "inferred-osm-mauritius-rodrigues"]``.
 
-    A product counts as built when its ``geoparquet/`` folder holds the spatial
-    manifest together with the node and edge layers.
+    A network is built when its ``geoparquet/`` folder holds the spatial manifest and the node and edge layers.
     """
     names = []
     for manifest in sorted(NETWORKS_DIR.glob("*/geoparquet/*-spatial-manifest.json")):
@@ -260,12 +240,12 @@ def available_products() -> list[str]:
 
 
 def load_manifest(name: str) -> dict:
-    """Return a product's spatial manifest: layer checksums, counts, bounding boxes and the electrical-values note."""
+    """Return a network's spatial manifest: layer checksums, counts, bounding boxes and the electrical-values note."""
     return json.loads((_geoparquet_dir(name) / f"{name}-spatial-manifest.json").read_text())
 
 
 def load_layers(name: str) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
-    """Return ``(nodes, edges)`` GeoDataFrames of a built product (EPSG:4326)."""
+    """Return ``(nodes, edges)`` GeoDataFrames of a built network (EPSG:4326)."""
     layers = _geoparquet_dir(name)
     nodes = gpd.read_parquet(layers / f"{name}-nodes.geoparquet")
     edges = gpd.read_parquet(layers / f"{name}-edges.geoparquet")
@@ -273,20 +253,20 @@ def load_layers(name: str) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
 
 
 def load_validation(name: str) -> dict:
-    """Return a product's validation report (``data/out/energy/<name>/validation.json``), or ``{}`` if absent."""
+    """Return a network's validation report (``OUT_DIR/<name>/validation.json``), or ``{}`` if absent."""
     path = OUT_DIR / name / "validation.json"
     return json.loads(path.read_text()) if path.exists() else {}
 
 
 def load_pypsa(name: str):
-    """Return a product's PyPSA network (``pypsa`` is imported here so the other helpers do not need it)."""
+    """Return a network's PyPSA object (``pypsa`` is imported here so the other helpers do not need it)."""
     import pypsa
 
     return pypsa.Network(str(NETWORKS_DIR / name / f"{name}.nc"))
 
 
 def summarise(name: str) -> dict:
-    """Return quick facts about a product: counts, line length, CRS, column names and the manifest's notes."""
+    """Return a network's node and edge counts, line length (km), CRS, column names and manifest notes."""
     nodes, edges = load_layers(name)
     manifest = load_manifest(name)
     return {
@@ -305,7 +285,7 @@ def summarise(name: str) -> dict:
 
 
 def list_products() -> pd.DataFrame:
-    """Return a table of the built products: name, whether inferred, counts, line length and validation status."""
+    """Return a table of the built networks: name, whether inferred, counts, line length (km), validation status."""
     rows = []
     for name in available_products():
         manifest = load_manifest(name)
@@ -324,7 +304,10 @@ def list_products() -> pd.DataFrame:
 
 
 def anchor_nodes(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Keep the power terminals (substations, generators, transformers), dropping inferred road vertices."""
+    """Return the nodes not marked ``is_inferred``, or all nodes if there are none.
+
+    In an inferred network this drops the road nodes and transformer buses, leaving substations and generators.
+    """
     if "is_inferred" in nodes.columns:
         keep = ~nodes["is_inferred"].fillna(False).astype(bool)
         if keep.any():
@@ -360,12 +343,9 @@ def _clip(frame: gpd.GeoDataFrame, clip) -> gpd.GeoDataFrame:
 def quick_map(*, clip=None, ax=None, title=None, figsize=(9, 9), **layers):
     """Draw GeoDataFrames on one static map, e.g. ``quick_map(roads=roads, power=power, aoi=aoi)``.
 
-    Each keyword names a layer (the name goes in the legend) and gives either a
-    GeoDataFrame or a ``(GeoDataFrame, style)`` pair, where ``style`` is a dict of
-    matplotlib keyword arguments that override the defaults. ``None`` layers are
-    skipped. Polygons are drawn as outlines, lines thin and points on top, each
-    layer in its own colour. ``clip`` is a ``(minx, miny, maxx, maxy)`` box such as
-    ``MAURITIUS_BBOX``: layers are cropped to it before drawing.
+    Each keyword is a legend label and a GeoDataFrame or ``(GeoDataFrame, style)``, where ``style`` holds
+    matplotlib keyword arguments. ``None`` layers are skipped. Polygons are drawn as outlines, points on
+    top. ``clip`` is a ``(minx, miny, maxx, maxy)`` box such as ``MAURITIUS_BBOX``.
     """
     if ax is None:
         _, ax = plt.subplots(figsize=figsize)
@@ -410,10 +390,10 @@ def plot_network(
     figsize=(9, 11),
     clip=None,
 ):
-    """Static map of one product's edges and nodes.
+    """Draw a static map of one network's edges and nodes.
 
-    ``nodes``: ``"anchors"`` (power terminals only), ``"all"``, or ``"none"``.
-    ``clip``: optional ``(minx, miny, maxx, maxy)`` box to zoom to (e.g. ``MAURITIUS_BBOX``).
+    ``nodes``: ``"anchors"`` (see :func:`anchor_nodes`), ``"all"`` or ``"none"``. ``clip``: a
+    ``(minx, miny, maxx, maxy)`` box to zoom to, such as ``MAURITIUS_BBOX``.
     """
     node_layer, edge_layer = load_layers(name)
     edge_layer = _clip(edge_layer, clip)
@@ -421,7 +401,7 @@ def plot_network(
     if ax is None:
         _, ax = plt.subplots(figsize=figsize)
 
-    # Colour a handful of edges by source; draw dense road networks as thin grey.
+    # Fewer than 500 edges with several edge_color_by values: colour by it. Otherwise thin grey.
     few_edges = (
         edge_color_by in edge_layer.columns
         and len(edge_layer) < 500
@@ -435,7 +415,7 @@ def plot_network(
     selection = {"anchors": anchor_nodes(node_layer), "all": node_layer}.get(nodes)
     if selection is not None and len(selection):
         size = node_size if node_size is not None else (36 if len(selection) < 500 else 6)
-        # With dense grey edges, colour the terminals by kind to carry the legend.
+        # With grey edges, colour the nodes by kind so the legend shows them.
         if not few_edges and node_color_by in selection.columns and selection[node_color_by].nunique(dropna=True) > 1:
             selection.plot(ax=ax, column=node_color_by, categorical=True, legend=True, markersize=size, zorder=5)
         else:
@@ -448,11 +428,10 @@ def plot_network(
 
 
 def _line_coords(gdf: gpd.GeoDataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """Return ``(lon, lat)`` arrays of every line in ``gdf``, one NaN between lines.
+    """Return ``(lon, lat)`` arrays of every line part in ``gdf``, with a NaN after each part.
 
-    Plotly draws a gap at a NaN instead of joining one line to the next, so all
-    lines of a layer can go into a single trace. (Multi)LineStrings are split
-    into their parts; missing and empty geometries are skipped.
+    Plotly breaks the line at a NaN, so one trace can draw a whole layer. Missing and empty
+    geometries are skipped.
     """
     parts = shapely.get_parts(gdf.geometry.to_numpy())
     parts = parts[~shapely.is_empty(parts)]
@@ -466,14 +445,11 @@ def _line_coords(gdf: gpd.GeoDataFrame) -> tuple[np.ndarray, np.ndarray]:
 
 
 def explore_network(name, *, roads=True, clip=None, map_style="open-street-map"):
-    """Interactive Plotly map of one product (pan, zoom, hover) on an OpenStreetMap basemap, no API key.
+    """Return an interactive Plotly map of one network on an OpenStreetMap basemap (no API key needed).
 
-    Every edge is drawn, one trace per ``source`` coloured with the tab10 palette
-    as in the viewer: for the inferred products the dense OSM road mesh *is* the
-    distribution network, drawn underneath the transmission / backbone / anchor
-    layers. Only substation and generator buses are marked, with their
-    attributes on hover. ``roads=False`` hides the OSM mesh for a power-only
-    view; ``clip`` restricts the map to a ``(minx, miny, maxx, maxy)`` box.
+    One trace per edge ``source`` in the viewer's tab10 colours, with the OSM roads drawn first, underneath.
+    Substation and generator buses are marked, with their attributes on hover. ``roads=False`` hides the
+    OSM roads; ``clip`` is a ``(minx, miny, maxx, maxy)`` box.
     """
     import plotly.graph_objects as go
 
@@ -482,7 +458,6 @@ def explore_network(name, *, roads=True, clip=None, map_style="open-street-map")
     node_layer = _clip(node_layer, clip)
 
     fig = go.Figure()
-    # tab10 palette, one stable colour per source category (matches the viewer).
     if "source" in edge_layer.columns:
         categories = sorted(str(s) for s in edge_layer["source"].dropna().unique())
         colour = {c: _TAB10[i % len(_TAB10)] for i, c in enumerate(categories)}
@@ -508,8 +483,7 @@ def explore_network(name, *, roads=True, clip=None, map_style="open-street-map")
             go.Scattermap(lon=lons, lat=lats, mode="lines", name="edges", line={"width": 2}, hoverinfo="skip")
         )
 
-    # Mark only the meaningful buses (substation / generator); the road/junction
-    # vertices stay as line geometry, as in the viewer.
+    # Mark only substation and generator buses, as the viewer does.
     node_styles = {"substation": ("#111827", 8), "generator": ("#7c3aed", 11)}
     if "kind" in node_layer.columns:
         kinds = node_layer["kind"].astype("string")

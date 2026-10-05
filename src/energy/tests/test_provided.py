@@ -168,8 +168,7 @@ def test_report_generators_are_placed_and_assigned(tmp_path):
     assert by_name.loc["Wind farm", "bus_id"] == "B"
     assert by_name.loc["Village PV", "bus_id"] in {"A", "B"}
     assert pd.isna(by_name.loc["Rooftops", "bus_id"]) and pd.isna(by_name.loc["Rooftops", "lon"])
-    # The other island has no substation: the plant keeps its coordinates and no bus,
-    # instead of being tied to a substation across the sea.
+    # No substation on the other island: the plant keeps its coordinates and gets no bus, not one across the sea.
     assert pd.isna(by_name.loc["Island P/S", "bus_id"]) and by_name.loc["Island P/S", "lon"] == 63.42
     assert "no substation on rodrigues" in by_name.loc["Island P/S", "site_note"]
     assert generators["capacity_basis"].eq("electrical_output").all()

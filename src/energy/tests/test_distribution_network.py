@@ -56,8 +56,8 @@ def test_asset_is_connected_to_the_nearest_point_on_a_road_by_splitting_it():
 
 
 def _reversed_road_pair():
-    """Two roads that share the junction P. The second is drawn R -> P, and because P already
-    exists when it is added, networkx lists its ends as (P, R): against its geometry."""
+    """Return points P, Q, R and two roads meeting at P. The second road is drawn R -> P, but
+    networkx lists it as (P, R), against its geometry, because P already exists when it is added."""
     p, q, r = (57.50, -20.2), (57.51, -20.2), (57.49, -20.2)
     return p, q, r, _lines([p, q], [r, p], region=["mauritius"] * 2)
 
@@ -104,7 +104,7 @@ def test_parallel_roads_between_the_same_junctions_are_both_kept():
     graph = build_inferred_distribution_graph(_substation(x=57.52, y=-20.21), osm_distribution_lines=roads)
 
     assert graph.number_of_edges() == 2
-    assert graph.number_of_nodes() == 3  # two junctions plus the (unanchored) substation
+    assert graph.number_of_nodes() == 3  # two junctions plus the unconnected substation
 
 
 def test_asset_beyond_the_anchor_distance_stays_unanchored_with_its_road_distance():

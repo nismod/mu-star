@@ -1,8 +1,8 @@
-"""Clean the provided energy source data and write the analysis-ready tables.
+"""Clean the CEB shapefiles, demand workbook and annual report tables in ``--input-dir``.
 
-Reads the provided shapefiles, demand workbook and CEB annual report tables, applies the transforms in
-energy.provided, and writes the substation, route, generator, demand and template
-tables the network builds consume.
+Writes to ``--output-dir`` the substation, route, generation-site, generator and demand tables that
+the network builds read, and ``service_weights.csv`` with equal shares (no lines are passed).
+Header-only templates go to the sibling ``templates`` folder.
 """
 
 from pathlib import Path
@@ -88,9 +88,8 @@ def main(input_dir, output_dir, osm_power):
     areas["area_m2"] = areas.to_crs(METRIC_CRS).area
     areas["is_named"] = ~areas["label"].isin(["Placemark", "unnamed"])
 
-    # Keep every point that is named or recognised as a generation type. Unnamed
-    # points (the KML default "Placemark", e.g. the wind turbines) are named from
-    # their description so they stay distinguishable in generators.csv.
+    # Keep points that are named or of a recognised type. Unnamed ones (KML default "Placemark": the wind
+    # turbines) are named from PopupInfo, e.g. "Gamesa G58/850 wind 01", so ceb_plant_sites.csv can match them.
     keep = points["name"].ne("Placemark") | points["asset_type"].ne("unspecified")
     named_point_assets = points.loc[keep, ["asset_id", "name", "asset_type", "PopupInfo", "geometry"]].copy()
     unnamed = named_point_assets["name"].eq("Placemark")
@@ -112,8 +111,7 @@ def main(input_dir, output_dir, osm_power):
     generation_sites = assign_generation_to_substations(generation_sites, snapped_substations)
     generation_sites["lon"] = generation_sites.geometry.x
     generation_sites["lat"] = generation_sites.geometry.y
-    # The generator list itself comes from the CEB annual report's plant table;
-    # the provided sites (and named OSM plants) only say where each plant is.
+    # generators.csv lists the CEB annual report's plants; the CEB sites and named OSM plants only locate them.
     generators = assemble_report_generators(
         generation_sites,
         snapped_substations,

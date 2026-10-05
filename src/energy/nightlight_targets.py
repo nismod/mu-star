@@ -1,12 +1,10 @@
-"""Select likely electrification targets from VIIRS night-time lights.
+"""Find lit pixels in VIIRS night-light radiance (called "targets" in the code).
 
 The high-pass filter and threshold are adapted from GridFinder 3.1.2 by Chris
 Arderne (MIT licence): https://github.com/carderne/gridfinder
 
-Only the nightlight target step is kept. The inferred distribution network no
-longer routes a least-cost tree over roads; instead these targets are used
-downstream to retain the road subnetwork they support (see
-``build._nightlight_supported_roads``).
+The estimated distribution network keeps the OSM roads near these pixels
+(``build._nightlight_supported_roads``).
 """
 
 from __future__ import annotations
@@ -29,7 +27,7 @@ from shapely.geometry import Point, box, mapping
 
 @dataclass(frozen=True)
 class NightlightTargetOutputs:
-    """Reviewable files written by :func:`build_nightlight_targets`."""
+    """Files written by :func:`build_nightlight_targets`."""
 
     targets_raster: Path
     targets: Path
@@ -69,7 +67,7 @@ def _polygon_features(path: Path, label: str) -> gpd.GeoDataFrame:
 
 
 def create_nightlight_filter() -> np.ndarray:
-    """Return the normalised 41-by-41 high-pass smoothing kernel."""
+    """Return the 41 x 41 smoothing kernel (sum 1) used by the high-pass filter."""
     rows, columns = np.indices((41, 41))
     distance = np.hypot(rows - 20, columns - 20)
     kernel = np.zeros((41, 41), dtype=np.float64)
@@ -85,7 +83,7 @@ def nightlight_targets(
     valid_mask: np.ndarray | None = None,
     target_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Apply the high-pass filter and threshold to VIIRS radiance."""
+    """Return the lit-pixel mask (filtered radiance >= ``threshold``) and the high-pass filtered radiance."""
     values = np.asarray(nightlights, dtype=np.float64)
     if values.ndim != 2 or values.size == 0:
         raise ValueError("nightlights must be a non-empty two-dimensional array")
@@ -204,11 +202,10 @@ def build_nightlight_targets(
     region: str,
     nightlight_threshold: float = 0.1,
 ) -> NightlightTargetOutputs:
-    """Vectorise VIIRS nightlight targets inside an area of interest.
+    """Find the lit pixels inside the AOI and write them to ``output_dir``.
 
-    This replaces the former GridFinder least-cost search. It writes only the
-    nightlight target points (and their raster mask); road selection happens
-    later in :func:`build._nightlight_supported_roads`.
+    Writes ``targets.geoparquet`` (pixel centres, EPSG:4326), ``targets.tif`` (1 = lit) and
+    ``metadata.json`` (threshold, count, input checksums). Raises ValueError if no pixel is lit.
     """
     nightlights_path = Path(nightlights_path)
     aoi_path = Path(aoi_path)

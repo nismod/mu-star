@@ -1,13 +1,10 @@
-"""Build one energy network product via energy.build.build_network.
+"""Build one energy network with energy.build.build_network.
 
-``--source`` selects the product: ``base`` (the provided CEB transmission
-network), ``inferred-osm`` (OpenStreetMap power features on the night-light
-supported OSM roads) or ``inferred-provided`` (the provided assets and CEB
-backbone on those roads). The Snakemake rules pass every input path explicitly;
-options that are not given fall back to the build_network defaults.
-
-Advisory validation warnings are logged to stderr so they appear in the
-Snakemake log as well as in validation.json.
+``--source`` picks the network: ``base`` (CEB substations, generators and 66 kV lines),
+``inferred-osm`` (OpenStreetMap power features joined by the OSM roads near lit areas or power
+assets) or ``inferred-provided`` (the CEB assets and 66 kV lines joined by the same roads). Options
+not given take the build_network defaults. Validation warnings also go to stderr, so the Snakemake
+log shows them.
 """
 
 import logging

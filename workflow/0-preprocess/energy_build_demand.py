@@ -1,8 +1,4 @@
-"""Estimate where the electricity demand is, for one network product.
-
-Writes substation service areas, a demand share per substation and per network
-node, and the system demand levels (see energy.demand for the method).
-"""
+"""Write one network's service areas, substation and node demand shares and demand levels (see energy.demand)."""
 
 from pathlib import Path
 
