@@ -55,6 +55,47 @@ def test_asset_is_connected_to_the_nearest_point_on_a_road_by_splitting_it():
     assert nx.number_connected_components(graph) == 1
 
 
+def _reversed_road_pair():
+    """Two roads that share the junction P. The second is drawn R -> P, and because P already
+    exists when it is added, networkx lists its ends as (P, R): against its geometry."""
+    p, q, r = (57.50, -20.2), (57.51, -20.2), (57.49, -20.2)
+    return p, q, r, _lines([p, q], [r, p], region=["mauritius"] * 2)
+
+
+def _node_position(graph, node):
+    return float(graph.nodes[node]["x"]), float(graph.nodes[node]["y"])
+
+
+def test_asset_at_the_start_of_a_reversed_road_joins_that_end():
+    _p, _q, r, roads = _reversed_road_pair()
+
+    graph = build_inferred_distribution_graph(_substation(*r), osm_distribution_lines=roads, max_anchor_distance_m=1000)
+
+    (anchor,) = [(u, v, a) for u, v, a in graph.edges(data=True) if a["source"] == "substation_anchor"]
+    junction = anchor[1] if anchor[0] == "bus::SUB_001" else anchor[0]
+    assert _node_position(graph, junction) == pytest.approx(r, abs=1e-9), "joined to the far end of the road"
+    assert geodesic_length_km(anchor[2]["geometry"]) < 0.001
+    assert graph.nodes["bus::SUB_001"]["anchor_distance_m"] < 1
+
+
+def test_pieces_of_a_cut_reversed_road_keep_their_own_geometry():
+    p, _q, r, roads = _reversed_road_pair()
+    # 50 m north of the middle of the R -> P road, so that road is cut in two.
+    substation = _substation(x=(p[0] + r[0]) / 2, y=p[1] + 0.00045)
+
+    graph = build_inferred_distribution_graph(substation, osm_distribution_lines=roads, max_anchor_distance_m=100)
+
+    pieces = [(u, v, a) for u, v, a in graph.edges(data=True) if a["edge_id"].startswith("osm_000002::")]
+    assert len(pieces) == 2
+    for u, v, attrs in pieces:
+        start, end = attrs["geometry"].coords[0][:2], attrs["geometry"].coords[-1][:2]
+        ends = {_node_position(graph, u), _node_position(graph, v)}
+        assert any(start == pytest.approx(e, abs=1e-9) for e in ends) and any(
+            end == pytest.approx(e, abs=1e-9) for e in ends
+        ), "a piece carries the geometry of its sibling"
+        assert attrs["length_km"] == pytest.approx(geodesic_length_km(attrs["geometry"]), rel=1e-6)
+
+
 def test_parallel_roads_between_the_same_junctions_are_both_kept():
     straight = [(57.5, -20.2), (57.51, -20.2)]
     bent = [(57.5, -20.2), (57.505, -20.201), (57.51, -20.2)]

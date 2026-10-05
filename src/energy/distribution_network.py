@@ -121,6 +121,23 @@ def _edge_table(graph: nx.MultiGraph, sources: set[str] | None = None) -> pd.Dat
     return pd.DataFrame(rows, columns=["u", "v", "key", "geometry"])
 
 
+def _oriented_ends(graph: nx.MultiGraph, u: str, v: str, geometry: LineString) -> tuple[str, str]:
+    """Return the two end nodes of an edge in the direction of its geometry.
+
+    networkx lists the ends of an undirected edge in either order, and about a
+    third of the roads come out against their geometry. Distances along an
+    edge are measured from the geometry's first coordinate, so the node at
+    that end must come first; otherwise a cut at the start of the line would
+    be attached to the far end.
+    """
+    first_x, first_y = geometry.coords[0][:2]
+
+    def gap(node: str) -> float:
+        return abs(float(graph.nodes[node]["x"]) - first_x) + abs(float(graph.nodes[node]["y"]) - first_y)
+
+    return (u, v) if gap(u) <= gap(v) else (v, u)
+
+
 def _split_edge_at(
     graph: nx.MultiGraph,
     u: str,
@@ -137,6 +154,7 @@ def _split_edge_at(
     split point, in the same order.
     """
     attrs = dict(graph.edges[u, v, key])
+    u, v = _oriented_ends(graph, u, v, attrs["geometry"])
     source = attrs.get("source")
     region = attrs.get("region")
     edge_id = attrs["edge_id"]
