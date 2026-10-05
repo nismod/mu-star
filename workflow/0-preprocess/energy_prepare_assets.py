@@ -1,6 +1,6 @@
 """Clean the provided energy source data and write the analysis-ready tables.
 
-Reads the provided shapefiles and demand workbook, applies the transforms in
+Reads the provided shapefiles, demand workbook and CEB annual report tables, applies the transforms in
 energy.provided, and writes the substation, route, generator, demand and template
 tables the network builds consume.
 """
@@ -18,6 +18,8 @@ from energy.provided import (
     GENERATION_FOLDER,
     GEOGRAPHIC_CRS,
     METRIC_CRS,
+    PLANT_CAPACITIES_FILE,
+    PLANT_SITES_FILE,
     SUBSTATION_FOLDER,
     TRANSMISSION_FOLDER,
     _clean_label,
@@ -116,6 +118,8 @@ def main(input_dir, output_dir, osm_power):
         generation_sites,
         snapped_substations,
         osm_power=read_vector(Path(osm_power)) if osm_power else None,
+        capacities_path=input_dir / PLANT_CAPACITIES_FILE,
+        sites_path=input_dir / PLANT_SITES_FILE,
     )
 
     monthly_peak, annual_demand = extract_demand_workbook(input_dir / DEMAND_FOLDER / "Power Demand.xlsx")

@@ -58,15 +58,16 @@ CEB backbone) and line capacities are placeholders. They are published in the
   transmission routes and generation sites, shared under licence. They sit in
   the `Substation`, `Power Transmission`, `Generation Source` and
   `Power Demand` folders of `<data>/incoming/Infrastructure/Energy/`, as on
-  the project's shared drive. The generator list is the
-  plant tables of the CEB Annual Report 2023-24, for Mauritius (pp. 50-51) and
-  Rodrigues (p. 97), in `src/energy/resources/ceb_plant_capacities_2023_24.csv`
-  with installed and effective capacity per plant. Each plant is placed by
-  `src/energy/resources/ceb_plant_sites.csv`, using a provided site, a named
-  OpenStreetMap plant, a geocoded village or the position of unnamed
-  OpenStreetMap features. A plant is tied to the nearest CEB substation on its
-  own island. Rooftop solar and plants with no location yet keep an empty
-  `bus_id` and are spread by demand share.
+  the project's shared drive.
+- **CEB Annual Report 2023-24 tables**, in the `CEB Annual Report` folder next
+  to the provided data. The generator list is the report's plant tables for
+  Mauritius (pp. 50-51) and Rodrigues (p. 97), with installed and effective
+  capacity per plant. `ceb_plant_sites.csv` places each plant at a provided
+  site, a named OpenStreetMap plant, a geocoded village or the position of
+  unnamed OpenStreetMap features. A plant is tied to the nearest CEB
+  substation on its own island. Rooftop solar and plants with no location yet
+  keep an empty `bus_id` and are spread by demand share. The peak and average
+  system demand come from the same report.
 - **OpenStreetMap**: the drivable road network, mapped power features and the
   outline of each island, downloaded into
   `<data>/incoming/Infrastructure/Energy/OpenStreetMap/<region>/`.

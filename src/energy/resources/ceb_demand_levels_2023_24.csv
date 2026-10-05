@@ -1,8 +1,0 @@
-# System demand levels for the single-time-step interruption analysis, from the CEB Annual Report 2023/2024.
-# peak: the all-time maximum demand, 525.70 MW on 16 February 2024 at 14:00 (page 45, "Bridging the demand-supply gap").
-# average: units sent out July 2023 to June 2024, 3,046,692,841 kWh (plant capacities table, page 51),
-#          divided by the 8,784 hours of that leap year = 346.8 MW. Units generated (3,325,741,055 kWh) would give 378.6 MW,
-#          but sent-out excludes station use and is what customers draw.
-level,demand_mw,basis,report_page
-peak,525.70,maximum demand on 16 February 2024 at 14:00,45
-average,346.8,units sent out 2023-24 divided by 8784 hours,51

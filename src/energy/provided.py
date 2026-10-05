@@ -20,6 +20,11 @@ SUBSTATION_FOLDER = "Substation"
 TRANSMISSION_FOLDER = "Power Transmission"
 GENERATION_FOLDER = "Generation Source"
 DEMAND_FOLDER = "Power Demand"
+# Tables transcribed from the CEB Annual Report 2023-24, next to the provided data.
+REPORT_FOLDER = "CEB Annual Report"
+PLANT_CAPACITIES_FILE = f"{REPORT_FOLDER}/ceb_plant_capacities_2023_24.csv"
+PLANT_SITES_FILE = f"{REPORT_FOLDER}/ceb_plant_sites.csv"
+DEMAND_LEVELS_FILE = f"{REPORT_FOLDER}/ceb_demand_levels_2023_24.csv"
 # Sidecars needed to read an ESRI shapefile (the optional .cpg is not required).
 SHAPEFILE_EXTENSIONS = ("shp", "shx", "dbf", "prj")
 REQUIRED_PROVIDED_FILES = (
@@ -28,6 +33,8 @@ REQUIRED_PROVIDED_FILES = (
     *(f"{TRANSMISSION_FOLDER}/PowerGrid.{extension}" for extension in SHAPEFILE_EXTENSIONS),
     *(f"{GENERATION_FOLDER}/GenSource1.{extension}" for extension in SHAPEFILE_EXTENSIONS),
     *(f"{GENERATION_FOLDER}/GenSource2.{extension}" for extension in SHAPEFILE_EXTENSIONS),
+    PLANT_CAPACITIES_FILE,
+    PLANT_SITES_FILE,
 )
 
 
@@ -320,9 +327,6 @@ def assign_generation_to_substations(
 
 # --- Generators from the CEB annual report ---------------------------------------
 
-CEB_PLANT_CAPACITIES = Path(__file__).parent / "resources" / "ceb_plant_capacities_2023_24.csv"
-CEB_PLANT_SITES = Path(__file__).parent / "resources" / "ceb_plant_sites.csv"
-
 
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")
@@ -333,8 +337,8 @@ def assemble_report_generators(
     substations: gpd.GeoDataFrame,
     *,
     osm_power: gpd.GeoDataFrame | None = None,
-    capacities_path: Path = CEB_PLANT_CAPACITIES,
-    sites_path: Path = CEB_PLANT_SITES,
+    capacities_path: Path,
+    sites_path: Path,
 ) -> pd.DataFrame:
     """Build the generator table from the CEB annual report's plant list.
 

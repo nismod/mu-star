@@ -19,7 +19,7 @@ PyPSA-Earth does it, adapted to what we have for Mauritius:
    raster cells nearest to it, splits the area's share between the nodes.
 
 System totals (a peak level and an average level) come from the CEB annual
-report; see ``resources/ceb_demand_levels_2023_24.csv``.
+report; see ``CEB Annual Report/ceb_demand_levels_2023_24.csv`` in the incoming energy data.
 """
 
 from __future__ import annotations

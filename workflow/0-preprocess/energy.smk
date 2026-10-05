@@ -36,7 +36,10 @@ from energy.nightlights import tile_name
 from energy.paths import INCOMING_ENERGY_RELATIVE
 from energy.provided import (
     DEMAND_FOLDER,
+    DEMAND_LEVELS_FILE,
     GENERATION_FOLDER,
+    PLANT_CAPACITIES_FILE,
+    PLANT_SITES_FILE,
     SHAPEFILE_EXTENSIONS,
     SUBSTATION_FOLDER,
     TRANSMISSION_FOLDER,
@@ -61,10 +64,10 @@ NETWORK_TYPE = str(OSM_SETTINGS.get("network_type", "drive")).strip() or "drive"
 # Energy source data, laid out as on the project's shared drive.
 INCOMING_DIR = f"{{data}}/{INCOMING_ENERGY_RELATIVE.as_posix()}"
 
-# Files of this repository that rules read (their scripts, the capacity table) are
-# wrapped in ancient(): a fresh checkout stamps them with today's date, and that must
-# not make processed data built earlier look out of date. After editing a script,
-# re-run its rule with `snakemake -R <rule name>`.
+# Scripts of this repository that rules read are wrapped in ancient(): a fresh
+# checkout stamps them with today's date, and that must not make processed data
+# built earlier look out of date. After editing a script, re-run its rule with
+# `snakemake -R <rule name>`.
 
 VECTOR_SUFFIXES = {".parquet", ".geoparquet", ".gpkg", ".geojson"}
 
@@ -114,7 +117,6 @@ NIGHTLIGHT_COMPOSITE = f"{{data}}/{_NIGHTLIGHT_OVERRIDE}" if _NIGHTLIGHT_OVERRID
 POPULATION_URL = ENERGY["population"]["url"]
 POPULATION_RASTER = f"{INCOMING_DIR}/Population/{POPULATION_URL.rsplit('/', 1)[-1]}"
 DEMAND = ENERGY.get("demand", {})
-DEMAND_LEVELS = DEMAND.get("levels", "src/energy/resources/ceb_demand_levels_2023_24.csv")
 DEMAND_DIR = "{data}/processed/energy/demand"
 
 # --- Products -----------------------------------------------------------------
@@ -186,10 +188,12 @@ rule prepare_energy_assets:
     Clean the provided CEB source data and write reviewable asset tables.
 
     generators.csv lists every plant in the CEB annual report's capacity table
-    (src/energy/resources/ceb_plant_capacities_2023_24.csv), placed with
-    ceb_plant_sites.csv; generation_sites.csv keeps the provided shapefile
-    sites as drawn. The prepare step also needs the OSM power cache, because
-    some plants are only located by their OpenStreetMap name. Test with:
+    (CEB Annual Report/ceb_plant_capacities_2023_24.csv in the incoming data),
+    placed with ceb_plant_sites.csv; generation_sites.csv keeps the provided
+    shapefile sites as drawn. The prepare step also needs the OSM power
+    features, because some plants are only located by their OpenStreetMap name.
+
+    Test with:
     snakemake -c1 data/processed/energy/provided/generators.csv
     """
     input:
@@ -206,8 +210,8 @@ rule prepare_energy_assets:
         generation_areas=[
             f"{INCOMING_DIR}/{GENERATION_FOLDER}/GenSource2.{extension}" for extension in SHAPEFILE_EXTENSIONS
         ],
-        plant_capacities=ancient("src/energy/resources/ceb_plant_capacities_2023_24.csv"),
-        plant_sites=ancient("src/energy/resources/ceb_plant_sites.csv"),
+        plant_capacities=f"{INCOMING_DIR}/{PLANT_CAPACITIES_FILE}",
+        plant_sites=f"{INCOMING_DIR}/{PLANT_SITES_FILE}",
         osm_power=f"{{data}}/{OSM_POWER_CACHE}",
         script=ancient("workflow/0-preprocess/energy_prepare_assets.py"),
     output:
@@ -467,7 +471,7 @@ rule build_energy_demand:
         aoi=f"{{data}}/{OSM_AOI}",
         population=POPULATION_RASTER,
         nightlights=NIGHTLIGHT_COMPOSITE,
-        demand_levels=ancient(DEMAND_LEVELS),
+        demand_levels=f"{INCOMING_DIR}/{DEMAND_LEVELS_FILE}",
         script=ancient("workflow/0-preprocess/energy_build_demand.py"),
     output:
         service_areas=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/service_areas.geoparquet",

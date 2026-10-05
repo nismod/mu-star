@@ -74,8 +74,6 @@ energy:
     # (see src/energy/demand.py). The two weights are normalised as given.
     weight_nightlights: 0.6
     weight_population: 0.4
-    # Demand levels (peak and average, MW) used by the interruption analysis.
-    levels: src/energy/resources/ceb_demand_levels_2023_24.csv
 
   nightlight:
     # Roads within this distance of a lit target or a power asset are kept.
