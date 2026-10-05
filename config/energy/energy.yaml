@@ -1,92 +1,80 @@
-# Settings for the energy network build (code in src/energy/, rules in
-# workflow/0-preprocess/energy.smk). The rules load this file with
-# `configfile:`, so everything here is available as config["energy"].
-#
-# File paths in this file are relative to the data root, which is `data_root`
-# in config/config.yaml (default: the `data/` folder of this repository).
-#
-# Source data sits under incoming/Infrastructure/Energy/, laid out as on the
-# project's shared drive. The provided CEB data is copied or linked from there.
-# The public inputs (OpenStreetMap, VIIRS night lights) are downloaded by the
-# workflow when they are missing; a copy that is already there is used as it is.
+# Settings for the energy rules in workflow/0-preprocess/energy.smk.
+# Paths are relative to the data folder: `data/` unless `data_root` is set in
+# config/config.yaml. Source data is read from incoming/Infrastructure/Energy/,
+# laid out as on the project's shared drive.
 
 energy:
-  # The islands covered by the inferred products. "mauritius-rodrigues" is a
-  # region group: each island is fetched from OpenStreetMap separately and the
-  # results are combined (see REGION_GROUPS in src/energy/osm.py). Any other
+  # Area of the inferred networks. "mauritius-rodrigues" downloads each island
+  # from OpenStreetMap and joins them (REGION_GROUPS in src/energy/osm.py). Any
   # OpenStreetMap place name also works, e.g. "Rodrigues, Mauritius".
   region: mauritius-rodrigues
 
   osm:
-    # Road detail passed to osmnx. "drive" keeps the drivable road network,
-    # which stands in for the distribution lines; "all" would add footpaths and
-    # tracks, which distribution lines do not follow.
+    # osmnx network type. "drive" gives the drivable roads that the estimated
+    # distribution lines follow; "all" would add footpaths and tracks.
     network_type: drive
-    # Optional: use your own files instead of the OpenStreetMap download.
-    # Relative to the data root; GeoParquet, GeoPackage or GeoJSON. Leave null
-    # to use incoming/Infrastructure/Energy/OpenStreetMap/<region>/.
-    roads: null   # lines: the road network
-    aoi: null     # polygons: the area of interest used to clip the night-light raster
+    # Optional files to use instead of the OpenStreetMap download: GeoParquet,
+    # GeoPackage or GeoJSON. null uses
+    # incoming/Infrastructure/Energy/OpenStreetMap/<region>/.
+    roads: null   # road lines
+    aoi: null     # island outlines, used to clip the night-light image
 
   base_network:
-    # The base product follows the provided CEB transmission routes. Breaks in
-    # the route geometry shorter than this are bridged.
+    # Join gaps shorter than this between CEB route segments.
     route_gap_tolerance_m: 75
-    # The provided routes are CEB's 66 kV network. Line capacities are
-    # deliberately non-binding placeholders until reviewed ratings exist.
+    # CEB routes are 66 kV. 10,000 MVA so that no line limits flow; replace
+    # with CEB ratings.
     default_voltage_kv: 66
     topology_capacity_mva: 10000
 
   inferred:
-    # A power asset is connected to the nearest road within this distance.
+    # Connect a substation or plant to the nearest road point within this
+    # distance.
     max_anchor_distance_m: 1000
-    # Electrical values for the three kinds of line in the inferred products.
-    # Distribution: every road segment stands in for an 11 kV feeder; 5 MVA is a
-    # typical rating for one overhead 11 kV feeder (about 260 A). Placeholder.
+    # Road segments: 11 kV, 5 MVA (a typical overhead 11 kV feeder, about
+    # 260 A). Placeholder.
     topology_voltage_kv: 11
     topology_capacity_mva: 5
-    # Transmission: the CEB backbone kept in inferred-provided. CEB does not
-    # publish per-line ratings; 50 MVA is a typical single-circuit 66 kV rating
-    # for the 150 mm2 conductors the annual report mentions (2023-24, p. 74).
-    # Replace with CEB ratings per line when they are provided.
+    # CEB 66 kV lines (inferred-provided only): 50 MVA, typical for a single
+    # 66 kV circuit of the 150 mm2 conductor in the annual report (2023-24,
+    # p. 74). CEB does not publish ratings per line.
     transmission_voltage_kv: 66
     transmission_capacity_mva: 50
-    # Connectors from a substation or generator to the road network carry the
-    # whole site: rated as an average major substation, 2,595 MVA of installed
-    # transformer capacity across the 19 major substations (annual report
-    # 2023-24, p. 71). Replace with per-substation ratings when provided.
+    # Line from each substation or plant to the road: 137 MVA, the average of
+    # 2,595 MVA of transformers over 19 major substations (annual report
+    # 2023-24, p. 71).
     anchor_capacity_mva: 137
-    # Advisory checks written to validation.json and logged as warnings.
-    # CEB reports 10,492.2 km of transmission plus MV/LV distribution circuits.
+    # Checks in validation.json: CEB's total of 10,492.2 km of transmission and
+    # distribution lines, and the differences allowed before a warning.
     ceb_total_line_length_km: 10492.2
     line_length_tolerance_fraction: 0.10
     generation_capacity_tolerance_fraction: 0.10
 
   population:
-    # WorldPop 2020 "constrained" grid, people per 100 m cell, UN-adjusted; one
-    # file for the whole country including Rodrigues. Downloaded to
-    # incoming/Infrastructure/Energy/Population/ when it is missing.
+    # WorldPop 2020 "constrained" grid: people per 100 m cell, adjusted to UN
+    # totals, for the whole country including Rodrigues. Saved to
+    # incoming/Infrastructure/Energy/Population/.
     url: https://data.worldpop.org/GIS/Population/Global_2000_2020_Constrained/2020/maxar_v1/MUS/mus_ppp_2020_UNadj_constrained.tif
 
   demand:
-    # How the system demand is spread over substations and network nodes: the
-    # PyPSA-Earth distribution key with night-light radiance in place of GDP
-    # (see src/energy/demand.py). The two weights are normalised as given.
+    # Weights of an area's share of night-light radiance and of population in
+    # its demand score (src/energy/demand.py). PyPSA-Earth uses 0.6 for GDP and
+    # 0.4 for population; night lights replace GDP here.
     weight_nightlights: 0.6
     weight_population: 0.4
 
   nightlight:
-    # Roads within this distance of a lit target or a power asset are kept.
+    # Keep roads within this distance of a lit pixel or a power asset.
     nightlight_support_distance_m: 1000
-    # Brightness threshold of the GridFinder-style high-pass filter.
+    # Threshold of the GridFinder filter that picks out lit pixels.
     nightlight_threshold: 0.1
-    # Optional: a ready-made radiance composite (GeoTIFF, relative to the data
-    # root). Leave null to build one from the monthly tiles below.
+    # Optional radiance image (GeoTIFF) to use instead of building one from
+    # the monthly images below.
     nightlights: null
-    # Where the monthly VIIRS radiance tiles come from. The service serves the
-    # Earth Observation Group's monthly cloud-free composites; object_ids are
-    # the twelve months of 2024 in its catalogue. Change bbox for another
-    # region and object_ids for another year.
+    # Monthly VIIRS images, from an ArcGIS image service of the Earth
+    # Observation Group's monthly cloud-free composites. object_ids are the
+    # twelve months of 2024; change them for another year, and bbox for
+    # another area.
     source:
       service: https://di-lawimagery1.img.arcgis.com/arcgis/rest/services/NighttimeLightsMDNB/ImageServer
       rendering_rule: "Average Monthly Radiance (Raw Values)"

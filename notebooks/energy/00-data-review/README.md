@@ -1,14 +1,10 @@
-# 00 · Data review (inputs)
+# 00 Data review
 
-Look at the inputs of the energy network build before building anything:
+Look at the inputs before building: the cleaned CEB data (substations, 66 kV
+routes, generation sites, `generators.csv` and the demand tables), the
+OpenStreetMap roads, power features and island outlines, and the night-light
+image and targets.
 
-- the cleaned CEB data (`snakemake -c1 data/processed/energy/provided/generators.csv`):
-  substations, transmission routes, generation sites, the generators table and
-  the demand tables;
-- the OpenStreetMap files (downloaded by the build when they are missing):
-  roads, power features and the area-of-interest outline;
-- the night lights (monthly tiles, downloaded by the build when they are
-  missing): the radiance composite, the target points and their metadata.
-
-Open `00_data_review.ipynb` and run it top to bottom. Missing files do not stop
-it: each cell prints the command that creates what it needs.
+Run `00_data_review.ipynb` top to bottom. A missing file does not stop it: the
+cell prints the command that makes the file, for example
+`snakemake -c1 data/processed/energy/provided/generators.csv`.

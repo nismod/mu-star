@@ -1,156 +1,140 @@
 # Energy
 
-The energy analysis builds network models of Mauritius's electricity system.
-Nobody has surveyed the distribution grid (the lines that carry power from
-substations to streets and homes), so the analysis estimates where it runs. It
-produces three network products:
+The energy workflow builds three models of the electricity network of Mauritius
+and Rodrigues. We have the 66 kV transmission network of the Central
+Electricity Board (CEB) but no data on its distribution network, so that is
+estimated from roads and night-time lights.
 
-- **base-mauritius**: the transmission network of the national utility, the
-  Central Electricity Board (CEB), built directly from its substations, 66 kV
-  routes and generation sites. This is the closest thing to the real grid.
-- **inferred-osm-mauritius-rodrigues**: an estimate of the distribution grid
-  that starts from the substations, plants and generators mapped in
-  OpenStreetMap and joins them across the road network.
-- **inferred-provided-mauritius-rodrigues**: the same estimate, starting from
-  CEB's own substations and generators and keeping the CEB transmission
-  backbone.
+| Network | Contents |
+| --- | --- |
+| `base-mauritius` | CEB substations, 66 kV lines and power plants. Mauritius only. |
+| `inferred-provided-mauritius-rodrigues` | CEB substations, 66 kV lines and power plants, plus the estimated distribution network. |
+| `inferred-osm-mauritius-rodrigues` | Substations and power plants mapped in OpenStreetMap, plus the estimated distribution network. |
 
-The two inferred products share the method below. They differ only in where
-their power assets come from.
+## Estimating the distribution network
 
-## How the inferred estimate works
+1. **Lit areas.** Twelve monthly VIIRS satellite images of night-time light
+   for 2024 are combined by taking the median of each pixel. A filter keeps
+   pixels brighter than their surroundings, and those above a threshold
+   become *targets*: places the network must reach. Pixels outside the island
+   outlines are ignored. The filter and threshold come from
+   [GridFinder](https://github.com/carderne/gridfinder) (Chris Arderne, MIT
+   licence).
+2. **Roads.** Distribution lines mostly follow roads, so the OpenStreetMap
+   network of drivable roads gives the possible routes. A two-way street is
+   one line.
+3. **Roads kept.** Roads within 1 km of a target or a power asset are kept. If
+   dropping a road cuts a lit area off, the shortest road path back to the
+   rest of the network is put back.
+4. **Connections.** Each substation and power plant connects to the nearest
+   point on a kept road, if that point is within 1 km; the road is split
+   there. In `inferred-provided`, each asset also connects to the nearest CEB
+   66 kV line, and a point where 66 kV and 11 kV lines meet becomes a
+   transformer.
+5. **Parallel roads.** Two roads between the same junctions stay two lines.
 
-1. **Find lit-up areas.** Somewhere consistently bright at night is almost
-   certainly electrified. We take twelve monthly VIIRS night-light images
-   (VIIRS is a satellite sensor) for 2024 and take the median of each pixel
-   across the year, which smooths out cloudy months. A filter then picks out
-   pixels brighter than their surroundings, and those above a brightness
-   threshold become *targets*: places the grid has to reach. Only pixels inside
-   the island outlines count. (The filter and threshold are adapted from
-   [GridFinder](https://github.com/carderne/gridfinder) by Chris Arderne, MIT
-   licence.)
-2. **Take the roads.** Distribution lines tend to follow roads, so the drivable
-   road network from OpenStreetMap gives the candidate routes. A two-way street
-   is stored once.
-3. **Keep the roads that matter.** We keep every road within 1 km of a target
-   or a known power asset and drop the rest. When that strands a lit cluster,
-   because the unlit road connecting it was dropped, we restore the shortest
-   real-road path back to the main network.
-4. **Connect the power assets.** Each substation, plant or generator is joined
-   to the nearest point on the nearest kept road, and the road is split there,
-   as long as that point is within 1 km. In the provided variant an asset also
-   connects to the nearest CEB backbone line, and a junction that carries both
-   voltage levels becomes a transformer.
-5. **Keep parallel roads.** Two roads running between the same junctions stay
-   as two separate lines.
+The two 1 km distances are `nightlight_support_distance_m` and
+`max_anchor_distance_m` in `config/energy/energy.yaml`.
 
-Both 1 km distances are settings in `config/energy/energy.yaml`.
+The result shows where distribution lines probably run, not where they are.
+Voltages and capacities are placeholders, set in `energy.yaml`:
 
-The result is a *coverage estimate*: where the network plausibly runs, not a
-survey of the real lines. Its voltages (11 kV for distribution, 66 kV for the
-CEB backbone) and line capacities are placeholders. They are published in the
-`model_v_nom_kv` and `model_s_nom_mva` columns, while `v_nom_kv` and
-`s_nom_mva` stay empty until real values exist.
+- road segments: 11 kV, 5 MVA (a typical 11 kV feeder);
+- CEB 66 kV lines: 50 MVA (a typical single 66 kV circuit);
+- the connection from each substation or plant to the road: 137 MVA (2,595
+  MVA of transformers over 19 major substations, annual report p. 71);
+- every line of `base-mauritius`: 10,000 MVA, so that no line limits flow.
+
+These values are in the `model_v_nom_kv` and `model_s_nom_mva` columns;
+`v_nom_kv` and `s_nom_mva` stay empty until CEB values are available.
 
 ## Inputs
 
-- **Provided CEB data**: a power demand workbook and shapefiles of substations,
-  transmission routes and generation sites, shared under licence. They sit in
-  the `Substation`, `Power Transmission`, `Generation Source` and
-  `Power Demand` folders of `<data>/incoming/Infrastructure/Energy/`, as on
-  the project's shared drive.
-- **CEB Annual Report 2023-24 tables**, in the `CEB Annual Report` folder next
-  to the provided data. The generator list is the report's plant tables for
-  Mauritius (pp. 50-51) and Rodrigues (p. 97), with installed and effective
-  capacity per plant. `ceb_plant_sites.csv` places each plant at a provided
-  site, a named OpenStreetMap plant, a geocoded village or the position of
-  unnamed OpenStreetMap features. A plant is tied to the nearest CEB
-  substation on its own island. Rooftop solar and plants with no location yet
-  keep an empty `bus_id` and are spread by demand share. The peak and average
-  system demand come from the same report.
-- **OpenStreetMap**: the drivable road network, mapped power features and the
-  outline of each island, downloaded into
-  `<data>/incoming/Infrastructure/Energy/OpenStreetMap/<region>/`.
-- **VIIRS night lights**: twelve monthly tiles for 2024, downloaded into
-  `<data>/incoming/Infrastructure/Energy/Nighttime Lights/viirs-2024-monthly/`
-  from an ArcGIS image
-  service (NighttimeLightsMDNB ImageServer) that serves the Earth Observation
-  Group's VIIRS DNB monthly cloud-free average-radiance composites. One caveat
-  from the provider: a zero radiance can mean "no cloud-free observations that
-  month" rather than darkness. The median over twelve months reduces this
-  problem but does not remove it.
-- **WorldPop population**: the 2020 "constrained" grid of people per 100 m
-  cell, adjusted to UN totals, downloaded into
-  `<data>/incoming/Infrastructure/Energy/Population/`. It covers Rodrigues as
-  well.
+Inputs sit in `<data>/incoming/Infrastructure/Energy/`, where `<data>` is the
+repository's `data/` folder. The layout is the same as on the project's shared
+drive.
 
-`<data>` is the data root: `data/` in this repository unless `data_root` is set
-in `config/config.yaml`. `<data>/incoming/Infrastructure/Energy/` mirrors the
-folder of the same name on the project's shared drive, so one copy of that
-folder sets it up. The public inputs are downloaded by the workflow when they
-are missing, and a file that is already there is used as it is.
+- **CEB data**, not public, shared under licence: shapefiles in `Substation`,
+  `Power Transmission` and `Generation Source`, and a workbook of monthly peak
+  demand and annual demand by sector in `Power Demand`.
+- **CEB Annual Report 2023-24**, tables typed in from the report, in
+  `CEB Annual Report`:
+  - `ceb_plant_capacities_2023_24.csv`: installed and effective capacity of
+    each plant in Mauritius (pp. 50-51) and Rodrigues (p. 97).
+  - `ceb_plant_sites.csv`: the location of each plant, from a CEB generation
+    site, a named OpenStreetMap plant, a geocoded village or unnamed
+    OpenStreetMap features.
+  - `ceb_demand_levels_2023_24.csv`: peak and average system demand.
 
-You do not need any of these inputs to use the networks. A ready-made pack of
-the processed files (`yyyymmdd-model-data` under
-`Processed Data/Infrastructure/Energy` on the shared drive) can be copied to
-`<data>/processed/energy`; the README shows both routes.
+  Each plant is assigned to the nearest CEB substation on its own island.
+  Rooftop solar and plants with no location yet have an empty `bus_id` and
+  are left out of the network for now.
+- **OpenStreetMap**, downloaded: drivable roads, power features and island
+  outlines, in `OpenStreetMap/<region>/`.
+- **VIIRS night lights**, downloaded: twelve monthly images for 2024 in
+  `Nighttime Lights/viirs-2024-monthly/`, from an ArcGIS image service
+  (NighttimeLightsMDNB) that serves the Earth Observation Group's monthly
+  cloud-free average radiance. A zero can mean the month had no cloud-free
+  view rather than darkness; the median over twelve months reduces this but
+  does not remove it.
+- **WorldPop population**, downloaded: the 2020 "constrained" grid of people
+  per 100 m cell, adjusted to UN totals, in `Population/`. It covers
+  Rodrigues.
 
-## Where the demand is
+The workflow downloads a public input only when it is missing.
 
-The interruption analysis needs to know how much of the system demand sits
-behind each substation and at each node of the road network. Nobody has
-metered that for us, so it is estimated the way PyPSA-Earth does it:
+To use the networks without any of these inputs, copy a processed pack
+(`yyyymmdd-model-data` in `Processed Data/Infrastructure/Energy` on the shared
+drive) to `<data>/processed/energy`. The README gives the commands.
 
-1. Each substation serves the area closer to it than to any other substation,
-   clipped to the island outline. Rodrigues, which has no CEB substation in the
-   provided data, is divided the same way between its power stations.
-2. Each area is scored by the people who live in it (WorldPop) and by how
-   brightly it is lit at night (the VIIRS composite, standing in for economic
-   activity; PyPSA-Earth uses a GDP raster, which is far too coarse for a 50 km
-   island). The score is 0.6 times the normalised radiance plus 0.4 times the
-   normalised population, the weights PyPSA-Earth uses for GDP and population.
-3. Inside each area the same score, computed per node from the raster cells
-   nearest to it, splits the area's share between the nodes.
+## Demand
 
-The system totals come from the CEB Annual Report 2023-24: a peak of 525.7 MW
-(16 February 2024) and an average of 346.8 MW (units sent out over the year).
-The shares and the service-area polygons are written under
-`<data>/processed/energy/demand/<product>/` for review.
+The interruption analysis needs to know how much of the system demand is
+behind each substation and at each network node. There is no metered data for
+this, so it is estimated with PyPSA-Earth's method:
+
+1. Each substation supplies the area closer to it than to any other
+   substation, cut to the island outline. Rodrigues has no CEB substation in
+   the data, so its area is split between its power plants.
+2. Each area gets a score: 0.6 times its share of the total night-light
+   radiance plus 0.4 times its share of the population. PyPSA-Earth uses the
+   same weights with GDP in place of night lights; GDP grids are too coarse
+   for an island 50 km across.
+3. Within an area, the same score for each road node, from the raster cells
+   nearest to it, splits the area's demand between its nodes.
+
+Shares are rescaled to add to one. System demand, from the annual report: a
+peak of 525.7 MW (16 February 2024, p. 45) and an average of 346.8 MW (units
+sent out in 2023-24 divided by 8,784 hours, p. 51). The shares, areas and
+demand levels are written to `<data>/processed/energy/demand/<network>/`.
 
 ## Outputs
 
-Each product is written under `<data>/processed/energy/networks/<product>/`:
+For each network, in `<data>/processed/energy/networks/<network>/`:
 
-- `<product>.nc`: the network as a [PyPSA](https://pypsa.org/) model (an
-  open-source toolkit for power system modelling), with
-  `<product>_metadata.json` recording the inputs, settings and checksums of the
-  build.
-- `geoparquet/`: the nodes and edges as GeoParquet layers (a GIS file format)
-  for mapping, with a manifest tying them to the network.
-- `inferred_distribution/` (inferred products only): the road graph as plain
-  CSV node and edge tables.
+- `<network>.nc`: the [PyPSA](https://pypsa.org/) network.
+- `<network>_metadata.json`: inputs, settings and file checksums of the build.
+- `geoparquet/`: nodes and edges for GIS, with a manifest that links them to
+  the `.nc` file.
+- `inferred_distribution/` (inferred networks only): the road network as CSV
+  tables of nodes and edges.
 
-Human-readable tables go to `<data>/out/energy/<product>/`: `generators.csv`,
-`lines.csv` and `validation.json`. The validation report holds advisory checks:
-total line length against CEB's published figures (479 km of 66 kV transmission
-for the base network; 10,492 km of transmission plus distribution circuits for
-the inferred networks), and modelled generation against CEB's reported
-installed capacity. Every warning is also logged when the build runs, so a
-problem is never silent.
+In `<data>/out/energy/<network>/`: `generators.csv`, `lines.csv` and
+`validation.json`. The validation file compares the model with CEB's published
+totals: line length (479 km of 66 kV lines for `base-mauritius`; 10,492 km of
+all lines for the inferred networks) and installed generation capacity. A
+difference beyond the tolerance is a warning, which is also logged.
 
-Known limits:
+## Limitations
 
-- Rodrigues has no provided CEB network data. Its power stations from the
-  annual report are anchored to its roads and each feeds the island from its
-  own node; there is no substation or backbone between them. An island with no
-  power asset at all gets a stand-in root (a placeholder substation) on its
-  road network.
-- The distribution proxy follows roads, so lines that cross open country are
-  not represented.
-- Voltages and capacities are placeholders, and no power flow is calculated.
+- Rodrigues has no CEB network data. Each of its power plants supplies the
+  island from the road point it connects to; there is no substation or 66 kV
+  line between them. An island with no power asset at all gets a placeholder
+  substation on its roads.
+- Distribution lines that do not follow roads are missing.
+- Voltages and capacities are placeholders, and no power flow is run.
 
-## Disruption analysis (deferred)
+## Disruption analysis (not built yet)
 
-Each infrastructure model is meant to answer *"given a set of disrupted assets,
-what is the loss of supply?"* The simulation that would answer this for energy is
-not built yet.
+Each infrastructure model should answer: if these assets fail, how much supply
+is lost? The energy version of this is not built yet.

@@ -191,30 +191,24 @@ output files.
 
 While this workflow is in development, some of the rules are placeholders.
 
-The energy workflow builds three network products: `base-mauritius` from the
-provided CEB transmission data, and two inferred coverage estimates for
-Mauritius and Rodrigues, `inferred-osm-mauritius-rodrigues` (OpenStreetMap
-power features) and `inferred-provided-mauritius-rodrigues` (provided
-substations, generators and the CEB backbone). Settings live in
-`config/energy/energy.yaml`; file paths there are relative to the data root
-(`data/` unless `data_root` is set in `config/config.yaml`).
+The energy rules build three models of the electricity network:
+`base-mauritius`, `inferred-provided-mauritius-rodrigues` and
+`inferred-osm-mauritius-rodrigues`. The method, inputs and outputs are in
+`docs/src/infrastructure-energy.md`; settings are in
+`config/energy/energy.yaml`.
 
-The energy data lives on the project's shared drive (see
-[Getting data](CONTRIBUTING.md#getting-data) for access). There are two ways to
-set it up, and you can use either or both:
+The energy data is on the project's shared drive (see
+[Getting data](CONTRIBUTING.md#getting-data)). Set up one or both of:
 
-- **Use a ready-made pack.** Copy the newest `yyyymmdd-model-data` folder from
-  `Processed Data/Infrastructure/Energy` on the shared drive to
-  `data/processed/energy`. Every rule that uses the energy network then runs
-  without the source data, and nothing is downloaded or rebuilt.
-- **Build from the source data.** Copy the folder
-  `Incoming Data/Infrastructure/Energy` from the shared drive to
-  `data/incoming/Infrastructure/Energy`. It holds the provided CEB data, which
-  is not public. The public inputs (OpenStreetMap roads and power features,
-  VIIRS night lights, WorldPop population) are downloaded by the workflow when
-  they are missing.
+- **A processed pack.** Copy the newest `yyyymmdd-model-data` folder from
+  `Processed Data/Infrastructure/Energy` to `data/processed/energy`. The rules
+  then use these files and do not download or rebuild anything.
+- **The source data.** Copy `Incoming Data/Infrastructure/Energy` to
+  `data/incoming/Infrastructure/Energy`. It holds the CEB data, which is not
+  public. The public inputs (OpenStreetMap, VIIRS night lights, WorldPop
+  population) are downloaded when missing.
 
-For example, with the shared drive synced to your computer:
+With the shared drive synced to your computer:
 
 ```shell
 mkdir -p data/processed data/incoming/Infrastructure
@@ -222,36 +216,28 @@ cp -R "<shared drive>/Processed Data/Infrastructure/Energy/<yyyymmdd>-model-data
 cp -R "<shared drive>/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/Energy
 ```
 
-Skip the last line if `data/incoming` already holds, or links to, the whole
-`Incoming Data` folder. A link to a shared folder works too, but Snakemake then
-writes through it into the shared drive whenever it rebuilds or downloads, so
-copy unless you only read.
+Skip the last line if `data/incoming` already holds or links to the whole
+`Incoming Data` folder. Copy the energy folders rather than linking them:
+when Snakemake rebuilds a file it writes through a link into the shared drive.
 
-Then build all three products. With a pack in place this reports that there is
-nothing to do:
+Build the three networks (with a pack in place there is nothing to do):
 
 ```shell
 snakemake -c1 build_energy_networks
 ```
 
-To build a single product, ask for its output file, for example:
+Build one network:
 
 ```shell
 snakemake -c1 data/processed/energy/networks/base-mauritius/base-mauritius.nc
 ```
 
-The code entry point is `energy.build.build_network`. Inferred voltages and
-capacities are placeholders, and energy has no disruption analysis yet. The
-demand shares that the coming interruption analysis will use (a share of the
-system demand per substation and per network node, from population and night
-lights) are written by:
+Build the demand share of each substation and network node, for the
+interruption analysis:
 
 ```shell
 snakemake -c1 data/processed/energy/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv
 ```
-
-See `docs/src/infrastructure-energy.md` for the method, inputs, outputs and
-current limitations.
 
 ### Testing
 
