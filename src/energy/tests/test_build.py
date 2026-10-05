@@ -271,11 +271,11 @@ def test_build_inferred_network_for_region_uses_cached_osm_files(tmp_path):
     inferred_validation = json.loads(outputs.validation.read_text())
     assert inferred_validation["status"] == "valid_with_warnings"
     assert any("cannot supply demand" in warning for warning in inferred_validation["warnings"])
-    assert any("Model line length differs" in warning for warning in inferred_validation["warnings"])
+    assert any(warning.startswith("Line length is") for warning in inferred_validation["warnings"])
     length_check = inferred_validation["checks"]["line_length_against_published_ceb_total"]
     assert length_check["status"] == "warning"
     assert length_check["reference_total_km"] == 10_492.2
-    assert length_check["reference_scope"].startswith("CEB total transmission")
+    assert length_check["reference_scope"] == "CEB's circuit length at all voltages"
 
 
 def test_build_inferred_places_a_provisional_root_when_a_region_has_no_power_assets(tmp_path):
@@ -489,6 +489,6 @@ def test_build_inferred_provided_keeps_a_generator_without_bus_for_review(tmp_pa
     network = pypsa.Network(outputs.network)
     validation = json.loads(outputs.validation.read_text())
     assert set(network.generators.index) == {"plant"}
-    assert any("retained for review" in warning for warning in validation["warnings"])
+    assert any("left out of the network because they have no bus_id" in warning for warning in validation["warnings"])
     exported = pd.read_csv(outputs.generators)
     assert exported.loc[exported["generator_id"].eq("orphan"), "bus_id"].isna().all()

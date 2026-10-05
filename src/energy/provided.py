@@ -372,9 +372,9 @@ def assemble_report_generators(
             if matches.empty:
                 raise ValueError(f"{row.report_name}: no provided site named {row.site_name!r}")
             lon, lat = float(matches["lon"].mean()), float(matches["lat"].mean())
-            note = f"provided site {row.site_name!r}"
+            note = f"CEB generation site {row.site_name!r}"
             if len(matches) > 1:
-                note += f" ({len(matches)} points, centroid)"
+                note += f" (centre of {len(matches)} points)"
         elif kind == "osm":
             if osm is None:
                 raise ValueError(f"{row.report_name}: OSM power features with names are needed to place it")
@@ -387,8 +387,10 @@ def assemble_report_generators(
         elif kind == "geocoded":
             lon, lat = float(row.lon), float(row.lat)
             note = str(row.location_basis)
-        elif kind in {"distributed", "unmatched"}:
-            note = "no single site; spread over substations by demand share"
+        elif kind == "distributed":
+            note = "many small sites, e.g. rooftop solar; not in the network"
+        elif kind == "unmatched":
+            note = "location not found; not in the network"
         else:
             raise ValueError(f"{row.report_name}: unknown site_kind {kind!r}")
         lons.append(lon)
@@ -430,7 +432,9 @@ def assemble_report_generators(
         candidates = substations[substation_regions.eq(region_name).to_numpy()]
         if candidates.empty:
             # No substation on this island (Rodrigues): the inferred network connects the plant at its own node.
-            generators.loc[in_region, "site_note"] += f"; no substation on {region_name}, connected at its own node"
+            generators.loc[in_region, "site_note"] += (
+                f"; no CEB substation on {region_name.title()}, so it connects to the roads at its own point"
+            )
             continue
         sited = gpd.GeoDataFrame(
             generators.loc[in_region, ["generator_id"]],

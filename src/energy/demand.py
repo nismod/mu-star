@@ -34,8 +34,8 @@ from shapely.geometry import MultiPoint
 GEOGRAPHIC_CRS = "EPSG:4326"
 DEFAULT_WEIGHTS = {"nightlights": 0.6, "population": 0.4}
 METHOD_NOTE = (
-    "Adapted from PyPSA-Earth build_demand_profiles.upsample (0.6 GDP + 0.4 population); "
-    "night-light radiance replaces GDP."
+    "PyPSA-Earth's build_demand_profiles.upsample (0.6 GDP + 0.4 population), "
+    "with night-light radiance in place of GDP."
 )
 
 

@@ -206,20 +206,22 @@ def validate_model_tables(
     if not generator_missing:
         complete_generators = generators[list(GENERATOR_REQUIRED_COLUMNS)].notna().all(axis=1)
     if generators.empty and not generator_missing:
-        warnings.append("No generators are present; this topology-only network cannot supply demand.")
+        warnings.append("No generators, so this network cannot supply demand.")
     elif allow_incomplete_generators and not generator_missing:
         incomplete_count = int((~complete_generators).sum())
         if incomplete_count:
+            incomplete = generators.loc[~complete_generators, list(GENERATOR_REQUIRED_COLUMNS)]
+            missing = [column for column in GENERATOR_REQUIRED_COLUMNS if incomplete[column].isna().any()]
             warnings.append(
-                f"{incomplete_count} generator records are retained for review but "
-                "omitted from the PyPSA network until required values are populated."
+                f"{incomplete_count} generators are left out of the network because they have no "
+                f"{' or '.join(missing)}."
             )
     if "marginal_cost_basis" in generators:
         proxy_costs = generators["marginal_cost_basis"].astype(str).str.contains("proxy", case=False, na=False)
         if proxy_costs.any():
             warnings.append(
-                f"{int(proxy_costs.sum())} generator records use a neutral dispatch-cost "
-                "proxy suitable for VoLL topology tests, not operating-cost analysis."
+                f"{int(proxy_costs.sum())} generators share a placeholder marginal cost, so the network can "
+                "show which demand goes unserved but not what generation costs."
             )
 
     _check_ids(buses, "bus_id", "buses", errors)
@@ -279,7 +281,7 @@ def validate_model_tables(
     if reference_line_length_km is None:
         line_length_check = {
             "status": "not_applicable",
-            "reason": "No like-for-like published length is configured for this source.",
+            "reason": "No published line length to compare with.",
         }
     else:
         relative_difference = abs(comparison_line_length_km - reference_line_length_km) / float(
@@ -296,26 +298,27 @@ def validate_model_tables(
             "reference_total_km": float(reference_line_length_km),
             "relative_difference": relative_difference,
             "tolerance_fraction": line_length_tolerance_fraction,
-            "reference_scope": reference_line_length_scope or "published line-length reference",
+            "reference_scope": reference_line_length_scope or "the published line length",
             "reference_source": reference_line_length_source or CEB_TRANSMISSION_LENGTH_SOURCE,
             "comparison_note": reference_line_length_note
             or (
-                "CEB reports 442 km overhead plus 36.9 km underground at 66 kV; "
-                "the model total may use a different route/circuit-length basis."
+                "CEB reports 442 km overhead and 36.9 km underground at 66 kV; "
+                "the model may count route length, not circuit length."
             ),
         }
         if not within_tolerance:
-            comparison_label = reference_line_length_scope or "the published line-length reference"
+            comparison_label = reference_line_length_scope or "the published line length"
+            direction = "below" if comparison_line_length_km < reference_line_length_km else "above"
             warnings.append(
-                f"Model line length differs from {comparison_label} by "
-                f"{relative_difference:.1%}; review coverage and length basis."
+                f"Line length is {comparison_line_length_km:,.0f} km, {relative_difference:.0%} {direction} "
+                f"{comparison_label} ({float(reference_line_length_km):,.0f} km)."
             )
 
     generation_capacity_check: dict[str, object]
     if reference_generation_capacity_mw is None:
         generation_capacity_check = {
             "status": "not_applicable",
-            "reason": "No reported installed-generation total is configured for this source.",
+            "reason": "No CEB generation total to compare with.",
         }
     else:
         relative_difference = abs(total_generator_output_capacity_mw - reference_generation_capacity_mw) / float(
@@ -330,21 +333,18 @@ def validate_model_tables(
             "coverage_fraction": coverage_fraction,
             "relative_difference": relative_difference,
             "tolerance_fraction": generation_capacity_tolerance_fraction,
-            "capacity_basis": "installed electrical output capacity",
+            "capacity_basis": "installed capacity",
             "report_period": "2023-2024",
             "reference_source": CEB_REPORTED_GENERATION_CAPACITY_SOURCE,
             "comparison_note": (
-                "The CEB grand total includes CEB, IPP, SSDG and MSDG generation; "
-                "the model includes only generators with capacity and network-bus data."
+                "CEB's total covers its own plants, independent producers (IPP) and small and medium "
+                "distributed generation (SSDG, MSDG); the model counts only generators with a capacity and a bus."
             ),
         }
         if not within_tolerance:
             warnings.append(
-                "Modelled generator output capacity covers "
-                f"{coverage_fraction:.1%} of the CEB-reported installed total "
-                f"({total_generator_output_capacity_mw:.2f} MW versus "
-                f"{reference_generation_capacity_mw:.2f} MW); review missing plant "
-                "coverage and scope."
+                f"Generators in the network total {total_generator_output_capacity_mw:,.0f} MW, "
+                f"{coverage_fraction:.0%} of CEB's installed {reference_generation_capacity_mw:,.0f} MW."
             )
 
     return {

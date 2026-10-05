@@ -64,19 +64,16 @@ INFERRED_OSM_METHODOLOGY = "nightlight-roads-osm-power-v1"
 INFERRED_PROVIDED_METHODOLOGY = "nightlight-roads-provided-power-v1"
 DEFAULT_NIGHTLIGHT_SUPPORT_DISTANCE_M = 1_000.0
 
-BASE_LINE_LENGTH_SCOPE = "CEB 66 kV transmission circuit length"
+BASE_LINE_LENGTH_SCOPE = "CEB's 66 kV circuit length"
 BASE_LINE_LENGTH_NOTE = (
-    "CEB reports 442 km overhead plus 36.9 km underground at 66 kV. "
-    "The routed base model is a geographic corridor model and may not retain "
-    "every parallel circuit represented by the published circuit-km total."
+    "CEB reports 442 km overhead and 36.9 km underground at 66 kV, counting every circuit. "
+    "The model follows the drawn routes, which may show a double-circuit line once."
 )
-INFERRED_LINE_LENGTH_SCOPE = "CEB total transmission, medium-voltage and low-voltage circuit length"
+INFERRED_LINE_LENGTH_SCOPE = "CEB's circuit length at all voltages"
 INFERRED_LINE_LENGTH_NOTE = (
-    "CEB reports 10,492.2 km across overhead and underground transmission, "
-    "medium-voltage distribution and low-voltage distribution. This check "
-    "compares that total directly with the nightlight-supported OSM road "
-    "subnetwork plus the provided CEB backbone where available. Geographic "
-    "road length and electrical circuit-km remain different quantities."
+    "CEB reports 10,492.2 km of lines at all voltages, overhead and underground. The model length "
+    "is the kept roads plus, in inferred-provided, the CEB 66 kV lines. Road length is not circuit "
+    "length: a road can carry several circuits or none."
 )
 
 
@@ -172,13 +169,12 @@ def _ceb_topology_validation(topology: DerivedBaseTopology) -> dict[str, object]
     failed = [name for name, passed in checks.items() if not passed]
     return {
         "status": "pass" if not failed else "warning",
-        "reference": "provided CEB 2025 network map",
+        "reference": "CEB network map, 2025",
         "checks": checks,
         "failed_checks": failed,
         "voltage_note": (
-            "The CEB map's blue 132 kV construction class operates at 66 kV. "
-            "The vectors do not retain enough style data to assign that design "
-            "class per circuit, so PyPSA v_nom remains the operating 66 kV."
+            "Lines drawn in blue on the CEB map are built for 132 kV but run at 66 kV. "
+            "The shapefile does not say which lines these are, so every line is 66 kV in the model."
         ),
     }
 
@@ -289,7 +285,7 @@ def _build_base_network(
             "default_voltage_kv": default_voltage_kv,
             "topology_capacity_mva": topology_capacity_mva,
             "electrical_values_note": (
-                "Voltages are provided CEB 66 kV values; line capacities are non-binding topology placeholders."
+                f"Voltages are CEB's 66 kV. Line capacities are a placeholder of {topology_capacity_mva:,.0f} MVA."
             ),
             "model_line_length_km": validation["totals"]["line_length_km"],
             "line_length_validation": validation["checks"]["line_length_against_published_ceb_total"],
@@ -311,7 +307,7 @@ def _build_base_network(
         publish_voltage=True,
         publish_capacity=False,
         electrical_values_note=(
-            "Voltages are provided CEB 66 kV values; line capacities are non-binding topology placeholders."
+            f"Voltages are CEB's 66 kV. Line capacities are a placeholder of {topology_capacity_mva:,.0f} MVA."
         ),
         stage="topology_only",
     )
@@ -1008,7 +1004,7 @@ def _build_inferred_network(
         member_roads = osm_road_envelope
         if "region" in member_roads and len(osm.region_members(region)) > 1:
             member_roads = member_roads[member_roads["region"].astype(str).eq(member_slug)]
-        logger.warning("%s: no power assets for %s; placing a provisional root on its road network", source, member)
+        logger.warning("%s: no power assets on %s; placing a placeholder substation on its roads", source, member)
         member_roots.append(_provisional_power_root(member, member_roads))
     if member_roots:
         power_assets = gpd.GeoDataFrame(
@@ -1132,7 +1128,7 @@ def _build_inferred_network(
     anchored, unanchored = _power_asset_anchor_counts(graph)
     if unanchored:
         logger.warning(
-            "%s: %d power asset(s) are farther than %.0f m from any retained road and stay unconnected",
+            "%s: %d power assets are more than %.0f m from a kept road and are not connected",
             network_path.stem,
             unanchored,
             max_anchor_distance_m,
@@ -1150,10 +1146,14 @@ def _build_inferred_network(
     spatial_dir = network_path.parent / "geoparquet"
     spatial_outputs = spatial_export_paths(spatial_dir, network_id=network_path.stem)
     electrical_values_note = (
-        "Distribution voltages/capacities are non-binding topology placeholders; "
-        "the provided transmission backbone keeps its voltage and joins distribution "
-        "through transformers (see model_v_nom_kv / model_s_nom_mva)."
+        f"Placeholder values, in model_v_nom_kv and model_s_nom_mva: roads {inferred_voltage_kv:g} kV and "
+        f"{inferred_capacity_mva:g} MVA; connections to substations and plants {inferred_anchor_capacity_mva:g} MVA."
     )
+    if source == "inferred-provided":
+        electrical_values_note += (
+            f" CEB lines {inferred_transmission_voltage_kv:g} kV and {inferred_transmission_capacity_mva:g} MVA,"
+            " joined to the roads by transformers."
+        )
     _write_metadata(
         metadata_path,
         {
