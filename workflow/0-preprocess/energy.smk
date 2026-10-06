@@ -19,7 +19,7 @@ or linked from the shared drive, nothing is downloaded or rebuilt.
 All networks:  snakemake -c1 build_energy_networks
 One network:   snakemake -c1 data/processed/energy/<model_data>/networks/base-mauritius/base-mauritius.nc
 
-Method and limitations: docs/src/infrastructure-energy.md.
+Setup, commands, method and limitations: docs/src/infrastructure-energy.md.
 """
 
 import shlex

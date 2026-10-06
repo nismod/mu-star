@@ -11,6 +11,79 @@ estimated from roads and night-time lights.
 | `inferred-provided-mauritius-rodrigues` | CEB substations, 66 kV lines and power plants, plus the estimated distribution network. |
 | `inferred-osm-mauritius-rodrigues` | Substations and power plants mapped in OpenStreetMap, plus the estimated distribution network. |
 
+## Running the model
+
+Run the commands below from the repository root, with the `mu-star`
+environment active (see "Setup and installation" in the README). The rules
+read and write `data/processed/energy/<model_data>/` and
+`data/out/energy/<model_data>/`, where `<model_data>` is the name of a
+model-data pack, set as `model_data` in `config/energy/energy.yaml`. It is now
+`20261006-model-data`.
+
+### With access to the project OneDrive
+
+Link the energy folders of the synced OneDrive into `data/`. Each link keeps
+the name of the folder it points to.
+
+```shell
+# The synced project folder, on a Mac for example
+# $HOME/Library/CloudStorage/OneDrive-Nexus365/Shortcuts/Geography - Jim Halls group-Mauritius - Mauritius
+SHARED="<synced project folder>"
+mkdir -p data/incoming/Infrastructure data/processed/energy data/out/energy
+ln -s "$SHARED/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/
+ln -s "$SHARED/Processed Data/Infrastructure/Energy/20261006-model-data" data/processed/energy/
+ln -s "$SHARED/Output Data/Infrastructure/Energy/20261006-model-data" data/out/energy/
+```
+
+The first link is the source data, including the CEB data, which is not
+public. The second is the model-data pack, so nothing needs building. The
+third holds the pack's review tables (generators, lines and validation of
+each network), which the notebooks show.
+
+Snakemake writes rebuilt files through these links into the OneDrive. Nothing
+is rebuilt while the pack matches the code. Before you change the energy code
+or force a rerun (`-F` or `-R`), replace the pack link with a copy:
+
+```shell
+rm data/processed/energy/20261006-model-data
+cp -Rp "$SHARED/Processed Data/Infrastructure/Energy/20261006-model-data" data/processed/energy/
+```
+
+`-p` keeps the file dates, which Snakemake uses to decide what to rebuild.
+
+### Without OneDrive access
+
+If you have a model-data pack, put it in `data/processed/energy/`, keeping its
+folder name and file dates (`cp -Rp`). It holds the three networks and the
+demand shares, so nothing needs building.
+
+Otherwise, build `inferred-osm-mauritius-rodrigues` from public data. The
+workflow downloads OpenStreetMap and the VIIRS night lights into
+`data/incoming/Infrastructure/Energy/`. The other two networks and the demand
+shares need the CEB data.
+
+```shell
+snakemake -c1 data/processed/energy/20261006-model-data/networks/inferred-osm-mauritius-rodrigues/inferred-osm-mauritius-rodrigues.nc
+```
+
+### Commands
+
+```shell
+snakemake -n -c1 build_energy_networks  # dry run: what would run, and why
+snakemake -c1 build_energy_networks     # the three networks
+snakemake -c1 data/processed/energy/20261006-model-data/networks/base-mauritius/base-mauritius.nc  # one network
+```
+
+With a pack in place, `build_energy_networks` has nothing to do. The demand
+shares need the source data, even with a pack:
+
+```shell
+snakemake -c1 data/processed/energy/20261006-model-data/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv
+```
+
+The outputs are described below. The notebooks in `notebooks/energy/` show
+the inputs and the networks.
+
 ## Estimating the distribution network
 
 1. **Lit areas.** Twelve monthly VIIRS satellite images of night-time light
@@ -82,13 +155,6 @@ drive.
   Rodrigues.
 
 The workflow downloads a public input only when it is missing.
-
-Project members can skip these inputs and use a prepared pack of the
-processed files from `Processed Data/Infrastructure/Energy` on the shared
-drive, copied or linked into `<data>/processed/energy/`. Its folder name is
-`model_data` in `energy.yaml`, written `<model_data>` below. Without project
-access, only `inferred-osm-mauritius-rodrigues` can be built, from the
-downloaded inputs. The README gives the commands.
 
 ## Demand
 
