@@ -192,8 +192,7 @@ output files.
 While this workflow is in development, some of the rules are placeholders.
 
 The energy rules build three models of the electricity network. How to get
-the data, with or without access to the project OneDrive, and how to run the
-rules is in the Energy chapter of the documentation,
+the data and run the rules is in the Energy chapter of the documentation,
 `docs/src/infrastructure-energy.md`. Settings are in
 `config/energy/energy.yaml`.
 

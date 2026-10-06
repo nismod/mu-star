@@ -13,72 +13,75 @@ estimated from roads and night-time lights.
 
 ## Running the model
 
-Run the commands below from the repository root, with the `mu-star`
-environment active (see "Setup and installation" in the README). The rules
-read and write `data/processed/energy/<model_data>/` and
-`data/out/energy/<model_data>/`, where `<model_data>` is the name of a
-model-data pack, set as `model_data` in `config/energy/energy.yaml`. It is now
-`20261006-model-data`.
-
-### With access to the project OneDrive
-
-Link the energy folders of the synced OneDrive into `data/`. Each link keeps
-the name of the folder it points to.
+Run the commands from the repository root, with the `mu-star` environment
+active (see "Setup and installation" in the README). The rules read inputs
+from `data/incoming/Infrastructure/Energy/` and write to
+`data/processed/energy/<model_data>/` and `data/out/energy/<model_data>/`,
+where `<model_data>` is the folder named by `model_data` in
+`config/energy/energy.yaml`. The commands below read that name into
+`MODEL_DATA`:
 
 ```shell
-# The synced project folder, on a Mac for example
-# $HOME/Library/CloudStorage/OneDrive-Nexus365/Shortcuts/Geography - Jim Halls group-Mauritius - Mauritius
-SHARED="<synced project folder>"
+MODEL_DATA=$(sed -n 's/^ *model_data: *//p' config/energy/energy.yaml)
+```
+
+### From public data
+
+`inferred-osm-mauritius-rodrigues` needs only public data. The workflow
+downloads OpenStreetMap and the VIIRS night lights into
+`data/incoming/Infrastructure/Energy/`, then builds the network:
+
+```shell
+snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/inferred-osm-mauritius-rodrigues/inferred-osm-mauritius-rodrigues.nc"
+```
+
+The other two networks and the demand shares need the CEB data, which is not
+public.
+
+### From a model-data pack
+
+A model-data pack holds the processed files of one build: the three networks
+and the demand shares. Copy it into `data/processed/energy/`, keeping its
+folder name, which must match `model_data`. `cp -Rp` keeps the file dates,
+which Snakemake uses to decide what to rebuild:
+
+```shell
+mkdir -p data/processed/energy
+cp -Rp "<folder holding the pack>/$MODEL_DATA" data/processed/energy/
+```
+
+With the pack in place, `build_energy_networks` has nothing to do.
+
+### Project members
+
+The project's shared drive holds the source data, including the CEB data, and
+the model-data packs. Link its energy folders into `data/` instead of copying
+them. Each link keeps the name of the folder it points to.
+
+```shell
+SHARED="<synced shared drive folder>"  # holds Incoming Data, Processed Data and Output Data
 mkdir -p data/incoming/Infrastructure data/processed/energy data/out/energy
 ln -s "$SHARED/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/
-ln -s "$SHARED/Processed Data/Infrastructure/Energy/20261006-model-data" data/processed/energy/
-ln -s "$SHARED/Output Data/Infrastructure/Energy/20261006-model-data" data/out/energy/
+ln -s "$SHARED/Processed Data/Infrastructure/Energy/$MODEL_DATA" data/processed/energy/
+ln -s "$SHARED/Output Data/Infrastructure/Energy/$MODEL_DATA" data/out/energy/  # review tables
 ```
 
-The first link is the source data, including the CEB data, which is not
-public. The second is the model-data pack, so nothing needs building. The
-third holds the pack's review tables (generators, lines and validation of
-each network), which the notebooks show.
-
-Snakemake writes rebuilt files through these links into the OneDrive. Nothing
-is rebuilt while the pack matches the code. Before you change the energy code
-or force a rerun (`-F` or `-R`), replace the pack link with a copy:
-
-```shell
-rm data/processed/energy/20261006-model-data
-cp -Rp "$SHARED/Processed Data/Infrastructure/Energy/20261006-model-data" data/processed/energy/
-```
-
-`-p` keeps the file dates, which Snakemake uses to decide what to rebuild.
-
-### Without OneDrive access
-
-If you have a model-data pack, put it in `data/processed/energy/`, keeping its
-folder name and file dates (`cp -Rp`). It holds the three networks and the
-demand shares, so nothing needs building.
-
-Otherwise, build `inferred-osm-mauritius-rodrigues` from public data. The
-workflow downloads OpenStreetMap and the VIIRS night lights into
-`data/incoming/Infrastructure/Energy/`. The other two networks and the demand
-shares need the CEB data.
-
-```shell
-snakemake -c1 data/processed/energy/20261006-model-data/networks/inferred-osm-mauritius-rodrigues/inferred-osm-mauritius-rodrigues.nc
-```
+Snakemake writes rebuilt files through these links into the shared drive.
+Before you change the energy code or force a rerun (`-F` or `-R`), replace the
+pack link with a copy made with `cp -Rp`.
 
 ### Commands
 
 ```shell
 snakemake -n -c1 build_energy_networks  # dry run: what would run, and why
-snakemake -c1 build_energy_networks     # the three networks
-snakemake -c1 data/processed/energy/20261006-model-data/networks/base-mauritius/base-mauritius.nc  # one network
+snakemake -c1 build_energy_networks     # the three networks; needs a pack or the CEB data
+snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/base-mauritius/base-mauritius.nc"  # one network
 ```
 
-With a pack in place, `build_energy_networks` has nothing to do. The demand
-shares need the source data, even with a pack:
+The demand shares need the CEB data, even with a pack:
 
 ```shell
-snakemake -c1 data/processed/energy/20261006-model-data/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv
+snakemake -c1 "data/processed/energy/$MODEL_DATA/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv"
 ```
 
 The outputs are described below. The notebooks in `notebooks/energy/` show

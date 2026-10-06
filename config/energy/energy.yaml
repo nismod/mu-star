@@ -5,8 +5,7 @@
 
 energy:
   # Folder under data/processed/energy/ and data/out/energy/ that the rules read
-  # and write, named after the model-data pack on the shared drive. To build a
-  # new pack, change the name here and in docs/src/infrastructure-energy.md.
+  # and write: the name of a model-data pack. For a new build, use a new name.
   model_data: 20261006-model-data
 
   # Area of the inferred networks. "mauritius-rodrigues" downloads each island
