@@ -201,24 +201,27 @@ The energy data is on the project's shared drive (see
 [Getting data](CONTRIBUTING.md#getting-data)). Set up one or both of:
 
 - **A processed pack.** Copy the newest `yyyymmdd-model-data` folder from
-  `Processed Data/Infrastructure/Energy` to `data/processed/energy`. The rules
-  then use these files and do not download or rebuild anything.
-- **The source data.** Copy `Incoming Data/Infrastructure/Energy` to
+  `Processed Data/Infrastructure/Energy` to `data/processed/energy`. With it,
+  `build_energy_networks` has nothing to do.
+- **The source data.** Link `Incoming Data/Infrastructure/Energy` to
   `data/incoming/Infrastructure/Energy`. It holds the CEB data, which is not
-  public. The public inputs (OpenStreetMap, VIIRS night lights, WorldPop
-  population) are downloaded when missing.
+  public, and the public inputs (OpenStreetMap, VIIRS night lights, WorldPop
+  population). A public input is downloaded only when it is missing, or again
+  on a forced run (`-F`), which replaces the shared copy. The demand command
+  below needs this folder, even with a pack in place.
 
 With the shared drive synced to your computer:
 
 ```shell
 mkdir -p data/processed data/incoming/Infrastructure
-cp -R "<shared drive>/Processed Data/Infrastructure/Energy/<yyyymmdd>-model-data" data/processed/energy
-cp -R "<shared drive>/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/Energy
+cp -Rp "<shared drive>/Processed Data/Infrastructure/Energy/<yyyymmdd>-model-data" data/processed/energy
+ln -s "<shared drive>/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/Energy
 ```
 
-Skip the last line if `data/incoming` already holds or links to the whole
-`Incoming Data` folder. Copy the energy folders rather than linking them:
-when Snakemake rebuilds a file it writes through a link into the shared drive.
+`-p` keeps the file dates. Without it, Snakemake sees the copied files as out
+of date and rebuilds them. Copy the pack rather than linking it: Snakemake
+writes rebuilt files through a link into the shared drive. Skip the last line
+if `data/incoming` already holds or links to the whole `Incoming Data` folder.
 
 Build the three networks (with a pack in place there is nothing to do):
 
