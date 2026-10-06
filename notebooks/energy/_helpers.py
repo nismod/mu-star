@@ -5,14 +5,15 @@ They find, load and map the pipeline's files; they never build or download anyth
 (nismod/irv-standalone), so notebook plotting code belongs here, not in ``src/energy/``.
 
 Paths, read on import from ``data_root`` in ``config/config.yaml`` (default: this repository's ``data/``)
-and ``energy.region`` in ``config/energy/energy.yaml``:
+and ``energy.region`` and ``energy.model_data`` in ``config/energy/energy.yaml``. ``<pack>`` below is
+``<data>/processed/energy/<model_data>``.
 
 - ``DATA_ROOT``, ``REGION``, ``REGION_SLUG``
-- ``PROVIDED_DIR``    <data>/processed/energy/provided            cleaned CEB tables
+- ``PROVIDED_DIR``    <pack>/provided             cleaned CEB tables
 - ``OSM_CACHE_DIR``   <data>/incoming/Infrastructure/Energy/OpenStreetMap/<region>  roads, power features, outline
-- ``NIGHTLIGHT_DIR``  <data>/processed/energy/nightlight/<region> radiance composite and lit pixels
-- ``NETWORKS_DIR``    <data>/processed/energy/networks/<network>  PyPSA network, metadata, GeoParquet layers
-- ``OUT_DIR``         <data>/out/energy/<network>                 generators.csv, lines.csv, validation.json
+- ``NIGHTLIGHT_DIR``  <pack>/nightlight/<region>  radiance composite and lit pixels
+- ``NETWORKS_DIR``    <pack>/networks/<network>   PyPSA network, metadata, GeoParquet layers
+- ``OUT_DIR``         <data>/out/energy/<model_data>/<network>  generators.csv, lines.csv, validation.json
 
 Inputs (notebook 00):
 

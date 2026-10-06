@@ -83,9 +83,12 @@ drive.
 
 The workflow downloads a public input only when it is missing.
 
-To use the networks without any of these inputs, copy a processed pack
-(`yyyymmdd-model-data` in `Processed Data/Infrastructure/Energy` on the shared
-drive) to `<data>/processed/energy`. The README gives the commands.
+Project members can skip these inputs and use a prepared pack of the
+processed files from `Processed Data/Infrastructure/Energy` on the shared
+drive, copied or linked into `<data>/processed/energy/`. Its folder name is
+`model_data` in `energy.yaml`, written `<model_data>` below. Without project
+access, only `inferred-osm-mauritius-rodrigues` can be built, from the
+downloaded inputs. The README gives the commands.
 
 ## Demand
 
@@ -106,11 +109,12 @@ this, so it is estimated with PyPSA-Earth's method:
 Shares are rescaled to add to one. System demand, from the annual report: a
 peak of 525.7 MW (16 February 2024, p. 45) and an average of 346.8 MW (units
 sent out in 2023-24 divided by 8,784 hours, p. 51). The shares, areas and
-demand levels are written to `<data>/processed/energy/demand/<network>/`.
+demand levels are written to
+`<data>/processed/energy/<model_data>/demand/<network>/`.
 
 ## Outputs
 
-For each network, in `<data>/processed/energy/networks/<network>/`:
+For each network, in `<data>/processed/energy/<model_data>/networks/<network>/`:
 
 - `<network>.nc`: the [PyPSA](https://pypsa.org/) network.
 - `<network>_metadata.json`: inputs, settings and file checksums of the build.
@@ -119,11 +123,11 @@ For each network, in `<data>/processed/energy/networks/<network>/`:
 - `inferred_distribution/` (inferred networks only): the road network as CSV
   tables of nodes and edges.
 
-In `<data>/out/energy/<network>/`: `generators.csv`, `lines.csv` and
-`validation.json`. The validation file compares the model with CEB's published
-totals: line length (479 km of 66 kV lines for `base-mauritius`; 10,492 km of
-all lines for the inferred networks) and installed generation capacity. A
-difference beyond the tolerance is a warning, which is also logged.
+In `<data>/out/energy/<model_data>/<network>/`: `generators.csv`, `lines.csv`
+and `validation.json`. The validation file compares the model with CEB's
+published totals: line length (479 km of 66 kV lines for `base-mauritius`;
+10,492 km of all lines for the inferred networks) and installed generation
+capacity. A difference beyond the tolerance is a warning, which is also logged.
 
 ## Limitations
 

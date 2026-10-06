@@ -7,4 +7,5 @@ image and targets.
 
 Run `00_data_review.ipynb` top to bottom. A missing file does not stop it: the
 cell prints the command that makes the file, for example
-`snakemake -c1 data/processed/energy/provided/generators.csv`.
+`snakemake -c1 data/processed/energy/<model_data>/provided/generators.csv`,
+where `<model_data>` is `model_data` in `config/energy/energy.yaml`.

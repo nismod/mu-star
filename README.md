@@ -197,31 +197,49 @@ The energy rules build three models of the electricity network:
 `docs/src/infrastructure-energy.md`; settings are in
 `config/energy/energy.yaml`.
 
-The energy data is on the project's shared drive (see
-[Getting data](CONTRIBUTING.md#getting-data)). Set up one or both of:
+The rules read and write `data/processed/energy/<model_data>/` and
+`data/out/energy/<model_data>/`, where `<model_data>` is `model_data` in
+`config/energy/energy.yaml` (now `20261006-model-data`).
 
-- **A processed pack.** Copy the newest `yyyymmdd-model-data` folder from
-  `Processed Data/Infrastructure/Energy` to `data/processed/energy`. With it,
-  `build_energy_networks` has nothing to do.
-- **The source data.** Link `Incoming Data/Infrastructure/Energy` to
-  `data/incoming/Infrastructure/Energy`. It holds the CEB data, which is not
-  public, and the public inputs (OpenStreetMap, VIIRS night lights, WorldPop
-  population). A public input is downloaded only when it is missing, or again
-  on a forced run (`-F`), which replaces the shared copy. The demand command
-  below needs this folder, even with a pack in place.
-
-With the shared drive synced to your computer:
+**Project members** can use a prepared pack: the folder of that name in
+`Processed Data/Infrastructure/Energy` on the project's shared drive (see
+[Getting data](CONTRIBUTING.md#getting-data)). With the shared drive synced to
+your computer, copy the pack or link it:
 
 ```shell
-mkdir -p data/processed data/incoming/Infrastructure
-cp -Rp "<shared drive>/Processed Data/Infrastructure/Energy/<yyyymmdd>-model-data" data/processed/energy
-ln -s "<shared drive>/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/Energy
+mkdir -p data/processed/energy
+cp -Rp "<shared drive>/Processed Data/Infrastructure/Energy/<model_data>" data/processed/energy/
+# or
+ln -s "<shared drive>/Processed Data/Infrastructure/Energy/<model_data>" data/processed/energy/
 ```
 
 `-p` keeps the file dates. Without it, Snakemake sees the copied files as out
-of date and rebuilds them. Copy the pack rather than linking it: Snakemake
-writes rebuilt files through a link into the shared drive. Skip the last line
-if `data/incoming` already holds or links to the whole `Incoming Data` folder.
+of date and rebuilds them. Through a link, anything Snakemake rebuilds is
+written into the shared pack, so copy the pack if you will change the energy
+code. With the pack in place, `build_energy_networks` has nothing to do. The
+pack's review tables (generators, lines, validation) are in the folder of the
+same name in `Output Data/Infrastructure/Energy`; copy or link it into
+`data/out/energy/` to see them in the notebooks.
+
+To rebuild from the source data, also link `Incoming Data/Infrastructure/Energy`.
+It holds the CEB data, which is not public, and copies of the public inputs.
+The demand command below needs it, even with a pack in place. A forced run
+(`-F`) downloads the public inputs again, into the shared folder. Skip this if
+`data/incoming` already holds or links to the whole `Incoming Data` folder.
+
+```shell
+mkdir -p data/incoming/Infrastructure
+ln -s "<shared drive>/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/
+```
+
+**Without project access**, build `inferred-osm-mauritius-rodrigues` from public
+data. The workflow downloads OpenStreetMap and the VIIRS night lights into
+`data/incoming/Infrastructure/Energy/`. The other two networks and the demand
+shares need the CEB data.
+
+```shell
+snakemake -c1 data/processed/energy/<model_data>/networks/inferred-osm-mauritius-rodrigues/inferred-osm-mauritius-rodrigues.nc
+```
 
 Build the three networks (with a pack in place there is nothing to do):
 
@@ -232,14 +250,14 @@ snakemake -c1 build_energy_networks
 Build one network:
 
 ```shell
-snakemake -c1 data/processed/energy/networks/base-mauritius/base-mauritius.nc
+snakemake -c1 data/processed/energy/<model_data>/networks/base-mauritius/base-mauritius.nc
 ```
 
 Build the demand share of each substation and network node, for the
 interruption analysis:
 
 ```shell
-snakemake -c1 data/processed/energy/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv
+snakemake -c1 data/processed/energy/<model_data>/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv
 ```
 
 ### Testing

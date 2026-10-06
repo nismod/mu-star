@@ -4,6 +4,11 @@
 # laid out as on the project's shared drive.
 
 energy:
+  # Folder under data/processed/energy/ and data/out/energy/ that the rules read
+  # and write, named after the model-data pack on the shared drive. To build a
+  # new pack, change the name.
+  model_data: 20261006-model-data
+
   # Area of the inferred networks. "mauritius-rodrigues" downloads each island
   # from OpenStreetMap and joins them (REGION_GROUPS in src/energy/osm.py). Any
   # OpenStreetMap place name also works, e.g. "Rodrigues, Mauritius".
