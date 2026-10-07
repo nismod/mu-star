@@ -214,24 +214,11 @@ ruff check
 
 ### Developer notebooks
 
-For visual debugging while developing a model, the `notebooks/` directory holds
-local, dev-only notebooks that read the pipeline's standard outputs and render
-them. They are namespaced per system and are not part of any workflow rule;
-production visualisation is the separate viewer at
-https://github.com/nismod/irv-standalone. The energy notebooks live in
-`notebooks/energy/`: `00_inputs.ipynb` looks at the inputs, and
-`01_networks.ipynb` runs the build (from a cell or the terminal) and inspects
-a network. Notebook outputs are stripped on commit via `nbstripout`; enable this
-once per clone so committed notebooks stay diff-clean. The last line also
-strips the kernel name and Python version, which differ between machines:
-
-```shell
-pre-commit install
-nbstripout --install
-git config filter.nbstripout.extrakeys "metadata.kernelspec metadata.language_info"
-```
-
-See `notebooks/README.md` for the per-system layout and conventions.
+`notebooks/` holds notebooks for looking at the workflow's files while working
+on the code, one folder per system. `notebooks/energy/` has `00_inputs.ipynb`
+for the inputs and `01_networks.ipynb` for the networks. Before committing a
+notebook, do the one-time setup in `notebooks/README.md`, which strips outputs,
+kernel name and Python version on commit.
 
 ## Documentation
 
