@@ -7,10 +7,16 @@ night-time lights.
 
 ## Data
 
+The workflow starts from inputs in `data/incoming/Infrastructure/Energy/`.
+Data preparation rules turn them into processed files in
+`data/processed/energy/<model_data>/`, named by `model_data` in
+`config/energy/energy.yaml`. The processed files can also be used directly:
+instead of copying individual input files, project members can use a
+`yyyymmdd-model-data` pack from the project OneDrive.
+
 A `*-star` repository can be run on public data alone, using the inferred
-method. For working with official provided files, alone or combined with the
-public data, those files are needed as well. All inputs sit in
-`data/incoming/Infrastructure/Energy/`:
+method. Working with official provided files, alone or combined with the
+public data, needs those files as well:
 
 | Data | Source | Folder |
 | --- | --- | --- |
@@ -29,8 +35,8 @@ The CEB files are shared under licence and are not public.
 
 ## Methods
 
-The rules turn the inputs into processed files in
-`data/processed/energy/<model_data>/`:
+The preparation rules make the processed files in four steps, each writing
+its own folder:
 
 1. **CEB tables** (`provided/`): substations moved onto the nearest 66 kV
    route, and plants located and, on Mauritius, assigned the nearest
@@ -59,14 +65,10 @@ demand loses supply, at peak and average demand.
 
 ## Running the model
 
-Set up the `mu-star` conda environment as in the README. The rules read
-`data/incoming/Infrastructure/Energy/` and write
-`data/processed/energy/<model_data>/` and `data/out/energy/<model_data>/`,
-with `model_data` set in `config/energy/energy.yaml`. The workflow downloads
-the public data. Project members link or copy the provided data from the
-project OneDrive, which uses the same folder names. Instead of copying
-individual files, they can use a `yyyymmdd-model-data` pack of processed
-files, so nothing needs to run:
+Set up the `mu-star` conda environment as in the README. The workflow
+downloads the public data. Project members link or copy the provided data,
+and a pack if they use one, from the project OneDrive, which uses the same
+folder names:
 
 ```shell
 SHARED="<synced OneDrive project folder>"  # holds Incoming Data, Processed Data and Output Data
