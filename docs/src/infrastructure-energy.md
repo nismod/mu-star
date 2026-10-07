@@ -32,49 +32,30 @@ The CEB files are shared under licence and are not public.
 The rules turn the inputs into processed files in
 `data/processed/energy/<model_data>/`:
 
-1. **CEB tables** (`provided/`). Substations are moved onto the nearest 66 kV
-   route. Each plant in the annual report is located from the sites table and,
-   on Mauritius, assigned the nearest CEB substation. Rooftop solar and plants
-   with no location yet are left out for now.
-2. **Lit areas** (`nightlight/`). The median of the twelve monthly images (a
-   zero can mean no cloud-free view). A filter from
-   [GridFinder](https://github.com/carderne/gridfinder) (Chris Arderne, MIT
-   licence) keeps pixels brighter than their surroundings; those above a
-   threshold are *targets* the network must reach.
-3. **Networks** (`networks/<network>/`), named after how they are made and the
-   area they cover. `base-mauritius` uses the provided data alone, which covers
-   Mauritius only: the substations joined along the CEB routes, with gaps under
-   75 m closed, and the plants attached. `inferred-osm-<region>` (public data)
-   and `inferred-provided-<region>` (combination) take their power assets from
-   OpenStreetMap or from the provided data, for `region` in
-   `config/energy/energy.yaml` (here `mauritius-rodrigues`). They keep the
-   drivable roads within 1 km of a target or a power asset, plus the shortest
-   road path back to any lit area this cuts off; a two-way street is one line,
-   and parallel roads stay separate. Each asset connects to the nearest kept
-   road within 1 km and, in `inferred-provided`, also to the nearest 66 kV
-   line, through a transformer.
-4. **Demand shares** (`demand/`), with PyPSA-Earth's method. Each substation
-   supplies the area closer to it than to any other; on Rodrigues the plants
-   share the island. An area's share of system demand is 0.6 times its share
-   of night-light radiance plus 0.4 times its share of population, and the
-   same weights split it between the area's road nodes. PyPSA-Earth uses GDP
-   instead of night lights, but GDP grids are too coarse here. System demand,
-   from the annual report: 525.7 MW at peak (16 February 2024, p. 45) and
-   346.8 MW on average (p. 51).
-
-The estimated lines show where distribution lines probably run, not where they
-are. Voltages and capacities are placeholders, in `model_v_nom_kv` and
-`model_s_nom_mva` (`v_nom_kv` and `s_nom_mva` stay empty until CEB values
-exist): roads 11 kV and 5 MVA, 66 kV lines 50 MVA, connections 137 MVA (2,595
-MVA of transformers over 19 substations, report p. 71), and 10,000 MVA on
-every line of `base-mauritius`, so that no line limits flow. They and the
-distances are set in `config/energy/energy.yaml`.
+1. **CEB tables** (`provided/`): substations moved onto the nearest 66 kV
+   route, and plants located and, on Mauritius, assigned the nearest
+   substation.
+2. **Lit areas** (`nightlight/`): the median of the monthly images, filtered
+   as in [GridFinder](https://github.com/carderne/gridfinder) into *targets*,
+   lit places the network must reach.
+3. **Networks** (`networks/<network>/`). `base-mauritius` is the provided
+   network alone, which covers Mauritius only. `inferred-osm-<region>` (public
+   data) connects the OpenStreetMap power assets through the drivable roads
+   within 1 km of a target or an asset: the estimated distribution network.
+   `inferred-provided-<region>` (combination) adds that distribution network to
+   the provided network. `<region>` is `region` in `config/energy/energy.yaml`,
+   which also sets the placeholder voltages and capacities.
+4. **Demand shares** (`demand/`), with PyPSA-Earth's method: each substation
+   supplies the area closer to it than to any other, and an area's share of
+   system demand is 0.6 times its share of night-light radiance plus 0.4 times
+   its share of population (GDP grids are too coarse here). The same weights
+   split it between the area's road nodes. System demand, from the annual
+   report: 525.7 MW at peak and 346.8 MW on average.
 
 ### Interruption model (in development)
 
-Given the assets that fail in a hazard scenario, it will estimate how much
-demand loses supply, at peak and average demand, from the networks and demand
-shares above.
+From the assets that fail in a hazard scenario, it will estimate how much
+demand loses supply, at peak and average demand.
 
 ## Running the model
 
@@ -135,8 +116,10 @@ The notebooks in `notebooks/energy/` show the inputs and the networks.
 
 ## Limitations
 
+- The estimated distribution lines show where lines probably run, not where
+  they are; lines that do not follow roads are missing.
 - Rodrigues has no CEB network data, so there is no substation or 66 kV line
   between its plants. An island with no power asset at all gets a placeholder
   substation on its roads.
-- Distribution lines that do not follow roads are missing.
+- Rooftop solar and plants with no location yet are left out.
 - Voltages and capacities are placeholders, and no power flow is run.
