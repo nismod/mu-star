@@ -5,7 +5,7 @@
 
 energy:
   # Folder under data/processed/energy/ and data/out/energy/ that the rules read
-  # and write: the name of a model-data pack. For a new build, use a new name.
+  # and write: the name of a model-data pack. For new processed files, use a new name.
   model_data: 20261006-model-data
 
   # Area of the inferred networks. "mauritius-rodrigues" downloads each island

@@ -1,6 +1,6 @@
 # Energy notebooks
 
-Two notebooks for checking the energy build while working on `src/energy/`:
+Two notebooks for checking the energy model while working on `src/energy/`:
 
 - `00_inputs.ipynb`: the inputs (CEB data, OpenStreetMap, night lights). It
   builds and downloads nothing; a cell whose file is missing prints the command
@@ -18,6 +18,6 @@ helpers. Plotting code stays here, not in `src/energy/`. Maps for users are in
 the separate viewer, [nismod/irv-standalone](https://github.com/nismod/irv-standalone).
 
 Open the notebooks with Jupyter in the `mu-star` environment. How to get the
-data is in "Data and running the model" in `docs/src/infrastructure-energy.md`;
+data is in "Running the model" in `docs/src/infrastructure-energy.md`;
 for the one-time notebook setup (nbstripout, pre-commit) see
 [`../README.md`](../README.md).
