@@ -8,24 +8,24 @@ Paths, read on import from ``data_root`` in ``config/config.yaml`` (default: thi
 and ``energy.region`` and ``energy.model_data`` in ``config/energy/energy.yaml``. ``<pack>`` below is
 ``<data>/processed/energy/<model_data>``.
 
-- ``DATA_ROOT``, ``REGION``, ``REGION_SLUG``
+- ``DATA_ROOT``, ``MODEL_DATA``, ``REGION``, ``REGION_SLUG``
 - ``PROVIDED_DIR``    <pack>/provided             cleaned CEB tables
 - ``OSM_CACHE_DIR``   <data>/incoming/Infrastructure/Energy/OpenStreetMap/<region>  roads, power features, outline
 - ``NIGHTLIGHT_DIR``  <pack>/nightlight/<region>  radiance composite and lit pixels
 - ``NETWORKS_DIR``    <pack>/networks/<network>   PyPSA network, metadata, GeoParquet layers
 - ``OUT_DIR``         <data>/out/energy/<model_data>/<network>  generators.csv, lines.csv, validation.json
 
-Inputs (notebook 00):
+Inputs (``00_inputs.ipynb``):
 
 - ``load_provided()``, ``load_osm_cache()``: the cleaned CEB tables and OSM layers that exist.
 - ``osm_paths()``, ``nightlight_paths()``, ``nightlight_monthly_tiles()``: where the input files are.
 - ``load_nightlight_targets()``: the lit pixels as points.
 - ``found(path, how)``: True if ``path`` exists, else prints the command ``how`` (``FETCH_OSM`` etc.).
 
-Built networks (notebook 01):
+Built networks (``01_networks.ipynb``):
 
-- ``available_products()``, ``list_products()``: the built networks.
-- ``load_layers(name)``: ``(nodes, edges)`` GeoDataFrames; ``anchor_nodes(nodes)`` drops the road nodes.
+- ``available_networks()``, ``list_networks()``: the built networks.
+- ``load_layers(name)``: ``(nodes, edges)`` GeoDataFrames; ``power_nodes(nodes)`` drops the road nodes.
 - ``load_validation(name)``, ``load_pypsa(name)``, ``summarise(name)``.
 - ``explore_network(name)``: interactive Plotly map; ``plot_network(name)``, ``quick_map(**layers)``: static maps.
 - ``MAURITIUS_BBOX``, ``RODRIGUES_BBOX``: boxes for the ``clip=`` argument.
@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import math
+import shlex
 from pathlib import Path
 
 import geopandas as gpd
@@ -80,6 +81,7 @@ REGION_SLUG = energy_osm.region_slug(REGION)
 NETWORK_TYPE = str(_setting("osm", "network_type", default="drive")).strip()
 
 DATA_ROOT = energy_paths.data_root()
+MODEL_DATA = energy_paths.model_data()
 PROVIDED_DIR = energy_paths.processed_energy_dir(DATA_ROOT) / "provided"
 OSM_CACHE_DIR = DATA_ROOT / energy_osm.osm_cache_dir_relative(REGION)
 NIGHTLIGHT_DIR = energy_paths.processed_energy_dir(DATA_ROOT) / "nightlight" / REGION_SLUG
@@ -100,8 +102,6 @@ RODRIGUES_BBOX = (63.3, -19.8, 63.5, -19.6)
 
 # --- Terminal commands that create the files (printed by ``found()``) ---------
 
-FETCH_OSM = "snakemake -c1 build_energy_networks  (downloads the OpenStreetMap files when they are missing)"
-FETCH_NIGHTLIGHTS = "snakemake -c1 build_energy_networks  (downloads the night-light tiles when they are missing)"
 BUILD_ALL = "snakemake -c1 build_energy_networks"
 
 
@@ -112,7 +112,7 @@ def build_command(path: Path) -> str:
         target = path.relative_to(REPO_ROOT)
     except ValueError:
         target = path
-    return f"snakemake -c1 {target}"
+    return f"snakemake -c1 {shlex.quote(str(target))}"
 
 
 def found(path: Path, how: str) -> bool:
@@ -132,6 +132,7 @@ PROVIDED_FILES = (
     "transmission_routes.parquet",
     "generation_points.parquet",
     "generation_areas.parquet",
+    "generation_sites.csv",
     "generators.csv",
     "monthly_peak_demand_mw.csv",
     "annual_sector_demand_gwh.csv",
@@ -185,6 +186,10 @@ def load_osm_cache() -> dict[str, gpd.GeoDataFrame]:
     return {key: energy_osm.read_vector(path) for key, path in osm_paths().items() if path.is_file()}
 
 
+# Asking for the roads file downloads all three OpenStreetMap layers.
+FETCH_OSM = build_command(DATA_ROOT / energy_osm.roads_cache_relative(REGION, NETWORK_TYPE))
+
+
 # --- Inputs: the night lights -------------------------------------------------
 
 
@@ -192,6 +197,10 @@ def nightlight_monthly_tiles() -> list[Path]:
     """Return the monthly VIIRS tiles the workflow expects (cached or not), one per configured object id."""
     object_ids = _setting("nightlight", "source", "object_ids", default=list(range(120, 132)))
     return [NIGHTLIGHT_MONTHLY_DIR / tile_name(index, int(oid)) for index, oid in enumerate(object_ids, start=1)]
+
+
+# Asking for the first tile downloads all twelve.
+FETCH_NIGHTLIGHTS = build_command(nightlight_monthly_tiles()[0])
 
 
 def nightlight_paths() -> dict[str, Path]:
@@ -226,7 +235,7 @@ def _geoparquet_dir(name: str) -> Path:
     return NETWORKS_DIR / name / "geoparquet"
 
 
-def available_products() -> list[str]:
+def available_networks() -> list[str]:
     """Return the names of the built networks, e.g. ``["base-mauritius", "inferred-osm-mauritius-rodrigues"]``.
 
     A network is built when its ``geoparquet/`` folder holds the spatial manifest and the node and edge layers.
@@ -271,7 +280,7 @@ def summarise(name: str) -> dict:
     nodes, edges = load_layers(name)
     manifest = load_manifest(name)
     return {
-        "product": name,
+        "network": name,
         "methodology": manifest.get("methodology"),
         "nodes": len(nodes),
         "edges": len(edges),
@@ -285,15 +294,15 @@ def summarise(name: str) -> dict:
     }
 
 
-def list_products() -> pd.DataFrame:
+def list_networks() -> pd.DataFrame:
     """Return a table of the built networks: name, whether inferred, counts, line length (km), validation status."""
     rows = []
-    for name in available_products():
+    for name in available_networks():
         manifest = load_manifest(name)
         totals = manifest.get("totals", {})
         rows.append(
             {
-                "product": name,
+                "network": name,
                 "inferred": manifest.get("inferred"),
                 "nodes": totals.get("nodes"),
                 "edges": totals.get("edges"),
@@ -301,10 +310,10 @@ def list_products() -> pd.DataFrame:
                 "validation": load_validation(name).get("status", "-"),
             }
         )
-    return pd.DataFrame(rows, columns=["product", "inferred", "nodes", "edges", "line_length_km", "validation"])
+    return pd.DataFrame(rows, columns=["network", "inferred", "nodes", "edges", "line_length_km", "validation"])
 
 
-def anchor_nodes(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+def power_nodes(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Return the nodes not marked ``is_inferred``, or all nodes if there are none.
 
     In an inferred network this drops the road nodes and transformer buses, leaving substations and generators.
@@ -382,7 +391,7 @@ def quick_map(*, clip=None, ax=None, title=None, figsize=(9, 9), **layers):
 def plot_network(
     name,
     *,
-    nodes="anchors",
+    nodes="power",
     node_color_by="kind",
     edge_color_by="source",
     node_size=None,
@@ -393,7 +402,7 @@ def plot_network(
 ):
     """Draw a static map of one network's edges and nodes.
 
-    ``nodes``: ``"anchors"`` (see :func:`anchor_nodes`), ``"all"`` or ``"none"``. ``clip``: a
+    ``nodes``: ``"power"`` (see :func:`power_nodes`), ``"all"`` or ``"none"``. ``clip``: a
     ``(minx, miny, maxx, maxy)`` box to zoom to, such as ``MAURITIUS_BBOX``.
     """
     node_layer, edge_layer = load_layers(name)
@@ -413,7 +422,7 @@ def plot_network(
     else:
         edge_layer.plot(ax=ax, color="0.75", linewidth=0.4)
 
-    selection = {"anchors": anchor_nodes(node_layer), "all": node_layer}.get(nodes)
+    selection = {"power": power_nodes(node_layer), "all": node_layer}.get(nodes)
     if selection is not None and len(selection):
         size = node_size if node_size is not None else (36 if len(selection) < 500 else 6)
         # With grey edges, colour the nodes by kind so the legend shows them.

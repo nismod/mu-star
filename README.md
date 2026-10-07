@@ -219,9 +219,9 @@ local, dev-only notebooks that read the pipeline's standard outputs and render
 them. They are namespaced per system and are not part of any workflow rule;
 production visualisation is the separate viewer at
 https://github.com/nismod/irv-standalone. The energy notebooks live in
-`notebooks/energy/`: `00-data-review` looks at the inputs, and
-`01-build-network` runs the build (from a cell or the terminal) and inspects a
-product. Notebook outputs are stripped on commit via `nbstripout`; enable this
+`notebooks/energy/`: `00_inputs.ipynb` looks at the inputs, and
+`01_networks.ipynb` runs the build (from a cell or the terminal) and inspects
+a network. Notebook outputs are stripped on commit via `nbstripout`; enable this
 once per clone so committed notebooks stay diff-clean:
 
 ```shell
