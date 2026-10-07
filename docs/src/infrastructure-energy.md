@@ -8,14 +8,12 @@ night-time lights.
 ## Data
 
 A `*-star` repository can be run on public data alone, using the inferred
-method. For working with official provided files, or with a combination of
-the two, those files are needed as well:
-
-| Data | Network | Contents |
-| --- | --- | --- |
-| Public | `inferred-osm-mauritius-rodrigues` | Substations and power plants mapped in OpenStreetMap, plus the estimated distribution network. |
-| Provided | `base-mauritius` | CEB substations, 66 kV lines and power plants. Mauritius only. |
-| Combination | `inferred-provided-mauritius-rodrigues` | CEB substations, 66 kV lines and power plants, plus the estimated distribution network. |
+method: the substations and power plants mapped in OpenStreetMap, connected by
+a distribution network estimated from roads and night-time lights. For
+working with official provided files (the utility's substations, transmission
+lines and power plants), or with a combination of the two (the provided
+network connected to the estimated distribution network), those files are
+needed as well.
 
 The workflow downloads the public data when it is missing: OpenStreetMap
 roads, power features and island outlines; twelve monthly VIIRS night-light
@@ -50,14 +48,20 @@ The rules turn the inputs into processed files in
    filter from [GridFinder](https://github.com/carderne/gridfinder) (Chris
    Arderne, MIT licence) keeps pixels brighter than their surroundings, and
    those above a threshold become *targets*: places the network must reach.
-3. **Networks** (`networks/`). `base-mauritius` joins the substations along
-   the CEB routes, closing gaps shorter than 75 m, and attaches the plants.
-   The inferred networks keep the drivable roads within 1 km of a target or a
-   power asset, and put back the shortest road path to any lit area this cuts
-   off. A two-way street is one line; two roads between the same junctions
-   stay two lines. Each substation and plant connects to the nearest point on
-   a kept road within 1 km. In `inferred-provided` it also connects to the
-   nearest 66 kV line, and transformers join the 66 kV and 11 kV lines.
+3. **Networks** (`networks/<network>/`), one for each way of running the model,
+   named after how it is made and the area it covers. `base-mauritius` uses the
+   provided data alone, which covers Mauritius only: it joins the substations
+   along the CEB routes, closing gaps shorter than 75 m, and attaches the
+   plants. `inferred-osm-<region>` (public data) and
+   `inferred-provided-<region>` (combination) take their power assets from
+   OpenStreetMap or from the provided data, for the area set as `region` in
+   `config/energy/energy.yaml` (here `mauritius-rodrigues`). They keep the
+   drivable roads within 1 km of a target or a power asset, and put back the
+   shortest road path to any lit area this cuts off. A two-way street is one
+   line; two roads between the same junctions stay two lines. Each substation
+   and plant connects to the nearest point on a kept road within 1 km. In
+   `inferred-provided` it also connects to the nearest 66 kV line, and
+   transformers join the 66 kV and 11 kV lines.
 4. **Demand shares** (`demand/`), with PyPSA-Earth's method. Each substation
    supplies the area closer to it than to any other; on Rodrigues the plants
    share the island. An area's share of system demand is 0.6 times its share
