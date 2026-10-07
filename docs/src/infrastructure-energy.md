@@ -1,99 +1,109 @@
 # Energy
 
-The energy workflow builds three models of the electricity network of Mauritius
-and Rodrigues. We have the 66 kV transmission network of the Central
-Electricity Board (CEB) but no data on its distribution network, so that is
-estimated from roads and night-time lights.
+The energy workflow builds models of the electricity network of Mauritius and
+Rodrigues. The Central Electricity Board (CEB) provided its 66 kV transmission
+network but no data on its distribution network, so that is estimated from
+roads and night-time lights.
 
-| Network | Contents |
-| --- | --- |
-| `base-mauritius` | CEB substations, 66 kV lines and power plants. Mauritius only. |
-| `inferred-provided-mauritius-rodrigues` | CEB substations, 66 kV lines and power plants, plus the estimated distribution network. |
-| `inferred-osm-mauritius-rodrigues` | Substations and power plants mapped in OpenStreetMap, plus the estimated distribution network. |
+## Data and running the model
 
-## Running the model
+A `*-star` repository can be run on public data alone, using the inferred
+method. For working with official files provided by the utility, or with a
+combination of the two, those files are needed as well:
 
-Run the commands from the repository root, with the `mu-star` environment
-active (see "Setup and installation" in the README). The rules read inputs
-from `data/incoming/Infrastructure/Energy/` and write to
-`data/processed/energy/<model_data>/` and `data/out/energy/<model_data>/`,
-where `<model_data>` is the folder named by `model_data` in
-`config/energy/energy.yaml`. The commands below read that name into
-`MODEL_DATA`:
+| Data | Network | Contents |
+| --- | --- | --- |
+| Public | `inferred-osm-mauritius-rodrigues` | Substations and power plants mapped in OpenStreetMap, plus the estimated distribution network. |
+| Provided | `base-mauritius` | CEB substations, 66 kV lines and power plants. Mauritius only. |
+| Combination | `inferred-provided-mauritius-rodrigues` | CEB substations, 66 kV lines and power plants, plus the estimated distribution network. |
+
+The workflow downloads the public data when it is missing:
+
+- OpenStreetMap: drivable roads, power features and island outlines. The
+  power features also place some of the CEB plants.
+- VIIRS night lights: twelve monthly images for 2024, from an ArcGIS image
+  service (NighttimeLightsMDNB) that serves the Earth Observation Group's
+  monthly cloud-free average radiance.
+- WorldPop: the 2020 "constrained" grid of people per 100 m cell, adjusted to
+  UN totals, used for the demand shares.
+
+For Mauritius, the provided data are:
+
+| Data | Status | Folder or file |
+| --- | --- | --- |
+| Substations (Mauritius) | provided by CEB | `Substation/` |
+| 66 kV transmission lines (Mauritius) | provided by CEB | `Power Transmission/` |
+| Distribution network | pending | |
+| Generation sites | provided by CEB | `Generation Source/` |
+| Monthly peak demand, annual demand by sector | provided by CEB | `Power Demand/` |
+| Power plants and installed capacity | extracted from the CEB Annual Report 2023-24, pp. 50-51 and 97 | `CEB Annual Report/ceb_plant_capacities_2023_24.csv` |
+| Plant locations | from CEB generation sites, named OpenStreetMap plants, geocoded villages or unnamed OpenStreetMap features | `CEB Annual Report/ceb_plant_sites.csv` |
+| System peak and average demand | extracted from the annual report, pp. 45 and 51 | `CEB Annual Report/ceb_demand_levels_2023_24.csv` |
+
+The CEB files are shared under licence and are not public. Each plant is
+assigned to the nearest CEB substation on its own island; rooftop solar and
+plants with no location yet are left out of the network for now.
+
+All data goes in `data/incoming/Infrastructure/Energy/`, laid out as
+`Incoming Data/Infrastructure/Energy` on the project OneDrive. The workflow
+downloads the public data there. Project members copy or link the provided
+data from the OneDrive; a link keeps the name of the folder it points to:
+
+```shell
+SHARED="<synced OneDrive project folder>"  # holds Incoming Data, Processed Data and Output Data
+mkdir -p data/incoming/Infrastructure
+ln -s "$SHARED/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/
+```
+
+Instead of building, project members can use a model-data pack: the processed
+files of one build, from `Processed Data/Infrastructure/Energy` on the
+OneDrive, with its review tables in `Output Data/Infrastructure/Energy`. The
+rules read and write the pack named by `model_data` in
+`config/energy/energy.yaml`:
 
 ```shell
 MODEL_DATA=$(sed -n 's/^ *model_data: *//p' config/energy/energy.yaml)
-```
-
-### From public data
-
-`inferred-osm-mauritius-rodrigues` needs only public data. The workflow
-downloads OpenStreetMap and the VIIRS night lights into
-`data/incoming/Infrastructure/Energy/`, then builds the network:
-
-```shell
-snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/inferred-osm-mauritius-rodrigues/inferred-osm-mauritius-rodrigues.nc"
-```
-
-The other two networks and the demand shares need the CEB data, which is not
-public.
-
-### From a model-data pack
-
-A model-data pack holds the processed files of one build: the three networks
-and the demand shares. Copy it into `data/processed/energy/`, keeping its
-folder name, which must match `model_data`. `cp -Rp` keeps the file dates,
-which Snakemake uses to decide what to rebuild:
-
-```shell
-mkdir -p data/processed/energy
-cp -Rp "<folder holding the pack>/$MODEL_DATA" data/processed/energy/
-```
-
-With the pack in place, `build_energy_networks` has nothing to do.
-
-### Project members
-
-The project's shared drive holds the source data, including the CEB data, and
-the model-data packs. Link its energy folders into `data/` instead of copying
-them. Each link keeps the name of the folder it points to.
-
-```shell
-SHARED="<synced shared drive folder>"  # holds Incoming Data, Processed Data and Output Data
-mkdir -p data/incoming/Infrastructure data/processed/energy data/out/energy
-ln -s "$SHARED/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/
+mkdir -p data/processed/energy data/out/energy
 ln -s "$SHARED/Processed Data/Infrastructure/Energy/$MODEL_DATA" data/processed/energy/
-ln -s "$SHARED/Output Data/Infrastructure/Energy/$MODEL_DATA" data/out/energy/  # review tables
+ln -s "$SHARED/Output Data/Infrastructure/Energy/$MODEL_DATA" data/out/energy/
 ```
 
-Snakemake writes rebuilt files through these links into the shared drive.
-Before you change the energy code or force a rerun (`-F` or `-R`), replace the
-pack link with a copy made with `cp -Rp`.
+Through these links, Snakemake writes rebuilt files into the OneDrive. Before
+you change the energy code or force a rerun (`-F` or `-R`), copy the pack
+instead with `cp -Rp`, which keeps the file dates that Snakemake uses to
+decide what to rebuild.
 
-### Commands
-
-```shell
-snakemake -n -c1 build_energy_networks  # dry run: what would run, and why
-snakemake -c1 build_energy_networks     # the three networks; needs a pack or the CEB data
-snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/base-mauritius/base-mauritius.nc"  # one network
-```
-
-The demand shares need the CEB data, even with a pack:
+Having set up the `mu-star` conda environment as in the README ("Setup and
+installation"), and the data for the chosen mode, run the model from the
+repository root:
 
 ```shell
+MODEL_DATA=$(sed -n 's/^ *model_data: *//p' config/energy/energy.yaml)
+# public data
+snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/inferred-osm-mauritius-rodrigues/inferred-osm-mauritius-rodrigues.nc"
+# provided data
+snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/base-mauritius/base-mauritius.nc"
+# combination, then its demand shares
+snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/inferred-provided-mauritius-rodrigues/inferred-provided-mauritius-rodrigues.nc"
 snakemake -c1 "data/processed/energy/$MODEL_DATA/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv"
+# all three networks
+snakemake -c1 build_energy_networks
 ```
 
-The outputs are described below. The notebooks in `notebooks/energy/` show
-the inputs and the networks.
+Add `-n` to list what would run without running it. With a pack in place, the
+network commands have nothing to do; the demand command still needs the
+provided data. The outputs are described below, and the notebooks in
+`notebooks/energy/` show the inputs and the networks.
 
 ## Estimating the distribution network
 
-1. **Lit areas.** Twelve monthly VIIRS satellite images of night-time light
-   for 2024 are combined by taking the median of each pixel. A filter keeps
-   pixels brighter than their surroundings, and those above a threshold
-   become *targets*: places the network must reach. Pixels outside the island
-   outlines are ignored. The filter and threshold come from
+1. **Lit areas.** Twelve monthly VIIRS satellite images of night-time light for
+   2024 are combined by taking the median of each pixel. A zero can mean the
+   month had no cloud-free view rather than darkness; the median reduces this
+   but does not remove it. A filter keeps pixels brighter than their
+   surroundings, and those above a threshold become *targets*: places the
+   network must reach. Pixels outside the island outlines are ignored. The
+   filter and threshold come from
    [GridFinder](https://github.com/carderne/gridfinder) (Chris Arderne, MIT
    licence).
 2. **Roads.** Distribution lines mostly follow roads, so the OpenStreetMap
@@ -123,41 +133,6 @@ Voltages and capacities are placeholders, set in `energy.yaml`:
 
 These values are in the `model_v_nom_kv` and `model_s_nom_mva` columns;
 `v_nom_kv` and `s_nom_mva` stay empty until CEB values are available.
-
-## Inputs
-
-Inputs sit in `<data>/incoming/Infrastructure/Energy/`, where `<data>` is the
-repository's `data/` folder. The layout is the same as on the project's shared
-drive.
-
-- **CEB data**, not public, shared under licence: shapefiles in `Substation`,
-  `Power Transmission` and `Generation Source`, and a workbook of monthly peak
-  demand and annual demand by sector in `Power Demand`.
-- **CEB Annual Report 2023-24**, tables typed in from the report, in
-  `CEB Annual Report`:
-  - `ceb_plant_capacities_2023_24.csv`: installed and effective capacity of
-    each plant in Mauritius (pp. 50-51) and Rodrigues (p. 97).
-  - `ceb_plant_sites.csv`: the location of each plant, from a CEB generation
-    site, a named OpenStreetMap plant, a geocoded village or unnamed
-    OpenStreetMap features.
-  - `ceb_demand_levels_2023_24.csv`: peak and average system demand.
-
-  Each plant is assigned to the nearest CEB substation on its own island.
-  Rooftop solar and plants with no location yet have an empty `bus_id` and
-  are left out of the network for now.
-- **OpenStreetMap**, downloaded: drivable roads, power features and island
-  outlines, in `OpenStreetMap/<region>/`.
-- **VIIRS night lights**, downloaded: twelve monthly images for 2024 in
-  `Nighttime Lights/viirs-2024-monthly/`, from an ArcGIS image service
-  (NighttimeLightsMDNB) that serves the Earth Observation Group's monthly
-  cloud-free average radiance. A zero can mean the month had no cloud-free
-  view rather than darkness; the median over twelve months reduces this but
-  does not remove it.
-- **WorldPop population**, downloaded: the 2020 "constrained" grid of people
-  per 100 m cell, adjusted to UN totals, in `Population/`. It covers
-  Rodrigues.
-
-The workflow downloads a public input only when it is missing.
 
 ## Demand
 

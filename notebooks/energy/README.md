@@ -18,5 +18,6 @@ helpers. Plotting code stays here, not in `src/energy/`. Maps for users are in
 the separate viewer, [nismod/irv-standalone](https://github.com/nismod/irv-standalone).
 
 Open the notebooks with Jupyter in the `mu-star` environment. How to get the
-data is in "Running the model" in `docs/src/infrastructure-energy.md`; for the
-one-time notebook setup (nbstripout, pre-commit) see [`../README.md`](../README.md).
+data is in "Data and running the model" in `docs/src/infrastructure-energy.md`;
+for the one-time notebook setup (nbstripout, pre-commit) see
+[`../README.md`](../README.md).
