@@ -1,12 +1,10 @@
 # Notebooks
 
 Notebooks for looking at the workflow's files while working on the code in
-`src/`. No Snakemake rule runs them. Plotting code goes here, not in `src/`;
-maps for users are in the separate viewer,
+`src/`. No Snakemake rule runs them. Maps for users are in the separate viewer,
 [nismod/irv-standalone](https://github.com/nismod/irv-standalone).
 
-There is one folder per infrastructure system, with its own `_helpers.py`. So
-far there is `energy/`; see `energy/README.md`.
+There is one folder per infrastructure system, with its own `_helpers.py`.
 
 ## Setup
 
