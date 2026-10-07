@@ -123,31 +123,8 @@ TABLES_DIR = f"{{data}}/out/energy/{MODEL_DATA}"
 BASE_NAME = "base-mauritius"
 INFERRED_OSM_NAME = f"inferred-osm-{REGION_SLUG}"
 INFERRED_PROVIDED_NAME = f"inferred-provided-{REGION_SLUG}"
-
-
-def network_outputs(name, *, inferred):
-    """Return the files that energy.build.build_network writes for network ``name``."""
-    outputs = {
-        "network": f"{NETWORKS_DIR}/{name}/{name}.nc",
-        "metadata": f"{NETWORKS_DIR}/{name}/{name}_metadata.json",
-        "spatial_nodes": f"{NETWORKS_DIR}/{name}/geoparquet/{name}-nodes.geoparquet",
-        "spatial_edges": f"{NETWORKS_DIR}/{name}/geoparquet/{name}-edges.geoparquet",
-        "spatial_manifest": f"{NETWORKS_DIR}/{name}/geoparquet/{name}-spatial-manifest.json",
-        "generators": f"{TABLES_DIR}/{name}/generators.csv",
-        "lines": f"{TABLES_DIR}/{name}/lines.csv",
-        "validation": f"{TABLES_DIR}/{name}/validation.json",
-    }
-    if inferred:
-        graph_dir = f"{NETWORKS_DIR}/{name}/inferred_distribution"
-        outputs.update(
-            {
-                "nodes": f"{graph_dir}/inferred_distribution_nodes.csv",
-                "edges": f"{graph_dir}/inferred_distribution_edges.csv",
-                "graph_metadata": f"{graph_dir}/inferred_distribution_metadata.json",
-                "service_weights": f"{graph_dir}/service_weights.csv",
-            }
-        )
-    return outputs
+# Output name of build_inferred_energy_network, with its {variant} wildcard.
+INFERRED_NAME = f"inferred-{{variant}}-{REGION_SLUG}"
 
 
 rule fetch_energy_osm:
@@ -244,7 +221,14 @@ rule build_base_energy_network:
         generators=f"{PROVIDED_DIR}/generators.csv",
         script=ancient("workflow/0-preprocess/energy_build_network.py"),
     output:
-        **network_outputs(BASE_NAME, inferred=False),
+        network=f"{NETWORKS_DIR}/{BASE_NAME}/{BASE_NAME}.nc",
+        metadata=f"{NETWORKS_DIR}/{BASE_NAME}/{BASE_NAME}_metadata.json",
+        spatial_nodes=f"{NETWORKS_DIR}/{BASE_NAME}/geoparquet/{BASE_NAME}-nodes.geoparquet",
+        spatial_edges=f"{NETWORKS_DIR}/{BASE_NAME}/geoparquet/{BASE_NAME}-edges.geoparquet",
+        spatial_manifest=f"{NETWORKS_DIR}/{BASE_NAME}/geoparquet/{BASE_NAME}-spatial-manifest.json",
+        generators=f"{TABLES_DIR}/{BASE_NAME}/generators.csv",
+        lines=f"{TABLES_DIR}/{BASE_NAME}/lines.csv",
+        validation=f"{TABLES_DIR}/{BASE_NAME}/validation.json",
     params:
         input_dir=PROVIDED_DIR,
         output_dir=NETWORKS_DIR,
@@ -377,12 +361,23 @@ rule build_inferred_energy_network:
     input:
         unpack(_inferred_inputs),
     output:
-        **network_outputs(f"inferred-{{variant}}-{REGION_SLUG}", inferred=True),
+        network=f"{NETWORKS_DIR}/{INFERRED_NAME}/{INFERRED_NAME}.nc",
+        metadata=f"{NETWORKS_DIR}/{INFERRED_NAME}/{INFERRED_NAME}_metadata.json",
+        spatial_nodes=f"{NETWORKS_DIR}/{INFERRED_NAME}/geoparquet/{INFERRED_NAME}-nodes.geoparquet",
+        spatial_edges=f"{NETWORKS_DIR}/{INFERRED_NAME}/geoparquet/{INFERRED_NAME}-edges.geoparquet",
+        spatial_manifest=f"{NETWORKS_DIR}/{INFERRED_NAME}/geoparquet/{INFERRED_NAME}-spatial-manifest.json",
+        generators=f"{TABLES_DIR}/{INFERRED_NAME}/generators.csv",
+        lines=f"{TABLES_DIR}/{INFERRED_NAME}/lines.csv",
+        validation=f"{TABLES_DIR}/{INFERRED_NAME}/validation.json",
+        nodes=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_nodes.csv",
+        edges=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_edges.csv",
+        graph_metadata=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_metadata.json",
+        service_weights=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/service_weights.csv",
     params:
         input_dir=PROVIDED_DIR,
         output_dir=NETWORKS_DIR,
         export_root=TABLES_DIR,
-        output_name=f"inferred-{{variant}}-{REGION_SLUG}",
+        output_name=INFERRED_NAME,
         region=REGION,
         network_type=NETWORK_TYPE,
         power_arg=lambda wildcards, input: (

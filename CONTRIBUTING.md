@@ -209,7 +209,7 @@ Locally, data follows this convention (referenced by the Snakemake paths):
 ```
 data/incoming/    # source data, as downloaded — never edited by hand
 data/processed/   # intermediate data produced by preprocessing rules
-data/out/             # analysis results
+data/results/         # analysis results
 ```
 
 ## Issues and parcels of work
