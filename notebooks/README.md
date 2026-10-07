@@ -19,12 +19,14 @@ stay decoupled across systems.
 
 ## Setup (once per clone)
 
-Notebook outputs are stripped on commit so `.ipynb` files stay diff-clean:
+Notebook outputs, the kernel name and the Python version are stripped on commit
+so `.ipynb` files stay diff-clean:
 
 ```shell
 micromamba activate mu-star
 pre-commit install          # enables the nbstripout hook on commit
 nbstripout --install        # also enables the git clean filter (see .gitattributes)
+git config filter.nbstripout.extrakeys "metadata.kernelspec metadata.language_info"
 ```
 
 Then open a system's notebooks and run top-to-bottom.

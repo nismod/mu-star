@@ -22,7 +22,7 @@ jobs:
 
       - name: Check notebooks have no output
         shell: bash -l {0}
-        run: find -name '*.ipynb' -exec nbstripout --verify {} \;
+        run: find -name '*.ipynb' -exec nbstripout --verify --extra-keys "metadata.kernelspec metadata.language_info" {} +
 
       - name: Test with pytest
         # Use a login shell so setup-micromamba activates the test environment.

@@ -222,11 +222,13 @@ https://github.com/nismod/irv-standalone. The energy notebooks live in
 `notebooks/energy/`: `00_inputs.ipynb` looks at the inputs, and
 `01_networks.ipynb` runs the build (from a cell or the terminal) and inspects
 a network. Notebook outputs are stripped on commit via `nbstripout`; enable this
-once per clone so committed notebooks stay diff-clean:
+once per clone so committed notebooks stay diff-clean. The last line also
+strips the kernel name and Python version, which differ between machines:
 
 ```shell
 pre-commit install
 nbstripout --install
+git config filter.nbstripout.extrakeys "metadata.kernelspec metadata.language_info"
 ```
 
 See `notebooks/README.md` for the per-system layout and conventions.

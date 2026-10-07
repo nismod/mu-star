@@ -1,7 +1,9 @@
 # Run `pre-commit install` once per clone to enable these hooks.
-# Strips notebook outputs and execution counts so committed .ipynb stay diff-clean.
+# Strips notebook outputs and execution counts so committed .ipynb stay diff-clean,
+# and the kernel name and Python version, which differ between machines.
 repos:
   - repo: https://github.com/kynan/nbstripout
     rev: "0.7.1"
     hooks:
       - id: nbstripout
+        args: ["--extra-keys", "metadata.kernelspec metadata.language_info"]
