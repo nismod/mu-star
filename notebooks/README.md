@@ -13,8 +13,7 @@ Once per clone, in the `mu-star` environment:
 ```shell
 pre-commit install
 nbstripout --install
-git config filter.nbstripout.extrakeys "metadata.kernelspec metadata.language_info"
 ```
 
-Git then stores notebooks without their outputs, kernel name or Python version,
-so running a notebook does not show up as a change.
+nbstripout then runs on every commit, removing outputs, kernel name and Python
+version.
