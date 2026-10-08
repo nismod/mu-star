@@ -71,12 +71,12 @@ and a pack if they use one, from the project OneDrive, which uses the same
 folder names:
 
 ```shell
-SHARED="<synced OneDrive project folder>"  # holds Incoming Data, Processed Data and Output Data
+SHARED="<synced OneDrive project folder>"  # holds Incoming Data, Processed Data and Results Data
 MODEL_DATA=$(sed -n 's/^ *model_data: *//p' config/energy/energy.yaml)
-mkdir -p data/incoming/Infrastructure data/processed/energy data/out/energy
+mkdir -p data/incoming/Infrastructure data/processed/energy data/results/energy
 ln -s "$SHARED/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/
 ln -s "$SHARED/Processed Data/Infrastructure/Energy/$MODEL_DATA" data/processed/energy/  # the pack
-ln -s "$SHARED/Output Data/Infrastructure/Energy/$MODEL_DATA" data/out/energy/  # its review tables
+ln -s "$SHARED/Results Data/Infrastructure/Energy/$MODEL_DATA" data/results/energy/  # its review tables
 ```
 
 Snakemake writes through these links into the OneDrive. Before changing the
@@ -110,7 +110,7 @@ have nothing to do; the demand command still needs the provided data.
 - `data/processed/energy/<model_data>/demand/inferred-provided-<region>/`: the
   service areas, the shares by substation and by node, and the peak and
   average demand.
-- `data/out/energy/<model_data>/<network>/`: `generators.csv`, `lines.csv` and
+- `data/results/energy/<model_data>/<network>/`: `generators.csv`, `lines.csv` and
   `validation.json`, which compares the model with CEB's published line length
   (479 km of 66 kV lines; 10,492 km of all lines) and installed capacity.
 

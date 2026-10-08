@@ -82,7 +82,7 @@ def test_build_base_network_exports_network_files(tmp_path):
     output_dir = tmp_path / "processed" / "energy" / "networks"
     _write_base_inputs(input_dir)
 
-    export_root = tmp_path / "out" / "energy"
+    export_root = tmp_path / "results" / "energy"
     outputs = build_network(
         "base",
         input_dir=input_dir,
@@ -219,7 +219,7 @@ def test_build_inferred_network_for_region_uses_cached_osm_files(tmp_path):
         power_path=power_path,
         nightlight_targets=targets_path,
         max_anchor_distance_m=100,
-        export_root=tmp_path / "out" / "energy",
+        export_root=tmp_path / "results" / "energy",
     )
 
     metadata = json.loads(outputs.metadata.read_text())
@@ -483,7 +483,7 @@ def test_build_inferred_provided_keeps_a_generator_without_bus_for_review(tmp_pa
         roads_path=roads_path,
         nightlight_targets=roads,
         max_anchor_distance_m=20_000,
-        export_root=tmp_path / "out",
+        export_root=tmp_path / "results",
     )
 
     network = pypsa.Network(outputs.network)

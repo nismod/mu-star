@@ -2,7 +2,7 @@
 
     <data_root>/incoming/Infrastructure/Energy/...   source data, laid out as on the shared drive
     <data_root>/processed/energy/<model_data>/...    files written by the workflow
-    <data_root>/out/energy/<model_data>/...          tables and reports for people to read
+    <data_root>/results/energy/<model_data>/...      tables and reports for people to read
 
 The data root is ``data_root`` in ``config/config.yaml`` (default ``<repo>/data``), and
 ``model_data`` is ``energy.model_data`` in ``config/energy/energy.yaml``: the name of a
@@ -68,5 +68,5 @@ def network_output_dir(root: Path | None = None) -> Path:
     return processed_energy_dir(root) / "networks"
 
 
-def output_energy_dir(root: Path | None = None) -> Path:
-    return Path(root or data_root()) / "out" / "energy" / model_data()
+def results_energy_dir(root: Path | None = None) -> Path:
+    return Path(root or data_root()) / "results" / "energy" / model_data()

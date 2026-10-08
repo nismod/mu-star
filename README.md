@@ -169,7 +169,7 @@ damage (rehabiliation) costs to the road network due to fluvial flooding, we'd
 run the following:
 
 ```shell
-snakemake --dry-run --cores 1 data/out/damage/layer-road/rp/peril-flood/subperil-fluvial/ensemble-0/damage.zarr
+snakemake --dry-run --cores 1 data/results/damage/layer-road/rp/peril-flood/subperil-fluvial/ensemble-0/damage.zarr
 ```
 
 Parts of the requested file path are parameterisable, e.g. `layer-road`,

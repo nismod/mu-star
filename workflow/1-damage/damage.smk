@@ -9,13 +9,13 @@ rule rasterise_layer:
     Split vector assets on raster grids.
 
     Test with:
-    snakemake -c1 data/out/damage/road/rp/flood/fluvial/split.gpq
+    snakemake -c1 data/results/damage/road/rp/flood/fluvial/split.gpq
     """
     input:
         layer = "{data}/proc/asset/{layer}.gpq",
         hazard = "{data}/proc/hazard/rp/{peril}/{subperil}.zarr",
     output:
-        split = "{data}/out/damage/{layer}/rp/{peril}/{subperil}/split.gpq",
+        split = "{data}/results/damage/{layer}/rp/{peril}/{subperil}/split.gpq",
     shell:
         """
         # TODO: Requires reworking snail to accept xarray spatial dimensions to split along.
@@ -29,12 +29,12 @@ checkpoint sample_sensitivity:
     damage ensemble member metadata.
 
     Test with:
-    snakemake -c1 data/out/ensemble_set.csv
+    snakemake -c1 data/results/ensemble_set.csv
     """
     input:
         configuration = "config/config.yaml",  # Parameter distributions defined here
     output:
-        ensemble_set = "{data}/out/ensemble_set.csv",
+        ensemble_set = "{data}/results/ensemble_set.csv",
     shell:
         """
         touch {output.ensemble_set}
@@ -47,7 +47,7 @@ rule damage:
     the resulting rehabilitation costs.
 
     Test with:
-    snakemake -c1 data/out/damage/road/rp/flood/fluvial/ensemble-0/damage.zarr
+    snakemake -c1 data/results/damage/road/rp/flood/fluvial/ensemble-0/damage.zarr
     """
     input:
         ensemble_set = lambda wildcards: checkpoints.sample_sensitivity.get(**wildcards).output.ensemble_set,
@@ -55,8 +55,8 @@ rule damage:
         split = rules.rasterise_layer.output.split,
     output:
         # To contain `fraction` and `monetary` variables
-        split_damage = "{data}/out/damage/{layer}/rp/{peril}/{subperil}/{ensemble}/split_damage.zarr",
-        damage = "{data}/out/damage/{layer}/rp/{peril}/{subperil}/{ensemble}/damage.zarr",
+        split_damage = "{data}/results/damage/{layer}/rp/{peril}/{subperil}/{ensemble}/split_damage.zarr",
+        damage = "{data}/results/damage/{layer}/rp/{peril}/{subperil}/{ensemble}/damage.zarr",
     shell:
         """
         touch {output.split_damage}

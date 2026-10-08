@@ -4,7 +4,7 @@
 # laid out as on the project's shared drive.
 
 energy:
-  # Folder under data/processed/energy/ and data/out/energy/ that the rules read
+  # Folder under data/processed/energy/ and data/results/energy/ that the rules read
   # and write: the name of a model-data pack. For new processed files, use a new name.
   model_data: 20261006-model-data
 
