@@ -1,41 +1,50 @@
-"""Energy network build: prepare the provided CEB data, cache the OpenStreetMap
-inputs, find night-light targets and build three network products.
+"""Energy rules: build three models of the electricity network.
 
-Products, each written under {data}/processed/energy/networks/<name>/:
+- base-mauritius: CEB substations, 66 kV lines and power plants.
+- inferred-provided-<region>: the same CEB assets plus the estimated
+  distribution network (OpenStreetMap roads near lit areas).
+- inferred-osm-<region>: OpenStreetMap substations and power plants plus the
+  estimated distribution network.
 
-- base-mauritius: the provided CEB transmission network (substations, routes,
-  generation sites).
-- inferred-osm-<region>: OpenStreetMap substations, plants and generators joined
-  by the OSM roads that lie near night-light targets (a distribution proxy).
-- inferred-provided-<region>: the provided substations, generators and CEB
-  backbone joined by the same road network.
+Each network is written to {data}/processed/energy/<model_data>/networks/<name>/
+by workflow/0-preprocess/energy_build_network.py, which calls
+energy.build.build_network. Settings are in config/energy/energy.yaml, where
+model_data names the model-data pack.
 
-Every build rule runs workflow/0-preprocess/energy_build_network.py, a thin
-command-line wrapper around energy.build.build_network. Settings live
-in config/energy/energy.yaml. Downloads (OpenStreetMap, VIIRS) are opt-in there and run by name:
-snakemake -c1 fetch_energy_osm / fetch_energy_nightlights.
+Source data is read from {data}/incoming/Infrastructure/Energy/, laid out as on
+the shared drive. OpenStreetMap, VIIRS night lights and WorldPop are downloaded
+when missing. If the processed files already exist, for example a pack copied
+or linked from the shared drive, nothing is downloaded or rebuilt.
 
-Run everything:      snakemake -c1 build_energy_networks
-One product, e.g.:   snakemake -c1 data/processed/energy/networks/base-mauritius/base-mauritius.nc
+All networks:  snakemake -c1 build_energy_networks
+One network:   snakemake -c1 data/processed/energy/<model_data>/networks/base-mauritius/base-mauritius.nc
 
-Disruption analysis (what is lost when assets fail) is not part of this
-workflow yet; see docs/src/infrastructure-energy.md.
+Setup, commands, method and limitations: docs/src/infrastructure-energy.md.
 """
 
 import shlex
 from pathlib import Path
 
-from snakemake.exceptions import WorkflowError
-
 from energy import osm as energy_osm
 from energy.nightlights import tile_name
+from energy.paths import INCOMING_ENERGY_RELATIVE, model_data
+from energy.provided import (
+    DEMAND_FOLDER,
+    DEMAND_LEVELS_FILE,
+    GENERATION_FOLDER,
+    PLANT_CAPACITIES_FILE,
+    PLANT_SITES_FILE,
+    SHAPEFILE_EXTENSIONS,
+    SUBSTATION_FOLDER,
+    TRANSMISSION_FOLDER,
+)
 
 
 configfile: "config/energy/energy.yaml"
 
 
 ENERGY = config["energy"]
-# Where the {data} wildcard resolves when a target is named by rule rather than by path.
+# Data folder used when a target is named by rule rather than by path.
 ENERGY_DATA_ROOT = config.get("data_root", "data")
 
 REGION = str(ENERGY.get("region", "mauritius-rodrigues")).strip()
@@ -45,13 +54,22 @@ REGION_SLUG = energy_osm.region_slug(REGION)
 
 OSM_SETTINGS = ENERGY.get("osm", {})
 NETWORK_TYPE = str(OSM_SETTINGS.get("network_type", "drive")).strip() or "drive"
-OSM_ALLOW_DOWNLOAD = bool(OSM_SETTINGS.get("allow_download", False))
+
+# Source data, laid out as on the shared drive.
+INCOMING_DIR = f"{{data}}/{INCOMING_ENERGY_RELATIVE.as_posix()}"
+# Processed files, in a folder named after the model-data pack.
+MODEL_DATA = model_data(ENERGY)
+PROCESSED_DIR = f"{{data}}/processed/energy/{MODEL_DATA}"
+
+# Scripts listed as rule inputs are wrapped in ancient(): a fresh checkout gives
+# them today's date, which would make existing processed data look out of date.
+# After editing a script, rerun its rule with `snakemake -R <rule>`.
 
 VECTOR_SUFFIXES = {".parquet", ".geoparquet", ".gpkg", ".geojson"}
 
 
 def _relative_data_path(value, key, suffixes):
-    """Validate an optional user-supplied path from config: relative to the data root, expected extension."""
+    """Return the configured path, checked to be relative to the data folder and to end in one of ``suffixes``."""
     if not value:
         return None
     path = Path(str(value))
@@ -62,22 +80,23 @@ def _relative_data_path(value, key, suffixes):
     return path.as_posix()
 
 
-# --- OpenStreetMap cache (relative to the data root) --------------------------
-# The paths come from the same helpers the Python code uses, so the rules and
-# the library can never disagree about where a cached file lives.
+# --- OpenStreetMap files (relative to the data folder) ------------------------
+# Paths come from energy.osm, as in the Python code.
 OSM_ROADS_CACHE = energy_osm.roads_cache_relative(REGION, NETWORK_TYPE).as_posix()
 OSM_POWER_CACHE = energy_osm.power_cache_relative(REGION).as_posix()
 OSM_AOI_CACHE = energy_osm.aoi_cache_relative(REGION).as_posix()
-# A user-supplied roads or AOI file (energy.osm.roads / energy.osm.aoi) replaces the cache.
+# energy.osm.roads and energy.osm.aoi, if set, replace the downloaded files.
 OSM_ROADS = _relative_data_path(OSM_SETTINGS.get("roads"), "energy.osm.roads", VECTOR_SUFFIXES) or OSM_ROADS_CACHE
 OSM_AOI = _relative_data_path(OSM_SETTINGS.get("aoi"), "energy.osm.aoi", VECTOR_SUFFIXES) or OSM_AOI_CACHE
 
 # --- Night lights -------------------------------------------------------------
 NIGHTLIGHT = ENERGY.get("nightlight", {})
 NIGHTLIGHT_SOURCE = NIGHTLIGHT.get("source", {})
-NIGHTLIGHT_DIR = f"{{data}}/processed/energy/nightlight/{REGION_SLUG}"
+NIGHTLIGHT_DIR = f"{PROCESSED_DIR}/nightlight/{REGION_SLUG}"
 NIGHTLIGHT_TARGETS = f"{NIGHTLIGHT_DIR}/targets.geoparquet"
-NIGHTLIGHT_MONTHLY_DIR = NIGHTLIGHT_SOURCE.get("monthly_dir", "incoming/energy/nightlights/viirs-2024-monthly")
+NIGHTLIGHT_MONTHLY_DIR = NIGHTLIGHT_SOURCE.get(
+    "monthly_dir", f"{INCOMING_ENERGY_RELATIVE.as_posix()}/Nighttime Lights/viirs-2024-monthly"
+)
 NIGHTLIGHT_OBJECT_IDS = [int(value) for value in NIGHTLIGHT_SOURCE.get("object_ids", range(120, 132))]
 NIGHTLIGHT_MONTHS = [
     f"{{data}}/{NIGHTLIGHT_MONTHLY_DIR}/{tile_name(index, object_id)}"
@@ -89,121 +108,80 @@ _NIGHTLIGHT_OVERRIDE = _relative_data_path(
 )
 NIGHTLIGHT_COMPOSITE = f"{{data}}/{_NIGHTLIGHT_OVERRIDE}" if _NIGHTLIGHT_OVERRIDE else NIGHTLIGHT_BUILT_COMPOSITE
 
-# --- Products -----------------------------------------------------------------
+# --- Population and demand ------------------------------------------------------
+POPULATION_URL = ENERGY["population"]["url"]
+POPULATION_RASTER = f"{INCOMING_DIR}/Population/{POPULATION_URL.rsplit('/', 1)[-1]}"
+DEMAND = ENERGY.get("demand", {})
+DEMAND_DIR = f"{PROCESSED_DIR}/demand"
+
+# --- Networks -----------------------------------------------------------------
 BASE_NETWORK = ENERGY.get("base_network", {})
 INFERRED = ENERGY.get("inferred", {})
-PROVIDED_DIR = "{data}/processed/energy/provided"
-NETWORKS_DIR = "{data}/processed/energy/networks"
-TABLES_DIR = "{data}/out/energy"
+PROVIDED_DIR = f"{PROCESSED_DIR}/provided"
+NETWORKS_DIR = f"{PROCESSED_DIR}/networks"
+TABLES_DIR = f"{{data}}/results/energy/{MODEL_DATA}"
 BASE_NAME = "base-mauritius"
 INFERRED_OSM_NAME = f"inferred-osm-{REGION_SLUG}"
 INFERRED_PROVIDED_NAME = f"inferred-provided-{REGION_SLUG}"
-
-
-def network_outputs(name, *, inferred):
-    """The files every build writes for product ``name`` (see energy.build.build_network)."""
-    outputs = {
-        "network": f"{NETWORKS_DIR}/{name}/{name}.nc",
-        "metadata": f"{NETWORKS_DIR}/{name}/{name}_metadata.json",
-        "spatial_nodes": f"{NETWORKS_DIR}/{name}/geoparquet/{name}-nodes.geoparquet",
-        "spatial_edges": f"{NETWORKS_DIR}/{name}/geoparquet/{name}-edges.geoparquet",
-        "spatial_manifest": f"{NETWORKS_DIR}/{name}/geoparquet/{name}-spatial-manifest.json",
-        "generators": f"{TABLES_DIR}/{name}/generators.csv",
-        "lines": f"{TABLES_DIR}/{name}/lines.csv",
-        "validation": f"{TABLES_DIR}/{name}/validation.json",
-    }
-    if inferred:
-        graph_dir = f"{NETWORKS_DIR}/{name}/inferred_distribution"
-        outputs.update(
-            {
-                "nodes": f"{graph_dir}/inferred_distribution_nodes.csv",
-                "edges": f"{graph_dir}/inferred_distribution_edges.csv",
-                "graph_metadata": f"{graph_dir}/inferred_distribution_metadata.json",
-                "service_weights": f"{graph_dir}/service_weights.csv",
-            }
-        )
-    return outputs
-
-
-# Sidecars needed to read a provided ESRI shapefile (the optional .cpg is not required).
-PROVIDED_SHAPEFILE_EXTENSIONS = ("shp", "shx", "dbf", "prj")
-
-
-def require_cached(paths, how):
-    """Explain, instead of a bare MissingInputException, when a cached download is absent."""
-    missing = [path for path in paths if not Path(path).is_file()]
-    if missing:
-        listed = "\n".join(f"  - {path}" for path in missing)
-        raise WorkflowError(f"Cached input file(s) missing:\n{listed}\n{how}")
-    return paths
-
-
-HOW_TO_FETCH_OSM = (
-    "Fetch them once (needs internet): set energy.osm.allow_download: true in "
-    "config/energy/energy.yaml, run `snakemake -c1 fetch_energy_osm`, then set it back to false."
-)
-HOW_TO_FETCH_NIGHTLIGHTS = (
-    "Fetch them once (needs internet): set energy.nightlight.source.allow_download: true in "
-    "config/energy/energy.yaml, run `snakemake -c1 fetch_energy_nightlights`, then set it back to false."
-)
+# Output name of build_inferred_energy_network, with its {variant} wildcard.
+INFERRED_NAME = f"inferred-{{variant}}-{REGION_SLUG}"
 
 
 rule fetch_energy_osm:
     """
-    Cache the OpenStreetMap inputs for the configured region: roads, power
-    features and the area-of-interest outline. Run it once, by name:
+    Download the OpenStreetMap roads, power features and island outlines. Needs
+    internet. Runs only when one of these files is missing.
 
-        snakemake -c1 fetch_energy_osm
-
-    It contacts OpenStreetMap only when a file is missing AND
-    energy.osm.allow_download is true; otherwise it explains how to enable the
-    fetch. The cache is deliberately not a Snakemake output: outputs are deleted
-    before a rule re-runs, and a download must never be thrown away by accident.
+    Test with:
+    snakemake -c1 data/incoming/Infrastructure/Energy/OpenStreetMap/mauritius-rodrigues/roads.parquet
     """
-    input:
-        script="workflow/0-preprocess/energy_fetch_osm.py",
+    output:
+        roads=f"{{data}}/{OSM_ROADS_CACHE}",
+        power=f"{{data}}/{OSM_POWER_CACHE}",
+        aoi=f"{{data}}/{OSM_AOI_CACHE}",
     params:
         region=REGION,
         network_type=NETWORK_TYPE,
-        data_root=ENERGY_DATA_ROOT,
-        allow_download="--allow-download" if OSM_ALLOW_DOWNLOAD else "",
     shell:
         """
-        python {input.script:q} \
+        python workflow/0-preprocess/energy_fetch_osm.py \
             --region {params.region:q} \
             --network-type {params.network_type:q} \
-            --data-root {params.data_root:q} \
-            {params.allow_download}
+            --data-root {wildcards.data:q} \
+            --allow-download
         """
 
 
 rule prepare_energy_assets:
     """
-    Clean the provided CEB source data and write reviewable asset tables.
+    Clean the CEB data and write the asset tables.
+
+    generators.csv has every plant in CEB Annual Report/ceb_plant_capacities_2023_24.csv,
+    placed using ceb_plant_sites.csv. Some plants are placed by their
+    OpenStreetMap name, so this rule also reads the OSM power features.
+    generation_sites.csv keeps the CEB generation sites from the shapefiles.
 
     Test with:
-    snakemake -c1 data/processed/energy/provided/generators.csv
+    snakemake -c1 data/processed/energy/<model_data>/provided/generators.csv
     """
     input:
-        workbook="{data}/incoming/energy/provided/power_demand/Power Demand.xlsx",
+        workbook=f"{INCOMING_DIR}/{DEMAND_FOLDER}/Power Demand.xlsx",
         substations=[
-            f"{{data}}/incoming/energy/provided/substation/Substation.{extension}"
-            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
+            f"{INCOMING_DIR}/{SUBSTATION_FOLDER}/Substation.{extension}" for extension in SHAPEFILE_EXTENSIONS
         ],
         routes=[
-            f"{{data}}/incoming/energy/provided/power_transmission/PowerGrid.{extension}"
-            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
+            f"{INCOMING_DIR}/{TRANSMISSION_FOLDER}/PowerGrid.{extension}" for extension in SHAPEFILE_EXTENSIONS
         ],
         generation_points=[
-            f"{{data}}/incoming/energy/provided/generation_source/GenSource1.{extension}"
-            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
+            f"{INCOMING_DIR}/{GENERATION_FOLDER}/GenSource1.{extension}" for extension in SHAPEFILE_EXTENSIONS
         ],
         generation_areas=[
-            f"{{data}}/incoming/energy/provided/generation_source/GenSource2.{extension}"
-            for extension in PROVIDED_SHAPEFILE_EXTENSIONS
+            f"{INCOMING_DIR}/{GENERATION_FOLDER}/GenSource2.{extension}" for extension in SHAPEFILE_EXTENSIONS
         ],
-        capacity_reference="src/energy/resources/generator_capacity_reference.csv",
-        script="workflow/0-preprocess/energy_prepare_assets.py",
+        plant_capacities=f"{INCOMING_DIR}/{PLANT_CAPACITIES_FILE}",
+        plant_sites=f"{INCOMING_DIR}/{PLANT_SITES_FILE}",
+        osm_power=f"{{data}}/{OSM_POWER_CACHE}",
+        script=ancient("workflow/0-preprocess/energy_prepare_assets.py"),
     output:
         substations=f"{PROVIDED_DIR}/substations.parquet",
         snapped_substations=f"{PROVIDED_DIR}/snapped_substations.parquet",
@@ -211,38 +189,46 @@ rule prepare_energy_assets:
         routes=f"{PROVIDED_DIR}/transmission_routes.parquet",
         generation_points=f"{PROVIDED_DIR}/generation_points.parquet",
         generation_areas=f"{PROVIDED_DIR}/generation_areas.parquet",
+        generation_sites=f"{PROVIDED_DIR}/generation_sites.csv",
         generators=f"{PROVIDED_DIR}/generators.csv",
         service_weights=f"{PROVIDED_DIR}/service_weights.csv",
         monthly_peak=f"{PROVIDED_DIR}/monthly_peak_demand_mw.csv",
         annual_demand=f"{PROVIDED_DIR}/annual_sector_demand_gwh.csv",
-        generator_template="{data}/processed/energy/templates/generators.csv",
-        line_template="{data}/processed/energy/templates/lines.csv",
+        generator_template=f"{PROCESSED_DIR}/templates/generators.csv",
+        line_template=f"{PROCESSED_DIR}/templates/lines.csv",
     params:
-        input_dir="{data}/incoming/energy/provided",
+        input_dir=INCOMING_DIR,
         output_dir=PROVIDED_DIR,
     shell:
         """
         python {input.script:q} \
             --input-dir {params.input_dir:q} \
             --output-dir {params.output_dir:q} \
-            --capacity-reference {input.capacity_reference:q}
+            --osm-power {input.osm_power:q}
         """
 
 
 rule build_base_energy_network:
     """
-    Build the provided CEB transmission network (product base-mauritius).
+    Build base-mauritius from the CEB substations, 66 kV lines and power plants.
 
     Test with:
-    snakemake -c1 data/processed/energy/networks/base-mauritius/base-mauritius.nc
+    snakemake -c1 data/processed/energy/<model_data>/networks/base-mauritius/base-mauritius.nc
     """
     input:
         buses=f"{PROVIDED_DIR}/snapped_substations.parquet",
         routes=f"{PROVIDED_DIR}/transmission_routes.parquet",
         generators=f"{PROVIDED_DIR}/generators.csv",
-        script="workflow/0-preprocess/energy_build_network.py",
+        script=ancient("workflow/0-preprocess/energy_build_network.py"),
     output:
-        **network_outputs(BASE_NAME, inferred=False),
+        network=f"{NETWORKS_DIR}/{BASE_NAME}/{BASE_NAME}.nc",
+        metadata=f"{NETWORKS_DIR}/{BASE_NAME}/{BASE_NAME}_metadata.json",
+        spatial_nodes=f"{NETWORKS_DIR}/{BASE_NAME}/geoparquet/{BASE_NAME}-nodes.geoparquet",
+        spatial_edges=f"{NETWORKS_DIR}/{BASE_NAME}/geoparquet/{BASE_NAME}-edges.geoparquet",
+        spatial_manifest=f"{NETWORKS_DIR}/{BASE_NAME}/geoparquet/{BASE_NAME}-spatial-manifest.json",
+        generators=f"{TABLES_DIR}/{BASE_NAME}/generators.csv",
+        lines=f"{TABLES_DIR}/{BASE_NAME}/lines.csv",
+        validation=f"{TABLES_DIR}/{BASE_NAME}/validation.json",
     params:
         input_dir=PROVIDED_DIR,
         output_dir=NETWORKS_DIR,
@@ -268,50 +254,44 @@ rule build_base_energy_network:
 
 rule fetch_energy_nightlights:
     """
-    Cache the monthly VIIRS radiance tiles. Run it once, by name:
+    Download the twelve monthly VIIRS images. Needs internet. Runs only when an
+    image is missing.
 
-        snakemake -c1 fetch_energy_nightlights
-
-    It reaches the image service only when a tile is missing AND
-    energy.nightlight.source.allow_download is true; otherwise it explains how
-    to enable the fetch. Like the OSM cache, the tiles are not Snakemake outputs
-    so a script change can never delete them.
+    Test with:
+    snakemake -c1 "data/incoming/Infrastructure/Energy/Nighttime Lights/viirs-2024-monthly/01-120.tif"
     """
-    input:
-        script="workflow/0-preprocess/energy_fetch_nightlights.py",
+    output:
+        months=NIGHTLIGHT_MONTHS,
     params:
-        out_dir=f"{ENERGY_DATA_ROOT}/{NIGHTLIGHT_MONTHLY_DIR}",
+        out_dir=f"{{data}}/{NIGHTLIGHT_MONTHLY_DIR}",
         object_ids=",".join(str(value) for value in NIGHTLIGHT_OBJECT_IDS),
         bbox=",".join(str(value) for value in NIGHTLIGHT_SOURCE.get("bbox", [57, -21, 64, -19])),
         pixel_size_degrees=NIGHTLIGHT_SOURCE.get("pixel_size_degrees", 0.004166666666666667),
         service=NIGHTLIGHT_SOURCE.get("service") or "",
         rendering_rule=NIGHTLIGHT_SOURCE.get("rendering_rule") or "",
-        allow_download="--allow-download" if bool(NIGHTLIGHT_SOURCE.get("allow_download", False)) else "",
     shell:
         """
-        python {input.script:q} \
+        python workflow/0-preprocess/energy_fetch_nightlights.py \
             --out-dir {params.out_dir:q} \
             --object-ids {params.object_ids} \
             --bbox {params.bbox} \
             --pixel-size-degrees {params.pixel_size_degrees} \
             --service {params.service:q} \
             --rendering-rule {params.rendering_rule:q} \
-            {params.allow_download}
+            --allow-download
         """
 
 
 rule build_energy_nightlight_composite:
     """
-    Reduce the cached monthly VIIRS tiles to one radiance composite (pixelwise median).
+    Combine the monthly VIIRS images into one, taking the median of each pixel.
 
     Test with:
-    snakemake -c1 data/processed/energy/nightlight/mauritius-rodrigues/viirs-composite.tif
+    snakemake -c1 data/processed/energy/<model_data>/nightlight/mauritius-rodrigues/viirs-composite.tif
     """
     input:
-        months=lambda wildcards: require_cached(
-            [month.format(data=wildcards.data) for month in NIGHTLIGHT_MONTHS], HOW_TO_FETCH_NIGHTLIGHTS
-        ),
-        script="workflow/0-preprocess/energy_build_nightlight_composite.py",
+        months=NIGHTLIGHT_MONTHS,
+        script=ancient("workflow/0-preprocess/energy_build_nightlight_composite.py"),
     output:
         composite=NIGHTLIGHT_BUILT_COMPOSITE,
     shell:
@@ -322,16 +302,16 @@ rule build_energy_nightlight_composite:
 
 rule build_energy_nightlight_targets:
     """
-    Find the night-light targets: bright pixels of the radiance composite inside
-    the area of interest, the places the inferred distribution network has to reach.
+    Find the targets: lit pixels inside the island outlines that the estimated
+    distribution network must reach.
 
     Test with:
-    snakemake -c1 data/processed/energy/nightlight/mauritius-rodrigues/targets.geoparquet
+    snakemake -c1 data/processed/energy/<model_data>/nightlight/mauritius-rodrigues/targets.geoparquet
     """
     input:
         nightlights=NIGHTLIGHT_COMPOSITE,
-        aoi=lambda wildcards: require_cached([f"{wildcards.data}/{OSM_AOI}"], HOW_TO_FETCH_OSM)[0],
-        script="workflow/0-preprocess/energy_build_nightlight_targets.py",
+        aoi=f"{{data}}/{OSM_AOI}",
+        script=ancient("workflow/0-preprocess/energy_build_nightlight_targets.py"),
     output:
         targets_raster=f"{NIGHTLIGHT_DIR}/targets.tif",
         targets=NIGHTLIGHT_TARGETS,
@@ -352,16 +332,15 @@ rule build_energy_nightlight_targets:
 
 
 def _inferred_inputs(wildcards):
-    """Inputs of one inferred product: the road cache and night-light targets for both
-    variants, plus the OSM power cache (osm) or the prepared CEB tables (provided)."""
+    """Return the inputs of one inferred network: roads and targets, plus the OSM
+    power features (osm) or the CEB asset tables (provided)."""
     inputs = {
         "roads": f"{wildcards.data}/{OSM_ROADS}",
         "nightlight_targets": NIGHTLIGHT_TARGETS.format(data=wildcards.data),
-        "script": "workflow/0-preprocess/energy_build_network.py",
+        "script": ancient("workflow/0-preprocess/energy_build_network.py"),
     }
     if wildcards.variant == "osm":
         inputs["power"] = f"{wildcards.data}/{OSM_POWER_CACHE}"
-    require_cached([inputs["roads"], *([inputs["power"]] if "power" in inputs else [])], HOW_TO_FETCH_OSM)
     if wildcards.variant != "osm":
         for name in ("snapped_substations.parquet", "transmission_routes.parquet", "generators.csv"):
             inputs[name.split(".")[0]] = f"{PROVIDED_DIR.format(data=wildcards.data)}/{name}"
@@ -370,25 +349,35 @@ def _inferred_inputs(wildcards):
 
 rule build_inferred_energy_network:
     """
-    Build one inferred product: "osm" joins OpenStreetMap power features, "provided"
-    joins the provided substations, generators and CEB backbone, both across the
-    night-light-supported OSM road network.
+    Build an inferred network: roads near lit areas, connected to the OpenStreetMap
+    power assets (osm) or to the CEB substations, plants and 66 kV lines (provided).
 
     Test with:
-    snakemake -c1 data/processed/energy/networks/inferred-osm-mauritius-rodrigues/inferred-osm-mauritius-rodrigues.nc
-    snakemake -c1 data/processed/energy/networks/inferred-provided-mauritius-rodrigues/inferred-provided-mauritius-rodrigues.nc
+    snakemake -c1 data/processed/energy/<model_data>/networks/inferred-osm-mauritius-rodrigues/inferred-osm-mauritius-rodrigues.nc
+    snakemake -c1 data/processed/energy/<model_data>/networks/inferred-provided-mauritius-rodrigues/inferred-provided-mauritius-rodrigues.nc
     """
     wildcard_constraints:
         variant="osm|provided",
     input:
         unpack(_inferred_inputs),
     output:
-        **network_outputs(f"inferred-{{variant}}-{REGION_SLUG}", inferred=True),
+        network=f"{NETWORKS_DIR}/{INFERRED_NAME}/{INFERRED_NAME}.nc",
+        metadata=f"{NETWORKS_DIR}/{INFERRED_NAME}/{INFERRED_NAME}_metadata.json",
+        spatial_nodes=f"{NETWORKS_DIR}/{INFERRED_NAME}/geoparquet/{INFERRED_NAME}-nodes.geoparquet",
+        spatial_edges=f"{NETWORKS_DIR}/{INFERRED_NAME}/geoparquet/{INFERRED_NAME}-edges.geoparquet",
+        spatial_manifest=f"{NETWORKS_DIR}/{INFERRED_NAME}/geoparquet/{INFERRED_NAME}-spatial-manifest.json",
+        generators=f"{TABLES_DIR}/{INFERRED_NAME}/generators.csv",
+        lines=f"{TABLES_DIR}/{INFERRED_NAME}/lines.csv",
+        validation=f"{TABLES_DIR}/{INFERRED_NAME}/validation.json",
+        nodes=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_nodes.csv",
+        edges=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_edges.csv",
+        graph_metadata=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_metadata.json",
+        service_weights=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/service_weights.csv",
     params:
         input_dir=PROVIDED_DIR,
         output_dir=NETWORKS_DIR,
         export_root=TABLES_DIR,
-        output_name=f"inferred-{{variant}}-{REGION_SLUG}",
+        output_name=INFERRED_NAME,
         region=REGION,
         network_type=NETWORK_TYPE,
         power_arg=lambda wildcards, input: (
@@ -398,6 +387,8 @@ rule build_inferred_energy_network:
         inferred_voltage_kv=INFERRED.get("topology_voltage_kv", 11),
         inferred_transmission_voltage_kv=INFERRED.get("transmission_voltage_kv", 66),
         inferred_capacity_mva=INFERRED.get("topology_capacity_mva", 5),
+        inferred_transmission_capacity_mva=INFERRED.get("transmission_capacity_mva", 50),
+        inferred_anchor_capacity_mva=INFERRED.get("anchor_capacity_mva", 137),
         reference_line_length_km=INFERRED.get("ceb_total_line_length_km", 10492.2),
         line_length_tolerance_fraction=INFERRED.get("line_length_tolerance_fraction", 0.10),
         generation_capacity_tolerance_fraction=INFERRED.get("generation_capacity_tolerance_fraction", 0.10),
@@ -422,6 +413,8 @@ rule build_inferred_energy_network:
             --inferred-voltage-kv {params.inferred_voltage_kv} \
             --inferred-transmission-voltage-kv {params.inferred_transmission_voltage_kv} \
             --inferred-capacity-mva {params.inferred_capacity_mva} \
+            --inferred-transmission-capacity-mva {params.inferred_transmission_capacity_mva} \
+            --inferred-anchor-capacity-mva {params.inferred_anchor_capacity_mva} \
             --inferred-reference-line-length-km {params.reference_line_length_km} \
             --line-length-tolerance-fraction {params.line_length_tolerance_fraction} \
             --generation-capacity-tolerance-fraction {params.generation_capacity_tolerance_fraction} \
@@ -429,10 +422,67 @@ rule build_inferred_energy_network:
         """
 
 
+rule fetch_energy_population:
+    """
+    Download the WorldPop population grid. Needs internet. Runs only when the
+    file is missing.
+
+    Test with:
+    snakemake -c1 data/incoming/Infrastructure/Energy/Population/mus_ppp_2020_UNadj_constrained.tif
+    """
+    output:
+        raster=POPULATION_RASTER,
+    params:
+        url=POPULATION_URL,
+    shell:
+        """
+        python workflow/0-preprocess/energy_fetch_population.py --url {params.url:q} --output {output.raster:q}
+        """
+
+
+rule build_energy_demand:
+    """
+    Estimate the demand share of each substation and node of inferred-provided,
+    the area each substation supplies, and the peak and average demand.
+
+    Test with:
+    snakemake -c1 data/processed/energy/<model_data>/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv
+    """
+    input:
+        nodes=f"{NETWORKS_DIR}/{INFERRED_PROVIDED_NAME}/geoparquet/{INFERRED_PROVIDED_NAME}-nodes.geoparquet",
+        aoi=f"{{data}}/{OSM_AOI}",
+        population=POPULATION_RASTER,
+        nightlights=NIGHTLIGHT_COMPOSITE,
+        demand_levels=f"{INCOMING_DIR}/{DEMAND_LEVELS_FILE}",
+        script=ancient("workflow/0-preprocess/energy_build_demand.py"),
+    output:
+        service_areas=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/service_areas.geoparquet",
+        substation_weights=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/service_weights_substations.csv",
+        node_weights=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/service_weights_nodes.csv",
+        demand_levels=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/demand_levels.csv",
+        metadata=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/metadata.json",
+    params:
+        output_dir=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}",
+        weight_nightlights=DEMAND.get("weight_nightlights", 0.6),
+        weight_population=DEMAND.get("weight_population", 0.4),
+    shell:
+        """
+        python {input.script:q} \
+            --nodes {input.nodes:q} \
+            --aoi {input.aoi:q} \
+            --population {input.population:q} \
+            --nightlights {input.nightlights:q} \
+            --demand-levels {input.demand_levels:q} \
+            --output-dir {params.output_dir:q} \
+            --weight-nightlights {params.weight_nightlights} \
+            --weight-population {params.weight_population}
+        """
+
+
 rule build_energy_networks:
-    """Build all three energy network products."""
+    """Build the three energy networks."""
     input:
         [
-            f"{ENERGY_DATA_ROOT}/processed/energy/networks/{name}/{name}.nc"
+            f"{ENERGY_DATA_ROOT}/processed/energy/{MODEL_DATA}/networks/{name}/{name}.nc"
             for name in (BASE_NAME, INFERRED_OSM_NAME, INFERRED_PROVIDED_NAME)
         ],

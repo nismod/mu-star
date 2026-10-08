@@ -1,4 +1,4 @@
-"""Convert provided source files into stable analysis-ready asset layers."""
+"""Clean the CEB data (shapefiles, demand workbook, annual report tables) for the network builds."""
 
 from __future__ import annotations
 
@@ -13,31 +13,32 @@ from shapely.ops import nearest_points
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 METRIC_CRS = "EPSG:32740"
 GEOGRAPHIC_CRS = "EPSG:4326"
-GENERATOR_CAPACITY_REFERENCE = Path(__file__).parent / "resources" / "generator_capacity_reference.csv"
 CEB_ANNUAL_REPORT_URL = "https://ceb.mu/files/files/publications/Annual%20Report/CEB%20AR%202023-2024.pdf"
+# CEB data folders, named as in Incoming Data/Infrastructure/Energy on the project's shared drive.
+SUBSTATION_FOLDER = "Substation"
+TRANSMISSION_FOLDER = "Power Transmission"
+GENERATION_FOLDER = "Generation Source"
+DEMAND_FOLDER = "Power Demand"
+# Tables transcribed from the CEB Annual Report 2023-24.
+REPORT_FOLDER = "CEB Annual Report"
+PLANT_CAPACITIES_FILE = f"{REPORT_FOLDER}/ceb_plant_capacities_2023_24.csv"
+PLANT_SITES_FILE = f"{REPORT_FOLDER}/ceb_plant_sites.csv"
+DEMAND_LEVELS_FILE = f"{REPORT_FOLDER}/ceb_demand_levels_2023_24.csv"
+# Files a shapefile needs (.cpg is optional and not checked).
+SHAPEFILE_EXTENSIONS = ("shp", "shx", "dbf", "prj")
 REQUIRED_PROVIDED_FILES = (
-    "power_demand/Power Demand.xlsx",
-    "substation/Substation.shp",
-    "substation/Substation.shx",
-    "substation/Substation.dbf",
-    "substation/Substation.prj",
-    "power_transmission/PowerGrid.shp",
-    "power_transmission/PowerGrid.shx",
-    "power_transmission/PowerGrid.dbf",
-    "power_transmission/PowerGrid.prj",
-    "generation_source/GenSource1.shp",
-    "generation_source/GenSource1.shx",
-    "generation_source/GenSource1.dbf",
-    "generation_source/GenSource1.prj",
-    "generation_source/GenSource2.shp",
-    "generation_source/GenSource2.shx",
-    "generation_source/GenSource2.dbf",
-    "generation_source/GenSource2.prj",
+    f"{DEMAND_FOLDER}/Power Demand.xlsx",
+    *(f"{SUBSTATION_FOLDER}/Substation.{extension}" for extension in SHAPEFILE_EXTENSIONS),
+    *(f"{TRANSMISSION_FOLDER}/PowerGrid.{extension}" for extension in SHAPEFILE_EXTENSIONS),
+    *(f"{GENERATION_FOLDER}/GenSource1.{extension}" for extension in SHAPEFILE_EXTENSIONS),
+    *(f"{GENERATION_FOLDER}/GenSource2.{extension}" for extension in SHAPEFILE_EXTENSIONS),
+    PLANT_CAPACITIES_FILE,
+    PLANT_SITES_FILE,
 )
 
 
 def validate_provided_inputs(input_dir: Path) -> None:
-    """Give a clear error when a required source file is missing."""
+    """Raise FileNotFoundError listing the ``REQUIRED_PROVIDED_FILES`` missing from ``input_dir``."""
     input_dir = Path(input_dir)
     missing = [relative_path for relative_path in REQUIRED_PROVIDED_FILES if not (input_dir / relative_path).is_file()]
     if not missing:
@@ -47,9 +48,9 @@ def validate_provided_inputs(input_dir: Path) -> None:
     message = (
         f"Provided input data are incomplete at:\n  {input_dir}\n\n"
         f"Missing files:\n{missing_list}\n\n"
-        "Place the complete source folders under "
-        "data/incoming/energy/provided (or under incoming/energy/provided of the "
-        "data_root set in config/config.yaml)."
+        "Link or copy the folder Incoming Data/Infrastructure/Energy of the project's "
+        "shared drive to data/incoming/Infrastructure/Energy (or to "
+        "incoming/Infrastructure/Energy under the data_root set in config/config.yaml)."
     )
     raise FileNotFoundError(message)
 
@@ -89,7 +90,7 @@ def _first_numeric_source_column(
 
 
 def _extract_route_voltage_kv(routes: pd.DataFrame) -> pd.Series:
-    """Read route voltage from explicit fields, falling back to route labels."""
+    """Return route voltage in kV from a voltage column, or from text like "66 kV" in the route labels."""
     values = _first_numeric_source_column(
         routes,
         (
@@ -118,7 +119,7 @@ def _extract_route_voltage_kv(routes: pd.DataFrame) -> pd.Series:
 
 
 def _extract_route_capacity_mw(routes: pd.DataFrame) -> pd.Series:
-    """Read route power rating from explicit MW fields or labels when present."""
+    """Return route rating in MW from a capacity column, or from text like "40 MW" in the route labels."""
     values = _first_numeric_source_column(
         routes,
         (
@@ -146,7 +147,7 @@ def _extract_route_capacity_mw(routes: pd.DataFrame) -> pd.Series:
 
 
 def classify_generation(row: pd.Series) -> str:
-    """Classify only explicit source labels; leave ambiguous assets unspecified."""
+    """Return wind, hydro, solar, substation or thermal from keywords in the labels, else "unspecified"."""
     text = " ".join(_clean_label(row.get(column), "") for column in ("Name", "PopupInfo", "FolderPath")).lower()
     if "gamesa" in text or "wind" in text:
         return "wind"
@@ -178,7 +179,7 @@ def _find_cell(frame: pd.DataFrame, pattern: str) -> tuple[int, int]:
 
 
 def extract_demand_workbook(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Extract monthly system peaks and annual customer-sector demand."""
+    """Return monthly peak demand (MW) by year and annual demand by customer sector (GWh) from the workbook."""
     raw = pd.read_excel(path, sheet_name=0, header=None)
 
     year_row, year_col = _find_cell(raw, r"^\s*Year\s*$")
@@ -214,7 +215,7 @@ def extract_demand_workbook(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
         label = _clean_label(str(label).replace("\n", " "))
         label = label.replace("Electricity demand - ", "").replace("Electricity demand ", "")
         if "final" in label.lower() or "total" in label.lower():
-            # The workbook ends the sector block with a grand total; it is not a sector.
+            # Skip the workbook's grand-total row, which ends the sector block.
             continue
         for year, column in zip(years, annual_year_cols, strict=True):
             annual_rows.append({"year": year, "category": label, "demand_gwh": raw.iat[row_i, column]})
@@ -237,11 +238,10 @@ def snap_substations_to_routes(
     substations: gpd.GeoDataFrame,
     routes: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
-    """Align every substation with the nearest mapped transmission route.
+    """Move each substation to the nearest point on the nearest CEB route.
 
-    There is deliberately no distance cutoff because the source layers are
-    coarse. Original coordinates and movement distances are retained so large
-    adjustments remain visible and can be replaced when better data arrive.
+    No distance limit, because the CEB layers are coarse. The original coordinates and
+    ``snap_distance_m`` (metres, EPSG:32740) are kept so large moves can be reviewed.
     """
     required_substation_columns = {"bus_id", "geometry"}
     missing_substation_columns = required_substation_columns - set(substations.columns)
@@ -270,7 +270,6 @@ def snap_substations_to_routes(
 
     rows: list[dict[str, object]] = []
     for _, substation in metric_substations.iterrows():
-        # Work in metres so the nearest route and audit distance are meaningful.
         distances = route_parts.geometry.distance(substation.geometry)
         nearest_index = distances.idxmin()
         route = route_parts.loc[nearest_index]
@@ -301,7 +300,7 @@ def assign_generation_to_substations(
     generation_sites: gpd.GeoDataFrame,
     substations: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
-    """Assign each mapped generation site to its nearest snapped substation."""
+    """Return the sites with their nearest substation's ``bus_id`` and ``bus_assignment_distance_m`` (metres)."""
     if "generator_id" not in generation_sites or "geometry" not in generation_sites:
         raise ValueError("generation_sites must contain generator_id and geometry")
     if "bus_id" not in substations or "geometry" not in substations:
@@ -323,43 +322,129 @@ def assign_generation_to_substations(
     return generators.to_crs(GEOGRAPHIC_CRS)
 
 
-def apply_generator_capacity_reference(
-    generation_sites: gpd.GeoDataFrame,
-    reference_path: Path = GENERATOR_CAPACITY_REFERENCE,
-) -> gpd.GeoDataFrame:
-    """Add report-backed installed capacity and a neutral VoLL dispatch cost."""
-    reference = pd.read_csv(reference_path)
-    _required = {
-        "name",
-        "output_capacity_mw",
-        "effective_capacity_mw",
-        "capacity_measure",
-        "report_period",
-        "capacity_source",
-    }
-    missing = _required - set(reference.columns)
-    if missing:
-        raise ValueError(f"generator capacity reference missing columns: {sorted(missing)}")
+# --- Generators from the CEB annual report ---------------------------------------
 
-    result = generation_sites.merge(
-        reference,
-        on="name",
-        how="left",
-        validate="many_to_one",
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")
+
+
+def assemble_report_generators(
+    provided_sites: pd.DataFrame,
+    substations: gpd.GeoDataFrame,
+    *,
+    osm_power: gpd.GeoDataFrame | None = None,
+    capacities_path: Path,
+    sites_path: Path,
+) -> pd.DataFrame:
+    """Return one generator per plant in ``ceb_plant_capacities_2023_24.csv``, with installed and effective MW.
+
+    ``ceb_plant_sites.csv`` gives each plant's ``site_kind``. ``provided``: the site in ``provided_sites``
+    with that name, or else the centroid of those whose names start with it. ``osm``: the ``osm_power``
+    plant with that name. ``geocoded``: the file's lat/lon. A located plant gets the nearest substation
+    on its island (``region``, "mauritius" if absent). ``bus_id`` stays empty on an island with no
+    substation (Rodrigues: the inferred network connects the plant at its own node) and for
+    ``distributed`` and ``unmatched`` plants, which have no location and are not yet spread by demand share.
+    """
+    capacities = pd.read_csv(capacities_path, comment="#")
+    if "region" not in capacities:
+        capacities["region"] = "mauritius"
+    sites = pd.read_csv(sites_path, comment="#")
+    missing = set(capacities["report_name"]) - set(sites["report_name"])
+    if missing:
+        raise ValueError(f"ceb_plant_sites.csv has no row for: {sorted(missing)}")
+    table = capacities.merge(sites, on="report_name", how="left", validate="one_to_one")
+
+    provided = provided_sites.copy()
+    provided["name"] = provided["name"].astype(str)
+    osm = None
+    if osm_power is not None and "name" in osm_power.columns:
+        osm = osm_power[osm_power["name"].notna()].to_crs(GEOGRAPHIC_CRS)
+
+    lons, lats, notes = [], [], []
+    for row in table.itertuples():
+        kind = str(row.site_kind)
+        lon = lat = float("nan")
+        note = ""
+        if kind == "provided":
+            exact = provided[provided["name"].eq(str(row.site_name))]
+            matches = exact if not exact.empty else provided[provided["name"].str.startswith(str(row.site_name))]
+            if matches.empty:
+                raise ValueError(f"{row.report_name}: no provided site named {row.site_name!r}")
+            lon, lat = float(matches["lon"].mean()), float(matches["lat"].mean())
+            note = f"CEB generation site {row.site_name!r}"
+            if len(matches) > 1:
+                note += f" (centre of {len(matches)} points)"
+        elif kind == "osm":
+            if osm is None:
+                raise ValueError(f"{row.report_name}: OSM power features with names are needed to place it")
+            matches = osm[osm["name"].astype(str).eq(str(row.site_name))]
+            if matches.empty:
+                raise ValueError(f"{row.report_name}: no OpenStreetMap plant named {row.site_name!r}")
+            point = matches.geometry.union_all().centroid
+            lon, lat = float(point.x), float(point.y)
+            note = f"OpenStreetMap plant {row.site_name!r}"
+        elif kind == "geocoded":
+            lon, lat = float(row.lon), float(row.lat)
+            note = str(row.location_basis)
+        elif kind == "distributed":
+            note = "many small sites, e.g. rooftop solar; not in the network"
+        elif kind == "unmatched":
+            note = "location not found; not in the network"
+        else:
+            raise ValueError(f"{row.report_name}: unknown site_kind {kind!r}")
+        lons.append(lon)
+        lats.append(lat)
+        notes.append(note)
+
+    generator_ids = [f"{_slug(group)}-{_slug(name)}" for group, name in zip(table["group"], table["report_name"])]
+    generators = pd.DataFrame(
+        {
+            "generator_id": generator_ids,
+            "name": table["report_name"],
+            "group": table["group"],
+            "region": table["region"].astype(str),
+            "carrier": table["technology"],
+            "output_capacity_mw": table["installed_capacity_mw"].astype(float),
+            "effective_capacity_mw": table["effective_capacity_mw"].astype(float),
+            "capacity_basis": "electrical_output",
+            "capacity_measure": "installed_capacity",
+            "capacity_source": [f"CEB Annual Report 2023-2024 p. {p}" for p in table["report_page"]],
+            "capacity_source_url": CEB_ANNUAL_REPORT_URL,
+            "marginal_cost": 0.0,
+            "marginal_cost_basis": "equal_dispatch_proxy_for_voll",
+            "site_kind": table["site_kind"],
+            "site_note": notes,
+            "lon": lons,
+            "lat": lats,
+        }
     )
-    duplicate_count = result.groupby("name")["generator_id"].transform("count")
-    for column in ("output_capacity_mw", "effective_capacity_mw"):
-        result[column] = result[column] / duplicate_count
-    has_capacity = result["output_capacity_mw"].notna()
-    result["marginal_cost"] = np.where(has_capacity, 0.0, np.nan)
-    result["marginal_cost_basis"] = np.where(
-        has_capacity,
-        "equal_dispatch_proxy_for_voll",
-        pd.NA,
+    located = generators["lon"].notna() & generators["lat"].notna()
+    generators["bus_id"] = pd.NA
+    generators["bus_assignment_distance_m"] = np.nan
+    substation_regions = (
+        substations["region"].astype(str)
+        if "region" in substations
+        else pd.Series("mauritius", index=substations.index)
     )
-    result["capacity_source_url"] = np.where(
-        has_capacity,
-        CEB_ANNUAL_REPORT_URL,
-        pd.NA,
-    )
-    return gpd.GeoDataFrame(result, geometry="geometry", crs=generation_sites.crs)
+    for region_name in sorted(generators.loc[located, "region"].unique()):
+        in_region = located & generators["region"].eq(region_name)
+        candidates = substations[substation_regions.eq(region_name).to_numpy()]
+        if candidates.empty:
+            # No substation on this island (Rodrigues): the inferred network connects the plant at its own node.
+            generators.loc[in_region, "site_note"] += (
+                f"; no CEB substation on {region_name.title()}, so it connects to the roads at its own point"
+            )
+            continue
+        sited = gpd.GeoDataFrame(
+            generators.loc[in_region, ["generator_id"]],
+            geometry=gpd.points_from_xy(generators.loc[in_region, "lon"], generators.loc[in_region, "lat"]),
+            crs=GEOGRAPHIC_CRS,
+        )
+        assigned = assign_generation_to_substations(sited, candidates).set_index("generator_id")
+        ids = generators.loc[in_region, "generator_id"]
+        generators.loc[in_region, "bus_id"] = assigned.loc[ids, "bus_id"].to_numpy()
+        generators.loc[in_region, "bus_assignment_distance_m"] = assigned.loc[
+            ids, "bus_assignment_distance_m"
+        ].to_numpy()
+    return generators

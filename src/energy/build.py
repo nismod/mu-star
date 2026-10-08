@@ -1,9 +1,6 @@
-"""Build and save one energy network product: the provided base network or an inferred one.
+"""Build and save one network: base-mauritius, inferred-osm-<region> or inferred-provided-<region>.
 
-``build_network(source, ...)`` is the single entry point used by the workflow
-rules and the notebooks. It reads prepared inputs, assembles buses and lines,
-validates them, writes the PyPSA network plus GeoParquet layers and metadata,
-and logs every advisory warning so a run is never silently "fine".
+Entry point: ``build_network``, used by the workflow rules and notebooks.
 """
 
 from __future__ import annotations
@@ -35,6 +32,7 @@ from energy.distribution_network import (
 )
 from energy.network import assert_fixed_capacity, build_topology_network
 from energy.network_tables import (
+    CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW,
     CEB_REPORTED_INSTALLED_GENERATION_MW,
     CEB_TOTAL_NETWORK_LENGTH_KM,
     CEB_TOTAL_NETWORK_LENGTH_SOURCE,
@@ -66,19 +64,16 @@ INFERRED_OSM_METHODOLOGY = "nightlight-roads-osm-power-v1"
 INFERRED_PROVIDED_METHODOLOGY = "nightlight-roads-provided-power-v1"
 DEFAULT_NIGHTLIGHT_SUPPORT_DISTANCE_M = 1_000.0
 
-BASE_LINE_LENGTH_SCOPE = "CEB 66 kV transmission circuit length"
+BASE_LINE_LENGTH_SCOPE = "CEB's 66 kV circuit length"
 BASE_LINE_LENGTH_NOTE = (
-    "CEB reports 442 km overhead plus 36.9 km underground at 66 kV. "
-    "The routed base model is a geographic corridor model and may not retain "
-    "every parallel circuit represented by the published circuit-km total."
+    "CEB reports 442 km overhead and 36.9 km underground at 66 kV, counting every circuit. "
+    "The model follows the drawn routes, which may show a double-circuit line once."
 )
-INFERRED_LINE_LENGTH_SCOPE = "CEB total transmission, medium-voltage and low-voltage circuit length"
+INFERRED_LINE_LENGTH_SCOPE = "CEB's circuit length at all voltages"
 INFERRED_LINE_LENGTH_NOTE = (
-    "CEB reports 10,492.2 km across overhead and underground transmission, "
-    "medium-voltage distribution and low-voltage distribution. This check "
-    "compares that total directly with the nightlight-supported OSM road "
-    "subnetwork plus the provided CEB backbone where available. Geographic "
-    "road length and electrical circuit-km remain different quantities."
+    "CEB reports 10,492.2 km of lines at all voltages, overhead and underground. The model length "
+    "is the kept roads plus, in inferred-provided, the CEB 66 kV lines. Road length is not circuit "
+    "length: a road can carry several circuits or none."
 )
 
 
@@ -103,7 +98,7 @@ def _file_sha256(path: Path) -> str:
 
 
 def _log_validation(product: str, validation: dict[str, object]) -> None:
-    """Log advisory warnings so they show up in the Snakemake log, not only in validation.json."""
+    """Log each validation warning, so it also appears in the Snakemake log."""
     for warning in validation.get("warnings", []):
         logger.warning("%s: %s", product, warning)
 
@@ -149,7 +144,7 @@ def _write_metadata(path: Path, metadata: dict[str, object]) -> Path:
 
 
 def _ceb_topology_validation(topology: DerivedBaseTopology) -> dict[str, object]:
-    """Check the CEB-map closures that can be resolved in the supplied vectors."""
+    """Check the base network against the CEB 2025 network map, if all 18 CEB substations are present."""
     required_ids = set(CEB_SUBSTATION_NAMES)
     available_ids = set(topology.buses["bus_id"].astype(str))
     if not required_ids <= available_ids:
@@ -174,13 +169,12 @@ def _ceb_topology_validation(topology: DerivedBaseTopology) -> dict[str, object]
     failed = [name for name, passed in checks.items() if not passed]
     return {
         "status": "pass" if not failed else "warning",
-        "reference": "provided CEB 2025 network map",
+        "reference": "CEB network map, 2025",
         "checks": checks,
         "failed_checks": failed,
         "voltage_note": (
-            "The CEB map's blue 132 kV construction class operates at 66 kV. "
-            "The vectors do not retain enough style data to assign that design "
-            "class per circuit, so PyPSA v_nom remains the operating 66 kV."
+            "Lines drawn in blue on the CEB map are built for 132 kV but run at 66 kV. "
+            "The shapefile does not say which lines these are, so every line is 66 kV in the model."
         ),
     }
 
@@ -291,7 +285,7 @@ def _build_base_network(
             "default_voltage_kv": default_voltage_kv,
             "topology_capacity_mva": topology_capacity_mva,
             "electrical_values_note": (
-                "Voltages are provided CEB 66 kV values; line capacities are non-binding topology placeholders."
+                f"Voltages are CEB's 66 kV. Line capacities are a placeholder of {topology_capacity_mva:,.0f} MVA."
             ),
             "model_line_length_km": validation["totals"]["line_length_km"],
             "line_length_validation": validation["checks"]["line_length_against_published_ceb_total"],
@@ -313,7 +307,7 @@ def _build_base_network(
         publish_voltage=True,
         publish_capacity=False,
         electrical_values_note=(
-            "Voltages are provided CEB 66 kV values; line capacities are non-binding topology placeholders."
+            f"Voltages are CEB's 66 kV. Line capacities are a placeholder of {topology_capacity_mva:,.0f} MVA."
         ),
         stage="topology_only",
     )
@@ -370,7 +364,16 @@ def _graph_line_frame(
     default_voltage_kv: float,
     transmission_voltage_kv: float,
     default_capacity_mva: float,
+    transmission_capacity_mva: float | None = None,
+    anchor_capacity_mva: float | None = None,
 ) -> gpd.GeoDataFrame:
+    """Return the graph edges as a PyPSA lines table.
+
+    CEB 66 kV lines (``provided_transmission``) take the ``transmission_*`` values; connectors
+    (``*_anchor``) carry a whole site and take ``anchor_capacity_mva``; the rest take ``default_*``.
+    """
+    transmission_capacity_mva = default_capacity_mva if transmission_capacity_mva is None else transmission_capacity_mva
+    anchor_capacity_mva = default_capacity_mva if anchor_capacity_mva is None else anchor_capacity_mva
     columns = [
         "line_id",
         "bus0",
@@ -398,8 +401,13 @@ def _graph_line_frame(
                     (float(node1["x"]), float(node1["y"])),
                 ]
             )
-        line_source = attrs.get("source")
-        line_voltage_kv = transmission_voltage_kv if line_source == "provided_transmission" else default_voltage_kv
+        line_source = str(attrs.get("source") or "")
+        is_transmission = line_source == "provided_transmission"
+        is_anchor = line_source.endswith("_anchor")
+        line_voltage_kv = transmission_voltage_kv if is_transmission else default_voltage_kv
+        line_capacity_mva = (
+            transmission_capacity_mva if is_transmission else anchor_capacity_mva if is_anchor else default_capacity_mva
+        )
         rows.append(
             {
                 "line_id": str(attrs.get("edge_id") or f"inferred_line_{number:06d}"),
@@ -407,7 +415,7 @@ def _graph_line_frame(
                 "bus1": bus1,
                 "v_nom_kv": line_voltage_kv,
                 "length_km": max(float(attrs.get("length_km", 0.0)), 0.001),
-                "s_nom_mva": default_capacity_mva,
+                "s_nom_mva": line_capacity_mva,
                 "inferred": True,
                 "source": line_source,
                 "region": attrs.get("region"),
@@ -436,7 +444,10 @@ def _equal_service_weights(bus_frame: gpd.GeoDataFrame) -> pd.DataFrame:
 
 
 def _largest_road_component_centroid(roads: gpd.GeoDataFrame | None, *, region: str) -> Point:
-    """Point on the largest connected road component, used as a stand-in root for a region with no power assets."""
+    """Return the placeholder substation point for a region with no power assets (EPSG:4326).
+
+    It is the point of the region's longest connected road network nearest that network's centroid.
+    """
     if roads is None or roads.empty:
         raise ValueError(
             f"No roads are available for {region!r}, so no provisional power root can be placed. "
@@ -502,7 +513,7 @@ def _normalise_osm_power_assets(
     *,
     region: str,
 ) -> gpd.GeoDataFrame:
-    """Keep OSM substations, plants and generators as candidate power roots."""
+    """Return the OSM substations, plants and generators as asset points; plants become generators."""
     if power_features is None or power_features.empty:
         return _empty_power_assets()
     power_features = power_features.copy()
@@ -564,20 +575,15 @@ def _provided_power_assets(
         crs="EPSG:4326",
     )
     generators = pd.read_csv(input_dir / "generators.csv")
-    if {"lon", "lat"} <= set(generators):
-        has_coordinates = (
-            pd.to_numeric(generators["lon"], errors="coerce").notna()
-            & pd.to_numeric(generators["lat"], errors="coerce").notna()
-        )
-        coordinate_rows = generators.loc[has_coordinates].copy()
-    else:
-        coordinate_rows = generators.iloc[0:0].copy()
+    if "region" not in generators:
+        generators["region"] = "mauritius"
+    coordinate_rows = generators.loc[_has_coordinates(generators)].copy()
     generator_assets = gpd.GeoDataFrame(
         {
             "asset_id": coordinate_rows["generator_id"].astype(str),
             "asset_kind": "generator",
             "source": "provided_generator",
-            "region": "mauritius",
+            "region": coordinate_rows["region"].astype(str).to_numpy(),
             "provisional_root": False,
             "geometry": [
                 Point(float(lon), float(lat))
@@ -593,6 +599,32 @@ def _provided_power_assets(
         crs="EPSG:4326",
     )
     return assets, generators
+
+
+def reported_generation_reference_mw(source: str, region: str | None) -> float:
+    """Return CEB's reported installed capacity (MW) for the islands a network covers.
+
+    ``mauritius-rodrigues`` adds the Rodrigues figure; with no CEB figure, the Mauritius total is used.
+    """
+    if source == "base" or not region:
+        return CEB_REPORTED_INSTALLED_GENERATION_MW
+    members = [osm.region_slug(member) for member in osm.region_members(region)]
+    covered = [
+        CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW[member]
+        for member in members
+        if member in CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW
+    ]
+    return round(float(sum(covered)), 2) if covered else CEB_REPORTED_INSTALLED_GENERATION_MW
+
+
+def _has_coordinates(generators: pd.DataFrame) -> pd.Series:
+    """Return True for each row with a numeric ``lon`` and ``lat``."""
+    if not {"lon", "lat"} <= set(generators):
+        return pd.Series(False, index=generators.index)
+    return (
+        pd.to_numeric(generators["lon"], errors="coerce").notna()
+        & pd.to_numeric(generators["lat"], errors="coerce").notna()
+    )
 
 
 def _provisional_power_root(region: str, roads: gpd.GeoDataFrame | None) -> gpd.GeoDataFrame:
@@ -626,7 +658,7 @@ def _osm_road_envelope_validation(
     reference_line_length_km: float,
     tolerance_fraction: float,
 ) -> dict[str, object]:
-    """Compare the de-duplicated road envelope with CEB circuit-km."""
+    """Compare the length of all OSM roads, before the night-light filter, with CEB's total circuit length."""
     graph = build_inferred_distribution_graph(
         _empty_power_assets(),
         osm_distribution_lines=roads,
@@ -650,11 +682,7 @@ def _osm_road_envelope_validation(
 
 
 def _road_component_count(roads: gpd.GeoDataFrame) -> int:
-    """Count endpoint-connected road components per island.
-
-    The final network graph joins lines only where they share an endpoint, so
-    this mirrors the connectivity the build actually produces.
-    """
+    """Count connected road networks (per region, summed); as in the graph, roads join only at shared endpoints."""
     total = 0
     for _, block in roads.groupby("region", dropna=False):
         graph = nx.Graph()
@@ -681,13 +709,10 @@ def _reconnect_supported_roads(
     full_envelope: gpd.GeoDataFrame,
     metric_crs: object,
 ) -> gpd.GeoDataFrame:
-    """Reconnect stranded supported components along real roads.
+    """Return the OSM roads that rejoin areas cut off by the night-light filter (e.g. Le Morne).
 
-    The nightlight support filter can strand a lit cluster (e.g. Le Morne) by
-    dropping an unlit stretch of connecting road. The full road envelope is
-    connected, so for each stranded component restore the shortest real-road path
-    (from the full envelope, weighted by length) back to its island's main
-    network. Restored roads are real segments tagged ``source="road_link"``.
+    Each cut-off piece gets the shortest path through all OSM roads to its region's largest
+    piece. Added roads have ``source="road_link"``.
     """
     added_rows: list[dict[str, object]] = []
     for region_name, block in supported.groupby("region", dropna=False):
@@ -752,13 +777,10 @@ def _nightlight_supported_roads(
     *,
     support_distance_m: float,
 ) -> tuple[gpd.GeoDataFrame, dict[str, object]]:
-    """Retain the road subnetwork supported by nightlight targets.
+    """Keep the roads within ``support_distance_m`` of a point in ``targets`` (lit pixels and power assets).
 
-    Roads within the configured distance of a VIIRS-derived target are kept.
-    Every supported road is retained, and stranded components (lit clusters the
-    support filter cut off, e.g. Le Morne) are reconnected to the main network
-    along the shortest real-road path from the full envelope, so the result is a
-    connected, road-following network.
+    Cut-off pieces are rejoined by ``_reconnect_supported_roads``. Returns the roads (EPSG:4326)
+    and counts and lengths for the metadata.
     """
     if support_distance_m < 0:
         raise ValueError("nightlight_support_distance_m must be non-negative")
@@ -785,10 +807,6 @@ def _nightlight_supported_roads(
 
     selected = prepared.copy()
 
-    # The nightlight support filter can drop an unlit stretch of connecting road
-    # and strand a lit cluster (e.g. Le Morne) as its own component. Reconnect
-    # each stranded component to its island's main network along the shortest
-    # real-road path from the full envelope, so the network stays road-following.
     links = _reconnect_supported_roads(selected, full_envelope, metric_crs)
     if not links.empty:
         selected = gpd.GeoDataFrame(
@@ -821,20 +839,28 @@ def _nightlight_supported_roads(
 
 def _provided_generators_for_inferred(
     generators: pd.DataFrame,
+    *,
+    substation_regions: set[str],
 ) -> pd.DataFrame:
-    """Point provided generators at the graph's ``bus::<id>`` node names; a blank bus id stays blank."""
+    """Set each CEB generator's ``bus_id`` to its graph node.
+
+    ``bus::<bus_id>`` for a generator at a substation; ``asset::<generator_id>`` for one with
+    coordinates on an island with no CEB substation (Rodrigues); otherwise blank (kept for
+    review, left out of the network).
+    """
     prepared = generators.copy()
     bus_id = prepared["bus_id"]
+    region = prepared["region"].astype(str) if "region" in prepared else pd.Series("mauritius", index=prepared.index)
+    own_node = bus_id.isna() & _has_coordinates(prepared) & ~region.isin(substation_regions)
     prepared["bus_id"] = bus_id.where(bus_id.isna(), "bus::" + bus_id.astype(str))
+    prepared.loc[own_node, "bus_id"] = "asset::" + prepared.loc[own_node, "generator_id"].astype(str)
     return prepared
 
 
 def _highway_class_breakdown(roads: gpd.GeoDataFrame | None) -> dict[str, int]:
-    """Count OSM road features by their retained ``highway`` class.
+    """Count OSM roads by ``highway`` class, to check that footpaths and tracks are excluded.
 
-    Lets a build report verify that footpaths and tracks are excluded. Caches
-    written before the ``highway`` column was retained report every feature as
-    ``"unlabelled"`` so the totals still add up.
+    Missing or blank classes, and caches without a ``highway`` column, count as ``"unlabelled"``.
     """
     if roads is None or len(roads) == 0:
         return {}
@@ -851,12 +877,10 @@ def _insert_transformer_junctions(
     *,
     capacity_mva: float,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
-    """Split every bus carrying more than one line voltage into one bus per level.
+    """Split each bus with lines of more than one voltage into one bus per voltage, as PyPSA needs.
 
-    A node where the transmission backbone meets distribution is physically a
-    transformer, and PyPSA needs one voltage per bus. Each such node becomes one
-    bus per voltage (the lowest keeps the original id) joined by a ``Transformer``;
-    lines reconnect to the split bus matching their own voltage.
+    The lowest voltage keeps the id, others become ``<bus>::<kV>kv``; adjacent levels are joined
+    by a ``capacity_mva`` transformer. Returns buses, lines and transformers.
     """
     transformer_columns = ["transformer_id", "bus0", "bus1", "v_nom0_kv", "v_nom1_kv", "s_nom_mva", "geometry"]
     incident: dict[str, set[float]] = {}
@@ -934,6 +958,8 @@ def _build_inferred_network(
     inferred_voltage_kv: float,
     inferred_transmission_voltage_kv: float,
     inferred_capacity_mva: float,
+    inferred_transmission_capacity_mva: float,
+    inferred_anchor_capacity_mva: float,
     base_route_gap_tolerance_m: float,
     table_output_dir: Path | None,
     reference_line_length_km: float,
@@ -944,7 +970,7 @@ def _build_inferred_network(
     if source not in {"inferred-osm", "inferred-provided"}:
         raise ValueError(f"Unsupported inferred source: {source}")
 
-    # 1. Inputs: the cached OSM road envelope, the power assets and the night-light targets.
+    # 1. Inputs: OSM roads, power assets and lit pixels ("night-light targets").
     osm_road_envelope = osm.read_vector(roads_path)
     if osm_road_envelope.empty:
         raise ValueError(f"The OSM road envelope at {roads_path} is empty")
@@ -965,8 +991,10 @@ def _build_inferred_network(
         provided_generator_records = len(provided_generators)
         methodology = INFERRED_PROVIDED_METHODOLOGY
         power_asset_source = "provided_substations_and_generators"
+    # Regions with a substation. Elsewhere a generator with coordinates becomes its own node.
+    substation_regions = set(power_assets.loc[power_assets["asset_kind"].eq("substation"), "region"].astype(str))
 
-    # A region member without any power asset gets one stand-in root on its road network.
+    # An island with no power assets gets a placeholder substation on its roads.
     member_roots: list[gpd.GeoDataFrame] = []
     for member in osm.region_members(region):
         member_slug = osm.region_slug(member)
@@ -976,7 +1004,7 @@ def _build_inferred_network(
         member_roads = osm_road_envelope
         if "region" in member_roads and len(osm.region_members(region)) > 1:
             member_roads = member_roads[member_roads["region"].astype(str).eq(member_slug)]
-        logger.warning("%s: no power assets for %s; placing a provisional root on its road network", source, member)
+        logger.warning("%s: no power assets on %s; placing a placeholder substation on its roads", source, member)
         member_roots.append(_provisional_power_root(member, member_roads))
     if member_roots:
         power_assets = gpd.GeoDataFrame(
@@ -999,7 +1027,7 @@ def _build_inferred_network(
     if nightlight_targets_path is not None and (nightlight_targets_path.parent / "metadata.json").is_file():
         targets_metadata = json.loads((nightlight_targets_path.parent / "metadata.json").read_text())
 
-    # 2. Keep the roads that lie near a lit target or a power asset.
+    # 2. Keep the roads near a lit pixel or a power asset.
     support_points = gpd.GeoDataFrame(
         pd.concat(
             [
@@ -1020,7 +1048,7 @@ def _build_inferred_network(
     supported_road_metadata["power_asset_support_count"] = len(power_assets)
     supported_road_metadata["highway_classes"] = _highway_class_breakdown(supported_roads)
 
-    # 3. For the provided variant, keep the CEB transmission backbone (same rules as the base product).
+    # 3. inferred-provided also gets the CEB 66 kV lines, built as for base-mauritius.
     provided_backbone: gpd.GeoDataFrame | None = None
     provided_backbone_edges = 0
     if source == "inferred-provided":
@@ -1034,7 +1062,7 @@ def _build_inferred_network(
         provided_backbone["region"] = "mauritius"
         provided_backbone_edges = len(provided_backbone)
 
-    # 4. Graph: roads and backbone as edges, assets connected to the nearest road point.
+    # 4. Graph: roads (and CEB lines) as edges; each asset connects to the nearest road (and CEB line).
     graph = build_inferred_distribution_graph(
         power_assets,
         osm_distribution_lines=supported_roads,
@@ -1045,18 +1073,19 @@ def _build_inferred_network(
     table_dir = _inferred_table_dir(output_dir)
     inferred_tables = write_inferred_distribution_tables(graph, table_dir)
 
-    # 5. PyPSA tables. Voltages and capacities are placeholders (see electrical_values_note).
+    # 5. PyPSA tables, with placeholder voltages and capacities (see electrical_values_note).
     lines = _graph_line_frame(
         graph,
         default_voltage_kv=inferred_voltage_kv,
         transmission_voltage_kv=inferred_transmission_voltage_kv,
         default_capacity_mva=inferred_capacity_mva,
+        transmission_capacity_mva=inferred_transmission_capacity_mva,
+        anchor_capacity_mva=inferred_anchor_capacity_mva,
     )
     buses = _node_bus_frame(graph)
-    # A junction that carries both the backbone and distribution voltage becomes
-    # one bus per level joined by a transformer.
+    # Split each bus that touches lines of two voltages and join the parts by a transformer.
     buses, lines, transformers = _insert_transformer_junctions(buses, lines, capacity_mva=inferred_capacity_mva)
-    # A bus with no line (an asset that could not be anchored) sits at the distribution voltage.
+    # Buses with no line (assets too far from any road) get the distribution voltage.
     connected_buses = set(lines["bus0"].astype(str)) | set(lines["bus1"].astype(str))
     isolated = ~buses["bus_id"].astype(str).isin(connected_buses) & buses["v_nom_kv"].isna()
     buses.loc[isolated, "v_nom_kv"] = float(inferred_voltage_kv)
@@ -1065,7 +1094,9 @@ def _build_inferred_network(
     service_weights.to_csv(service_weights_path_out, index=False)
 
     generators = (
-        _provided_generators_for_inferred(provided_generators) if source == "inferred-provided" else _empty_generators()
+        _provided_generators_for_inferred(provided_generators, substation_regions=substation_regions)
+        if source == "inferred-provided"
+        else _empty_generators()
     )
     table_outputs = None
     validation_kwargs = {
@@ -1097,7 +1128,7 @@ def _build_inferred_network(
     anchored, unanchored = _power_asset_anchor_counts(graph)
     if unanchored:
         logger.warning(
-            "%s: %d power asset(s) are farther than %.0f m from any retained road and stay unconnected",
+            "%s: %d power assets are more than %.0f m from a kept road and are not connected",
             network_path.stem,
             unanchored,
             max_anchor_distance_m,
@@ -1115,10 +1146,14 @@ def _build_inferred_network(
     spatial_dir = network_path.parent / "geoparquet"
     spatial_outputs = spatial_export_paths(spatial_dir, network_id=network_path.stem)
     electrical_values_note = (
-        "Distribution voltages/capacities are non-binding topology placeholders; "
-        "the provided transmission backbone keeps its voltage and joins distribution "
-        "through transformers (see model_v_nom_kv / model_s_nom_mva)."
+        f"Placeholder values, in model_v_nom_kv and model_s_nom_mva: roads {inferred_voltage_kv:g} kV and "
+        f"{inferred_capacity_mva:g} MVA; connections to substations and plants {inferred_anchor_capacity_mva:g} MVA."
     )
+    if source == "inferred-provided":
+        electrical_values_note += (
+            f" CEB lines {inferred_transmission_voltage_kv:g} kV and {inferred_transmission_capacity_mva:g} MVA,"
+            " joined to the roads by transformers."
+        )
     _write_metadata(
         metadata_path,
         {
@@ -1170,6 +1205,8 @@ def _build_inferred_network(
             "inferred_voltage_kv": inferred_voltage_kv,
             "inferred_transmission_voltage_kv": inferred_transmission_voltage_kv,
             "inferred_capacity_mva": inferred_capacity_mva,
+            "inferred_transmission_capacity_mva": inferred_transmission_capacity_mva,
+            "inferred_anchor_capacity_mva": inferred_anchor_capacity_mva,
             "transformers": len(network.transformers),
             "electrical_values_note": electrical_values_note,
             "max_anchor_distance_m": max_anchor_distance_m,
@@ -1228,38 +1265,31 @@ def build_network(
     inferred_voltage_kv: float = 11,
     inferred_transmission_voltage_kv: float = 66,
     inferred_capacity_mva: float = 5,
+    inferred_transmission_capacity_mva: float = 50,
+    inferred_anchor_capacity_mva: float = 137,
     export_root: Path | None = None,
     reference_line_length_km: float = CEB_TRANSMISSION_LENGTH_KM,
     inferred_reference_line_length_km: float = CEB_TOTAL_NETWORK_LENGTH_KM,
     line_length_tolerance_fraction: float = 0.35,
-    reference_generation_capacity_mw: float = CEB_REPORTED_INSTALLED_GENERATION_MW,
+    reference_generation_capacity_mw: float | None = None,
     generation_capacity_tolerance_fraction: float = 0.10,
     base_route_gap_tolerance_m: float = 75,
     base_default_voltage_kv: float = 66,
     base_topology_capacity_mva: float = 10_000,
 ) -> NetworkBuildOutputs:
-    """Build and save one named network product.
+    """Build one network and write it to ``<output_dir>/<output_name>/``.
 
-    ``source`` picks the product:
+    ``source`` is ``"base"`` (CEB substations, 66 kV lines and generators), ``"inferred-osm"``
+    (OSM power assets joined by the OSM roads near lit pixels) or ``"inferred-provided"`` (CEB
+    substations, generators and 66 kV lines joined by the same roads).
 
-    - ``"base"``: the provided CEB transmission network (substations, routes, generators).
-    - ``"inferred-osm"``: OSM substations, plants and generators joined by the
-      night-light-supported OSM road network.
-    - ``"inferred-provided"``: the provided substations and generators plus the
-      CEB backbone, joined by the same road network.
+    Nothing is downloaded. Inferred networks read ``roads_path``, ``nightlight_targets`` (the lit
+    pixels) and, for inferred-osm, ``power_path``. Unset paths default to their place under the
+    data root; a missing file raises FileNotFoundError naming the rule or command that makes it.
 
-    Nothing is downloaded here. The inferred sources read three cached files:
-    ``roads_path`` and ``power_path`` (see :mod:`energy.osm`, populated by the
-    ``fetch_energy_osm`` rule) and ``nightlight_targets`` (written by the
-    ``build_energy_nightlight_targets`` rule). When a path is not given, the
-    default cache location under the configured data root is used and a missing
-    file is reported with the rule that creates it.
-
-    Outputs go to ``<output_dir>/<output_name>/``: the PyPSA network, a metadata
-    JSON and checksum-linked node and edge GeoParquet layers. With
-    ``export_root`` the human-readable ``generators.csv``, ``lines.csv`` and
-    ``validation.json`` are written below ``<export_root>/<output_name>/``.
-    Existing outputs are only replaced when ``overwrite`` is set.
+    Writes the PyPSA network (``.nc``), a metadata JSON and GeoParquet layers; with
+    ``export_root``, also ``generators.csv``, ``lines.csv`` and ``validation.json`` under
+    ``<export_root>/<output_name>/``. An existing network raises FileExistsError unless ``overwrite``.
     """
     source = source.lower()
     valid_sources = {"base", "inferred-osm", "inferred-provided"}
@@ -1269,6 +1299,9 @@ def build_network(
         raise ValueError("region can only be used with an inferred source")
     if source != "base" and not region:
         raise ValueError(f"source={source!r} requires a region, e.g. region='mauritius-rodrigues'.")
+    if reference_generation_capacity_mw is None:
+        # CEB's total for the islands this network covers.
+        reference_generation_capacity_mw = reported_generation_reference_mw(source, region)
 
     input_dir = Path(input_dir or processed_energy_dir() / "provided")
     output_dir = Path(output_dir or network_output_dir())
@@ -1307,15 +1340,15 @@ def build_network(
     roads_path = Path(roads_path) if roads_path is not None else osm.osm_roads_path(region, network_type)
     if not roads_path.is_file():
         raise FileNotFoundError(
-            f"Cached OSM roads are missing: {roads_path}. Run the fetch_energy_osm rule once "
-            "(with energy.osm.allow_download enabled) or pass roads_path."
+            f"OSM roads are missing: {roads_path}. The fetch_energy_osm rule downloads them "
+            "(needs internet), or pass roads_path."
         )
     if source == "inferred-osm":
         power_path = Path(power_path) if power_path is not None else osm.osm_power_path(region)
         if not power_path.is_file():
             raise FileNotFoundError(
-                f"Cached OSM power features are missing: {power_path}. Run the fetch_energy_osm rule once "
-                "(with energy.osm.allow_download enabled) or pass power_path."
+                f"OSM power features are missing: {power_path}. The fetch_energy_osm rule downloads them "
+                "(needs internet), or pass power_path."
             )
     else:
         power_path = None
@@ -1343,6 +1376,8 @@ def build_network(
         inferred_voltage_kv=inferred_voltage_kv,
         inferred_transmission_voltage_kv=inferred_transmission_voltage_kv,
         inferred_capacity_mva=inferred_capacity_mva,
+        inferred_transmission_capacity_mva=inferred_transmission_capacity_mva,
+        inferred_anchor_capacity_mva=inferred_anchor_capacity_mva,
         base_route_gap_tolerance_m=base_route_gap_tolerance_m,
         table_output_dir=table_output_dir,
         reference_line_length_km=inferred_reference_line_length_km,

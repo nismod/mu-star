@@ -1,24 +1,19 @@
-"""Fetch and cache OpenStreetMap inputs for a region: roads, power features and the area of interest.
+"""Fetch and cache OpenStreetMap roads, power features and region outlines (AOI).
 
-The inferred distribution network follows OpenStreetMap roads, uses OSM power
-features (substations, plants, generators) as connection points, and clips the
-night-light raster to the region's outline. All three come from the OSM
-Overpass and Nominatim services, so they are fetched **once** and cached under::
+Each is downloaded once, from Overpass and Nominatim, to::
 
-    <data_root>/incoming/energy/osm/<region>/roads.parquet
-    <data_root>/incoming/energy/osm/<region>/power.parquet
-    <data_root>/incoming/energy/osm/<region>/aoi.parquet
+    <data_root>/incoming/Infrastructure/Energy/OpenStreetMap/<region>/roads.parquet
+    <data_root>/incoming/Infrastructure/Energy/OpenStreetMap/<region>/power.parquet
+    <data_root>/incoming/Infrastructure/Energy/OpenStreetMap/<region>/aoi.parquet
 
-Nothing here downloads unless you pass ``allow_download=True`` (from Python) or
-run the ``fetch_energy_osm`` workflow rule with ``energy.osm.allow_download``
-enabled in ``config/energy/energy.yaml``. A missing cache raises
-:class:`OSMDownloadRequired` with instructions instead of silently contacting
-the internet.
+The ``fetch_energy_osm`` rule downloads missing files. From Python, a missing
+file raises :class:`OSMDownloadRequired` unless ``allow_download=True``.
 """
 
 from __future__ import annotations
 
 import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,19 +21,18 @@ import geopandas as gpd
 import pandas as pd
 import shapely
 
-from energy.paths import incoming_energy_dir
+from energy.paths import INCOMING_ENERGY_RELATIVE
+from energy.paths import data_root as configured_data_root
 
 GEOGRAPHIC_CRS = "EPSG:4326"
 
 
 class OSMDownloadRequired(RuntimeError):
-    """Raised when OSM data is needed but downloading was not permitted."""
+    """Raised when an OSM file is missing and ``allow_download`` is False."""
 
 
-# Shortcuts from a short region key to the OSM/Nominatim query that geocodes it.
-# Any other string is passed to Nominatim as written (e.g. "Rodrigues, Mauritius").
-# "mauritius" targets the main island only; the bare country name would also
-# pull in the outer islands.
+# Region keys and their Nominatim queries; any other string is queried as written.
+# "mauritius" is the main island only; the query "Mauritius" would add the outer islands.
 REGIONS: dict[str, str] = {
     "mauritius": "Mauritius Island, Mauritius",
     "rodrigues": "Rodrigues, Mauritius",
@@ -46,32 +40,27 @@ REGIONS: dict[str, str] = {
     "st_brandon": "Saint Brandon, Mauritius",
 }
 
-# A region group is fetched member by member and combined into one cache.
+# A group is fetched one member at a time and combined into one file.
 REGION_GROUPS: dict[str, tuple[str, ...]] = {
     "mauritius-rodrigues": ("mauritius", "rodrigues"),
 }
 
 
 def region_query(region: str) -> str:
-    """Resolve a region to an OSM/Nominatim query: a REGIONS shortcut if one
-    matches, otherwise the string as given."""
+    """Return the Nominatim query for ``region``: its ``REGIONS`` entry, or the string as given."""
     return REGIONS.get(region.strip().lower(), region.strip())
 
 
 def region_members(region: str) -> tuple[str, ...]:
-    """Return the independently fetched places represented by ``region``."""
+    """Return the members of a group in ``REGION_GROUPS``, or ``(region,)``."""
     normalised = region.strip().lower()
     return REGION_GROUPS.get(normalised, (region.strip(),))
 
 
 def region_slug(region: str) -> str:
-    """Filesystem-safe key for cache folders and product names.
+    """Return a file-name-safe key for ``region``, used in cache folders and network names.
 
-    Group names are kept as they are (``mauritius-rodrigues``); any other query
-    is lower-cased with runs of punctuation and spaces replaced by ``_``, e.g.
-    ``"Rodrigues, Mauritius"`` becomes ``rodrigues_mauritius``. Use this same
-    function wherever a path is derived from a region so that the workflow rules
-    and the Python helpers always agree.
+    Group names are kept as they are; ``"Rodrigues, Mauritius"`` becomes ``rodrigues_mauritius``.
     """
     normalised = region.strip().lower()
     if normalised in REGION_GROUPS:
@@ -87,13 +76,12 @@ def _require_region(region: str) -> str:
 
 
 # --- Cache locations ----------------------------------------------------------
-# The *_relative functions return paths relative to the data root; the workflow
-# rules use them with their ``{data}`` wildcard. The osm_*_path functions return
-# absolute paths for direct Python use.
+# *_relative: paths relative to the data root, which the workflow rules prefix with {data}.
+# osm_*_path: the same paths under the data root, for Python callers.
 
 
 def osm_cache_dir_relative(region: str) -> Path:
-    return Path("incoming") / "energy" / "osm" / region_slug(region)
+    return INCOMING_ENERGY_RELATIVE / "OpenStreetMap" / region_slug(region)
 
 
 def roads_cache_relative(region: str, network_type: str = "drive") -> Path:
@@ -110,7 +98,7 @@ def aoi_cache_relative(region: str) -> Path:
 
 
 def _data_root_or_default(data_root: Path | None) -> Path:
-    return Path(data_root) if data_root is not None else incoming_energy_dir().parent.parent
+    return Path(data_root) if data_root is not None else configured_data_root()
 
 
 def osm_roads_path(region: str, network_type: str = "drive", data_root: Path | None = None) -> Path:
@@ -129,7 +117,7 @@ def osm_aoi_path(region: str, data_root: Path | None = None) -> Path:
 
 
 def read_vector(path: Path) -> gpd.GeoDataFrame:
-    """Read a vector file by extension: GeoParquet (``.parquet``/``.geoparquet``) or anything GDAL reads."""
+    """Read GeoParquet (``.parquet``, ``.geoparquet``, ``.gpq``, ``.pq``) or any vector file GDAL reads."""
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"Vector file does not exist: {path}")
@@ -139,11 +127,9 @@ def read_vector(path: Path) -> gpd.GeoDataFrame:
 
 
 def deduplicate_two_way_roads(roads: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Keep one row per road geometry, treating a line and its reverse as the same road.
+    """Drop repeated road geometries, counting a line and its reverse as the same road.
 
-    osmnx stores a two-way street as two directed edges with the same geometry
-    drawn in opposite directions. For a distribution-line proxy that doubles
-    every length and count, so the cache keeps a single undirected copy.
+    osmnx stores a two-way street twice, in opposite directions; keeping both doubles its length.
     """
     if roads.empty:
         return roads
@@ -155,12 +141,9 @@ def deduplicate_two_way_roads(roads: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 
 def _primary_highway_class(value: object) -> str | None:
-    """Normalise an OSM ``highway`` tag to a single lowercase class string.
+    """Return an OSM ``highway`` tag as one lower-case string, or None if missing.
 
-    osmnx returns ``highway`` as a plain string for most ways, but simplified
-    edges that merge several ways carry a list of values. Collapse either form
-    to one representative class (the first entry) so the column stays filterable
-    and Parquet-friendly. Missing tags become ``None``.
+    osmnx gives a list for an edge merged from several ways; the first entry is used.
     """
     if isinstance(value, (list, tuple)):
         value = value[0] if value else None
@@ -178,28 +161,37 @@ def _empty_roads() -> gpd.GeoDataFrame:
     )
 
 
+# OSM tags kept on power features (tag -> column). Free text, used to match plants
+# to the CEB annual report by name.
+POWER_FEATURE_TAGS = {
+    "name": "name",
+    "operator": "operator",
+    "plant:source": "plant_source",
+    "plant:output:electrical": "plant_output_electrical",
+    "voltage": "voltage",
+}
+
+
 def _empty_power_features() -> gpd.GeoDataFrame:
-    return gpd.GeoDataFrame(
-        {"source": [], "region": [], "bus_id": [], "power": [], "geometry": []},
-        geometry="geometry",
-        crs=GEOGRAPHIC_CRS,
-    )
+    columns = {"source": [], "region": [], "bus_id": [], "power": []}
+    columns.update({column: [] for column in POWER_FEATURE_TAGS.values()})
+    columns["geometry"] = []
+    return gpd.GeoDataFrame(columns, geometry="geometry", crs=GEOGRAPHIC_CRS)
 
 
 def _download_help(what: str, region: str, path: Path) -> str:
     return (
         f"OSM {what} for {region!r} are not cached at {path}.\n"
-        "Fetch them once (needs internet): set energy.osm.allow_download: true in "
-        "config/energy/energy.yaml and run the fetch_energy_osm rule, or call this "
-        "function with allow_download=True."
+        "The fetch_energy_osm workflow rule downloads them (needs internet); from "
+        "Python, call this function with allow_download=True."
     )
 
 
-def _configure_osmnx(data_root: Path | None):
-    import osmnx as ox  # imported lazily: only needed when downloading
+def _configure_osmnx():
+    import osmnx as ox  # only needed for downloads
 
-    # Keep the Overpass/Nominatim response cache inside the (git-ignored) data tree.
-    ox.settings.cache_folder = str(_data_root_or_default(data_root) / "incoming" / "energy" / "osm" / ".cache")
+    # osmnx's download cache goes in the system temp folder, not the (possibly shared) data folders.
+    ox.settings.cache_folder = str(Path(tempfile.gettempdir()) / "mu-star-osmnx-cache")
     try:
         from osmnx._errors import InsufficientResponseError
     except Exception:  # pragma: no cover - version-dependent import
@@ -215,7 +207,7 @@ def _resolve_cache(
     path: Path | None,
     overwrite: bool,
 ) -> tuple[Path, bool]:
-    """Return (path, already_available) for a cache file, honouring an explicit user path."""
+    """Return ``(path, available)``. A given ``path`` must exist; it is not downloaded or overwritten."""
     if path is not None:
         explicit = Path(path)
         if explicit.is_file():
@@ -239,15 +231,11 @@ def fetch_osm_roads(
     path: Path | None = None,
     data_root: Path | None = None,
 ) -> Path:
-    """Return the cached OSM road network for ``region`` as LineStrings, fetching it if allowed.
+    """Return the path of the cached OSM roads (LineStrings) for ``region``, downloading if allowed.
 
-    ``network_type`` is passed to osmnx: ``"drive"`` keeps the drivable network
-    (trunk to residential roads and their links), ``"all"`` would also include
-    footpaths and tracks, which a distribution-line proxy should not follow.
-    Each feature keeps its OSM ``highway`` class. Two-way streets are stored
-    once (see :func:`deduplicate_two_way_roads`).
-
-    Pass ``path`` to use a user-supplied roads file instead of the cache.
+    ``network_type="drive"`` is trunk to residential roads and links; ``"all"`` adds footpaths and
+    tracks, which the estimated network should not follow. Roads keep their ``highway`` class; two-way
+    streets are stored once. ``path`` replaces the cache file.
     """
     region = _require_region(region)
     target, available = _resolve_cache(
@@ -283,10 +271,10 @@ def fetch_osm_roads(
     if not allow_download:
         raise OSMDownloadRequired(_download_help("roads", region, target))
 
-    ox, InsufficientResponseError = _configure_osmnx(data_root)
+    ox, InsufficientResponseError = _configure_osmnx()
     try:
         graph = ox.graph_from_place(region_query(region), network_type=network_type)
-        # One edge per street: osmnx graphs are directed and hold both directions of two-way roads.
+        # osmnx graphs hold both directions of a two-way road; keep one.
         graph = ox.convert.to_undirected(graph)
         edges = ox.graph_to_gdfs(graph, nodes=False).reset_index()
         roads = edges[["geometry"]].copy()
@@ -310,10 +298,10 @@ def fetch_osm_power_features(
     path: Path | None = None,
     data_root: Path | None = None,
 ) -> Path:
-    """Return cached OSM power features (substations, plants, generators) as points, fetching if allowed.
+    """Return the path of the cached OSM substations, plants and generators, downloading if allowed.
 
-    For a region group every member must be available; nothing is written until
-    all of them are, so a partial cache can never be mistaken for the full one.
+    Each is a point (its centroid, EPSG:4326) with id ``<REGION>_SUB_<nnn>`` and the
+    ``POWER_FEATURE_TAGS``. A group file is written only once every member is available.
     """
     region = _require_region(region)
     target, available = _resolve_cache(
@@ -349,7 +337,7 @@ def fetch_osm_power_features(
         raise OSMDownloadRequired(_download_help("power features", region, target))
 
     slug = region_slug(region)
-    ox, InsufficientResponseError = _configure_osmnx(data_root)
+    ox, InsufficientResponseError = _configure_osmnx()
     try:
         features = ox.features_from_place(
             region_query(region),
@@ -363,13 +351,18 @@ def fetch_osm_power_features(
                 features = features.set_crs(GEOGRAPHIC_CRS)
             metric = features.to_crs(features.estimate_utm_crs())
             power_values = features["power"].astype(str).to_numpy() if "power" in features else [""] * len(metric)
+            columns = {
+                "source": "osm_power",
+                "region": slug,
+                "bus_id": [f"{slug.upper()}_SUB_{number:03d}" for number in range(1, len(metric) + 1)],
+                "power": power_values,
+            }
+            for tag, column in POWER_FEATURE_TAGS.items():
+                columns[column] = (
+                    features[tag].astype("string").to_numpy() if tag in features else pd.array([pd.NA] * len(metric))
+                )
             power = gpd.GeoDataFrame(
-                {
-                    "source": "osm_power",
-                    "region": slug,
-                    "bus_id": [f"{slug.upper()}_SUB_{number:03d}" for number in range(1, len(metric) + 1)],
-                    "power": power_values,
-                },
+                columns,
                 geometry=metric.geometry.centroid.reset_index(drop=True),
                 crs=metric.crs,
             ).to_crs(GEOGRAPHIC_CRS)
@@ -389,10 +382,9 @@ def fetch_osm_aoi(
     path: Path | None = None,
     data_root: Path | None = None,
 ) -> Path:
-    """Return the cached area-of-interest polygon(s) for ``region`` from OSM/Nominatim, fetching if allowed.
+    """Return the path of the cached Nominatim outline (AOI) of ``region``, downloading if allowed.
 
-    The night-light target step clips the VIIRS raster to this outline. One
-    polygon per region member is stored with the query and retrieval time.
+    One row per region member, with the query and retrieval time; used to clip the night-light raster.
     """
     region = _require_region(region)
     target, available = _resolve_cache(
@@ -422,7 +414,7 @@ def fetch_osm_aoi(
     if not allow_download:
         raise OSMDownloadRequired(_download_help("area of interest", region, target))
 
-    ox, _ = _configure_osmnx(data_root)
+    ox, _ = _configure_osmnx()
     geocoded = ox.geocode_to_gdf(region_query(region)).to_crs(GEOGRAPHIC_CRS)
     aoi = gpd.GeoDataFrame(
         {
