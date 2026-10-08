@@ -6,6 +6,8 @@ from economy import (
     raw_local_econ_data_path,
 )
 
+
+
 rule preprocess_local_econ:
     """Convert official national accounts into a geospatial economic constraint table."""
     input:

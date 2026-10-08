@@ -26,14 +26,14 @@ def preprocess_local_econ(
     """Convert the official accounts workbook into a national constraint table."""
     import scalenav.oop as snoo
     from globdata import ISIC_CODES, REGION_INDEX
-    from globdata.parameters import load_catalogue
+    from globdata.catalogue import load_catalogue
     from ibis import _
 
     catalogue_root = os.fspath(catalogue_root)
     if not catalogue_root.endswith(("/", os.sep)):
         catalogue_root = f"{catalogue_root}{os.sep}"
 
-    catalogue = load_catalogue(local=True, root=catalogue_root)
+    catalogue = load_catalogue(root=catalogue_root)
     conn = snoo.connect()
 
     econ_df = pd.read_excel(

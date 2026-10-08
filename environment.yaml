@@ -21,6 +21,7 @@ dependencies:
     - 'pytensor==2.31.7'
     - scalenav
     - matplotlib_map_utils
+    - "git+https://github.com/nismod/global-econ-model.git@v4.0.0"
   - geopandas
   - hatchling
   - jupyter
