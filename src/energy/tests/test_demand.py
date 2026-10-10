@@ -123,24 +123,38 @@ def test_supply_points_fall_back_to_power_stations_on_an_island_without_a_substa
         supply_points(nodes[nodes["kind"].eq("distribution_node")])
 
 
-def test_build_demand_shares_writes_the_review_files(tmp_path):
-    outlines = gpd.GeoDataFrame({"geometry": [box(57.0, -20.1, 57.1, -20.0)]}, crs="EPSG:4326")
+def test_build_demand_shares_writes_shares_that_add_to_one_on_each_island(tmp_path):
+    outlines = gpd.GeoDataFrame(
+        {"geometry": [box(57.0, -20.1, 57.1, -20.0), box(63.4, -19.8, 63.5, -19.7)]}, crs="EPSG:4326"
+    )
     outlines.to_parquet(tmp_path / "aoi.parquet")
     nodes = gpd.GeoDataFrame(
         {
-            "bus_id": ["bus::A", "bus::B", "dist::1"],
-            "kind": ["substation", "substation", "distribution_node"],
-            "geometry": [Point(57.02, -20.05), Point(57.08, -20.05), Point(57.05, -20.03)],
+            "bus_id": ["bus::A", "bus::B", "dist::1", "asset::plant-r", "dist::2"],
+            "kind": ["substation", "substation", "distribution_node", "generator", "distribution_node"],
+            "region": ["mauritius"] * 3 + ["rodrigues"] * 2,
+            "geometry": [
+                Point(57.02, -20.05),
+                Point(57.08, -20.05),
+                Point(57.05, -20.03),
+                Point(63.42, -19.75),
+                Point(63.45, -19.72),
+            ],
         },
         crs="EPSG:4326",
     )
     nodes.to_parquet(tmp_path / "nodes.geoparquet")
-    _write_raster(tmp_path / "pop.tif", np.full((10, 10), 3.0))
+    _write_raster(tmp_path / "pop.tif", np.full((10, 10), 3.0))  # covers the first island only
     _write_raster(tmp_path / "lights.tif", np.full((10, 10), 1.0))
-    levels = pd.DataFrame({"level": ["peak", "average"], "demand_mw": [500.0, 350.0]})
+    levels = pd.DataFrame(
+        {
+            "level": ["peak", "average", "peak", "average"],
+            "island": ["mauritius", "mauritius", "rodrigues", "rodrigues"],
+            "demand_mw": [500.0, 350.0, 8.0, 5.0],
+        }
+    )
     levels.to_csv(tmp_path / "levels.csv", index=False)
-
-    outputs = build_demand_shares(
+    arguments = dict(
         nodes_path=tmp_path / "nodes.geoparquet",
         aoi_path=tmp_path / "aoi.parquet",
         population_path=tmp_path / "pop.tif",
@@ -149,12 +163,22 @@ def test_build_demand_shares_writes_the_review_files(tmp_path):
         output_dir=tmp_path / "demand",
     )
 
+    outputs = build_demand_shares(**arguments)
+
     substations = pd.read_csv(outputs.substation_weights)
     node_weights = pd.read_csv(outputs.node_weights)
     metadata = json.loads(outputs.metadata.read_text())
-    assert substations["service_weight"].sum() == pytest.approx(1.0)
-    assert node_weights["service_weight"].sum() == pytest.approx(1.0)
-    assert set(node_weights["bus_id"]) == {"bus::A", "bus::B", "dist::1"}
-    assert len(gpd.read_parquet(outputs.service_areas)) == 2
+    assert substations.groupby("island")["service_weight"].sum().to_dict() == pytest.approx(
+        {"mauritius": 1.0, "rodrigues": 1.0}
+    )
+    assert node_weights.groupby("island")["service_weight"].sum().to_dict() == pytest.approx(
+        {"mauritius": 1.0, "rodrigues": 1.0}
+    )
+    assert set(node_weights["bus_id"]) == set(nodes["bus_id"])
+    assert len(gpd.read_parquet(outputs.service_areas)) == 3
     assert metadata["weights"] == {"nightlights": 0.6, "population": 0.4}
-    assert pd.read_csv(outputs.demand_levels)["demand_mw"].tolist() == [500.0, 350.0]
+    assert pd.read_csv(outputs.demand_levels)["demand_mw"].tolist() == [500.0, 350.0, 8.0, 5.0]
+
+    levels[levels["island"].eq("mauritius")].to_csv(tmp_path / "levels.csv", index=False)
+    with pytest.raises(ValueError, match="no demand levels for \\['rodrigues'\\]"):
+        build_demand_shares(**arguments)

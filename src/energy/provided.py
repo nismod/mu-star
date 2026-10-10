@@ -23,7 +23,7 @@ DEMAND_FOLDER = "Power Demand"
 REPORT_FOLDER = "CEB Annual Report"
 PLANT_CAPACITIES_FILE = f"{REPORT_FOLDER}/ceb_plant_capacities_2023_24.csv"
 PLANT_SITES_FILE = f"{REPORT_FOLDER}/ceb_plant_sites.csv"
-DEMAND_LEVELS_FILE = f"{REPORT_FOLDER}/ceb_demand_levels_2023_24.csv"
+DEMAND_LEVELS_FILE = f"{REPORT_FOLDER}/ceb_demand_levels_by_island_2023_24.csv"
 # Files a shapefile needs (.cpg is optional and not checked).
 SHAPEFILE_EXTENSIONS = ("shp", "shx", "dbf", "prj")
 REQUIRED_PROVIDED_FILES = (

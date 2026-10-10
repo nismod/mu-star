@@ -1,4 +1,4 @@
-"""Estimate each substation's and each network node's share of system demand.
+"""Estimate each substation's and each network node's share of its island's demand.
 
 The method is PyPSA-Earth's ``build_demand_profiles.upsample`` (0.6 GDP + 0.4 population), with
 VIIRS night-light radiance in place of GDP as the measure of economic activity: a GDP raster is
@@ -8,13 +8,13 @@ too coarse for a 50 km island.
    clipped to the island outline). An island with no substation (Rodrigues) is served from its
    power stations; an island with one supply point is one area.
 2. An area's score is ``0.6 * radiance + 0.4 * population`` (default weights), each term being the
-   area's fraction of the total over all areas. Scores are normalised again into shares that add to
-   one. Radiance is the VIIRS composite; population is the WorldPop raster.
+   area's fraction of the total over its island's areas. Scores are normalised again into shares
+   that add to one on each island. Radiance is the VIIRS composite; population is the WorldPop raster.
 3. Within an area, the same formula, using the raster cells nearest each node, splits the area's
    share between its nodes.
 
-Peak and average system demand come from ``CEB Annual Report/ceb_demand_levels_2023_24.csv`` in
-the incoming energy data.
+Peak and average demand of each island come from
+``CEB Annual Report/ceb_demand_levels_by_island_2023_24.csv`` in the incoming energy data.
 """
 
 from __future__ import annotations
@@ -76,7 +76,8 @@ def supply_points(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Return the supply points: ``substation`` nodes, or an island's ``generator`` nodes if it has none.
 
     ``nodes`` needs ``bus_id``, ``kind`` and point geometry; ``region`` separates the islands (one
-    island if absent). Nodes at the same point (a station and its rooftop PV) count once.
+    island, ``all``, if absent) and is returned as ``island``. Nodes at the same point (a station and
+    its rooftop PV) count once.
     """
     kind = nodes["kind"].astype(str)
     region = nodes["region"].astype(str) if "region" in nodes else pd.Series("all", index=nodes.index)
@@ -88,7 +89,7 @@ def supply_points(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             candidates = members[kind.loc[index].eq("generator").to_numpy()]
         if candidates.empty:
             raise ValueError(f"{name}: no substation or generator node to serve demand from")
-        chosen.append(candidates[["bus_id", "geometry"]])
+        chosen.append(candidates[["bus_id", "geometry"]].assign(island=name))
     points = gpd.GeoDataFrame(pd.concat(chosen), geometry="geometry", crs=nodes.crs)
     return points[~points.geometry.duplicated()].reset_index(drop=True)
 
@@ -197,14 +198,22 @@ def node_shares(
     area_shares: pd.Series,
     *,
     weights: dict[str, float] | None = None,
+    area_islands: pd.Series | None = None,
 ) -> pd.Series:
-    """Split each area's share between its nodes with :func:`distribution_key`; the result adds to one."""
+    """Split each area's share between its nodes with :func:`distribution_key`.
+
+    The result adds to one on each island of ``area_islands`` (area bus_id to island), or over all
+    nodes if it is not given.
+    """
     indicators = [column for column in node_score_frame.columns if column != "area_bus_id"]
     shares = pd.Series(0.0, index=node_score_frame.index)
     for area_bus_id, block in node_score_frame.groupby("area_bus_id"):
         area_share = float(area_shares.get(str(area_bus_id), 0.0))
         shares.loc[block.index] = distribution_key(block[indicators], weights=weights) * area_share
-    return _normalised(shares) if shares.sum() > 0 else shares
+    if area_islands is None:
+        return _normalised(shares)
+    islands = node_score_frame["area_bus_id"].astype(str).map(area_islands)
+    return shares.groupby(islands.to_numpy()).transform(_normalised)
 
 
 def _read_outlines(path: Path) -> gpd.GeoDataFrame:
@@ -226,21 +235,35 @@ def build_demand_shares(
 ) -> DemandOutputs:
     """Write one network's service areas, demand shares and demand levels to ``output_dir``.
 
-    ``nodes_path`` is the network's node GeoParquet layer. Writes ``service_areas.geoparquet``,
-    ``service_weights_substations.csv``, ``service_weights_nodes.csv``, ``demand_levels.csv`` (copied
-    from ``demand_levels_path``) and ``metadata.json``.
+    ``nodes_path`` is the network's node GeoParquet layer. ``demand_levels_path`` has ``level``,
+    ``island`` and ``demand_mw`` for every island. Writes ``service_areas.geoparquet``,
+    ``service_weights_substations.csv``, ``service_weights_nodes.csv``, ``demand_levels.csv`` (a copy
+    of ``demand_levels_path``) and ``metadata.json``. Shares add to one on each island.
     """
     weights = dict(DEFAULT_WEIGHTS if weights is None else weights)
     nodes = gpd.read_parquet(nodes_path)
     if "bus_id" not in nodes or "kind" not in nodes:
         raise ValueError("nodes layer must contain bus_id and kind")
     rasters = {"population": Path(population_path), "nightlights": Path(nightlights_path)}
-
-    areas = service_areas(supply_points(nodes), _read_outlines(aoi_path))
-    area_key = distribution_key(area_scores(areas, rasters), weights=weights)
-    scores = node_scores(nodes[["bus_id", "geometry"]], areas, rasters)
-    shares = node_shares(scores, area_key, weights=weights)
     levels = pd.read_csv(demand_levels_path, comment="#")
+    missing_columns = {"level", "island", "demand_mw"} - set(levels.columns)
+    if missing_columns:
+        raise ValueError(f"{demand_levels_path}: missing columns {sorted(missing_columns)}")
+
+    points = supply_points(nodes)
+    areas = service_areas(points, _read_outlines(aoi_path))
+    area_islands = points.assign(bus_id=points["bus_id"].astype(str)).set_index("bus_id")["island"]
+    areas["island"] = areas["bus_id"].map(area_islands)
+    missing_islands = set(areas["island"]) - set(levels["island"].astype(str))
+    if missing_islands:
+        raise ValueError(f"{demand_levels_path}: no demand levels for {sorted(missing_islands)}")
+    score_frame = area_scores(areas, rasters)
+    area_key = pd.concat(
+        distribution_key(block, weights=weights)
+        for _, block in score_frame.groupby(score_frame.index.map(area_islands).to_numpy())
+    ).reindex(score_frame.index)
+    scores = node_scores(nodes[["bus_id", "geometry"]], areas, rasters)
+    shares = node_shares(scores, area_key, weights=weights, area_islands=area_islands)
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -253,9 +276,16 @@ def build_demand_shares(
     )
     area_weight = area_key.rename("service_weight")
     areas.merge(area_weight, left_on="bus_id", right_index=True).to_parquet(outputs.service_areas)
-    area_weight.rename_axis("bus_id").reset_index().to_csv(outputs.substation_weights, index=False)
+    area_table = area_weight.rename_axis("bus_id").reset_index()
+    area_table.insert(1, "island", area_table["bus_id"].map(area_islands))
+    area_table.to_csv(outputs.substation_weights, index=False)
     node_table = pd.DataFrame(
-        {"bus_id": shares.index, "service_weight": shares.to_numpy(), "area_bus_id": scores["area_bus_id"].to_numpy()}
+        {
+            "bus_id": shares.index,
+            "service_weight": shares.to_numpy(),
+            "area_bus_id": scores["area_bus_id"].to_numpy(),
+            "island": scores["area_bus_id"].astype(str).map(area_islands).to_numpy(),
+        }
     )
     node_table.to_csv(outputs.node_weights, index=False)
     levels.to_csv(outputs.demand_levels, index=False)

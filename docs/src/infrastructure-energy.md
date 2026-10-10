@@ -29,7 +29,7 @@ public data, needs those files as well:
 | Distribution network | pending | |
 | Power plants and installed capacity | extracted from the CEB Annual Report 2023-24, pp. 50-51 and 97 | `CEB Annual Report/` |
 | Plant locations | CEB sites, OpenStreetMap, geocoded villages | `CEB Annual Report/` |
-| System peak and average demand | extracted from the annual report, pp. 45 and 51 | `CEB Annual Report/` |
+| Peak and average demand of each island | extracted from the annual report, pp. 45, 51, 96 and 98 | `CEB Annual Report/` |
 
 The CEB files are shared under licence and are not public.
 
@@ -53,10 +53,11 @@ its own folder:
    which also sets the placeholder voltages and capacities.
 4. **Demand shares** (`demand/`), with PyPSA-Earth's method: each substation
    supplies the area closer to it than to any other, and an area's share of
-   system demand is 0.6 times its share of night-light radiance plus 0.4 times
-   its share of population (GDP grids are too coarse here). The same weights
-   split it between the area's road nodes. System demand, from the annual
-   report: 525.7 MW at peak and 346.8 MW on average.
+   its island's demand is 0.6 times its share of the island's night-light
+   radiance plus 0.4 times its share of its population (GDP grids are too
+   coarse here). The same weights split it between the area's road nodes.
+   Demand, from the annual report: Mauritius 525.7 MW at peak and 346.8 MW on
+   average, Rodrigues 8.52 MW and 5.75 MW.
 
 ### Interruption model (in development)
 
