@@ -41,12 +41,12 @@ energy:
     topology_capacity_mva: 5
     # CEB 66 kV lines (inferred-provided only): 50 MVA, typical for a single
     # 66 kV circuit of the 150 mm2 conductor in the annual report (2023-24,
-    # p. 74). CEB does not publish ratings per line.
+    # p. 61). CEB does not publish ratings per line.
     transmission_voltage_kv: 66
     transmission_capacity_mva: 50
     # Line from each substation or plant to the road: 137 MVA, the average of
     # 2,595 MVA of transformers over 19 major substations (annual report
-    # 2023-24, p. 71).
+    # 2023-24, p. 60).
     anchor_capacity_mva: 137
     # Checks in validation.json: CEB's total of 10,492.2 km of transmission and
     # distribution lines, and the differences allowed before a warning.
