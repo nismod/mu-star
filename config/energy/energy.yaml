@@ -7,7 +7,7 @@ energy:
   # Folder under data/processed/energy/ that the rules read and write: the name
   # of a model-data pack. For new processed files, use a new name. Analysis results
   # go to data/results/energy/<date>-results, with the pack's date.
-  model_data: 20261006-model-data
+  model_data: 20261012-model-data
 
   # Area of the inferred networks. "mauritius-rodrigues" downloads each island
   # from OpenStreetMap and joins them (REGION_GROUPS in src/energy/osm.py). Any
