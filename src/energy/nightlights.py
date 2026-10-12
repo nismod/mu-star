@@ -1,15 +1,8 @@
-"""Acquire VIIRS night-time lights: fetch monthly tiles and composite them.
+"""Download monthly VIIRS night-light rasters and combine them into one.
 
-The image service, its monthly raster object IDs, the area of interest (bbox)
-and the output grid are all supplied by the caller, wired from ``config.yaml``
-in the Snakemake rules. The service defaults to the Earth Observation Group
-"NighttimeLightsMDNB" ArcGIS image service.
-
-Acquisition is opt-in and offline-first, mirroring :mod:`energy.osm`: a build
-reads cached monthly tiles and never downloads on its own. Call
-:func:`fetch_nightlight_months` with ``allow_download=True`` once to populate the
-cache, then :func:`build_nightlight_composite` reduces the tiles to the single
-radiance raster the nightlight-target step consumes.
+The Snakemake rules pass the settings from ``config/energy/energy.yaml``. The default
+service is the Earth Observation Group "NighttimeLightsMDNB" ArcGIS image service. Nothing
+is downloaded without ``allow_download=True`` (the ``fetch_energy_nightlights`` rule sets it).
 """
 
 from __future__ import annotations
@@ -32,12 +25,12 @@ DEFAULT_RENDERING_RULE = "Average Monthly Radiance (Raw Values)"
 
 
 class NightlightDownloadRequired(RuntimeError):
-    """Raised when monthly tiles are needed but downloading was not permitted."""
+    """Raised when a monthly tile is missing and ``allow_download`` is False."""
 
 
 @dataclass(frozen=True)
 class NightlightMonths:
-    """Cached monthly tiles and the provenance record written beside them."""
+    """Paths of the cached monthly tiles and their ``metadata.json``."""
 
     directory: Path
     paths: tuple[Path, ...]
@@ -61,7 +54,7 @@ def _export_image_url(
     object_id: int,
     rendering_rule: str,
 ) -> str:
-    """Build an ArcGIS ImageServer ``exportImage`` request for one monthly raster."""
+    """Return the ArcGIS ``exportImage`` URL for one monthly raster, as a float32 GeoTIFF in EPSG:4326."""
     params = {
         "bbox": ",".join(str(v) for v in bbox),
         "bboxSR": "4326",
@@ -97,7 +90,7 @@ def _file_sha256(path: Path) -> str:
 
 
 def tile_name(index: int, object_id: int) -> str:
-    """File name of a cached monthly tile: its position in the year and the service's object id."""
+    """Return the tile file name ``NN-<object_id>.tif``, NN being the 1-based position in the id list."""
     return f"{index:02d}-{int(object_id)}.tif"
 
 
@@ -113,15 +106,11 @@ def fetch_nightlight_months(
     overwrite: bool = False,
     timeout: float = 120.0,
 ) -> NightlightMonths:
-    """Cache one raster per ``object_ids`` entry as ``NN-<object id>.tif`` under ``out_dir``.
+    """Download one monthly raster per object id to ``out_dir/NN-<object_id>.tif``, reusing cached tiles.
 
-    Each object ID is one monthly raster in the service's mosaic catalogue, so a
-    different year or service never reuses another year's tiles. Tiles already
-    present are reused unless ``overwrite`` is set. When a tile is missing
-    and ``allow_download`` is False this raises :class:`NightlightDownloadRequired`
-    rather than contacting the service, so a run never downloads without being
-    asked. A ``metadata.json`` recording the service, object IDs, bbox and
-    per-tile checksums is written alongside the tiles.
+    Cached tiles are matched by file name only, so another service, bbox or pixel size needs another
+    ``out_dir``. A missing tile raises :class:`NightlightDownloadRequired` unless ``allow_download``.
+    Writes ``metadata.json`` with the service, object ids, bbox and a SHA-256 checksum per tile.
     """
     if not object_ids:
         raise ValueError("object_ids must list at least one monthly raster")
@@ -166,11 +155,10 @@ def build_nightlight_composite(
     *,
     aggregation: str = "median",
 ) -> Path:
-    """Reduce the monthly tiles to one radiance raster (pixelwise ``median``).
+    """Combine the monthly tiles into one float32 radiance raster, per pixel ``median`` or ``mean``.
 
-    All tiles must share the grid the fetch produced (same size, CRS and
-    transform); the composite inherits that grid. ``median`` is robust to the
-    occasional cloud-contaminated month; ``mean`` is also supported.
+    The output takes the first tile's grid; the others must match its size. NaN and nodata are
+    skipped. A cloudy month affects the median less than the mean.
     """
     paths = [Path(p) for p in month_paths]
     if not paths:
@@ -185,7 +173,7 @@ def build_nightlight_composite(
         with rasterio.open(path) as src:
             if (src.width, src.height) != (profile["width"], profile["height"]):
                 raise ValueError(f"{path} grid {(src.width, src.height)} does not match {paths[0]}")
-            # Mask NaN as well as the declared nodata so one bad month does not poison the median.
+            # Mask NaN as well as nodata, so one bad month does not spoil the median.
             layers.append(np.ma.masked_invalid(src.read(1, masked=True)))
 
     stack = np.ma.stack(layers)
