@@ -119,7 +119,6 @@ BASE_NETWORK = ENERGY.get("base_network", {})
 INFERRED = ENERGY.get("inferred", {})
 PROVIDED_DIR = f"{PROCESSED_DIR}/provided"
 NETWORKS_DIR = f"{PROCESSED_DIR}/networks"
-TABLES_DIR = f"{{data}}/results/energy/{MODEL_DATA}"
 BASE_NAME = "base-mauritius"
 INFERRED_OSM_NAME = f"inferred-osm-{REGION_SLUG}"
 INFERRED_PROVIDED_NAME = f"inferred-provided-{REGION_SLUG}"
@@ -226,13 +225,13 @@ rule build_base_energy_network:
         spatial_nodes=f"{NETWORKS_DIR}/{BASE_NAME}/geoparquet/{BASE_NAME}-nodes.geoparquet",
         spatial_edges=f"{NETWORKS_DIR}/{BASE_NAME}/geoparquet/{BASE_NAME}-edges.geoparquet",
         spatial_manifest=f"{NETWORKS_DIR}/{BASE_NAME}/geoparquet/{BASE_NAME}-spatial-manifest.json",
-        generators=f"{TABLES_DIR}/{BASE_NAME}/generators.csv",
-        lines=f"{TABLES_DIR}/{BASE_NAME}/lines.csv",
-        validation=f"{TABLES_DIR}/{BASE_NAME}/validation.json",
+        generators=f"{NETWORKS_DIR}/{BASE_NAME}/generators.csv",
+        lines=f"{NETWORKS_DIR}/{BASE_NAME}/lines.csv",
+        validation=f"{NETWORKS_DIR}/{BASE_NAME}/validation.json",
     params:
         input_dir=PROVIDED_DIR,
         output_dir=NETWORKS_DIR,
-        export_root=TABLES_DIR,
+        export_root=NETWORKS_DIR,
         output_name=BASE_NAME,
         route_gap_tolerance_m=BASE_NETWORK.get("route_gap_tolerance_m", 75),
         default_voltage_kv=BASE_NETWORK.get("default_voltage_kv", 66),
@@ -366,9 +365,9 @@ rule build_inferred_energy_network:
         spatial_nodes=f"{NETWORKS_DIR}/{INFERRED_NAME}/geoparquet/{INFERRED_NAME}-nodes.geoparquet",
         spatial_edges=f"{NETWORKS_DIR}/{INFERRED_NAME}/geoparquet/{INFERRED_NAME}-edges.geoparquet",
         spatial_manifest=f"{NETWORKS_DIR}/{INFERRED_NAME}/geoparquet/{INFERRED_NAME}-spatial-manifest.json",
-        generators=f"{TABLES_DIR}/{INFERRED_NAME}/generators.csv",
-        lines=f"{TABLES_DIR}/{INFERRED_NAME}/lines.csv",
-        validation=f"{TABLES_DIR}/{INFERRED_NAME}/validation.json",
+        generators=f"{NETWORKS_DIR}/{INFERRED_NAME}/generators.csv",
+        lines=f"{NETWORKS_DIR}/{INFERRED_NAME}/lines.csv",
+        validation=f"{NETWORKS_DIR}/{INFERRED_NAME}/validation.json",
         nodes=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_nodes.csv",
         edges=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_edges.csv",
         graph_metadata=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_metadata.json",
@@ -376,7 +375,7 @@ rule build_inferred_energy_network:
     params:
         input_dir=PROVIDED_DIR,
         output_dir=NETWORKS_DIR,
-        export_root=TABLES_DIR,
+        export_root=NETWORKS_DIR,
         output_name=INFERRED_NAME,
         region=REGION,
         network_type=NETWORK_TYPE,

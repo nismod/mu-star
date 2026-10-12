@@ -72,12 +72,11 @@ and a pack if they use one, from the project OneDrive, which uses the same
 folder names:
 
 ```shell
-SHARED="<synced OneDrive project folder>"  # holds Incoming Data, Processed Data and Results Data
+SHARED="<synced OneDrive project folder>"  # holds Incoming Data and Processed Data
 MODEL_DATA=$(sed -n 's/^ *model_data: *//p' config/energy/energy.yaml)
-mkdir -p data/incoming/Infrastructure data/processed/energy data/results/energy
+mkdir -p data/incoming/Infrastructure data/processed/energy
 ln -s "$SHARED/Incoming Data/Infrastructure/Energy" data/incoming/Infrastructure/
 ln -s "$SHARED/Processed Data/Infrastructure/Energy/$MODEL_DATA" data/processed/energy/  # the pack
-ln -s "$SHARED/Results Data/Infrastructure/Energy/$MODEL_DATA" data/results/energy/  # its review tables
 ```
 
 Snakemake writes through these links into the OneDrive. Before changing the
@@ -107,13 +106,12 @@ have nothing to do; the demand command still needs the provided data.
   [PyPSA](https://pypsa.org/) network (`<network>.nc`), its metadata (inputs,
   settings, checksums), the nodes and edges for GIS (`geoparquet/`) and, for
   the inferred networks, the road network as CSV tables
-  (`inferred_distribution/`).
+  (`inferred_distribution/`). Also `generators.csv`, `lines.csv` and
+  `validation.json`, which compares the model with CEB's published line length
+  (479 km of 66 kV lines; 10,492 km of all lines) and installed capacity.
 - `data/processed/energy/<model_data>/demand/inferred-provided-<region>/`: the
   service areas, the shares by substation and by node, and the peak and
   average demand.
-- `data/results/energy/<model_data>/<network>/`: `generators.csv`, `lines.csv` and
-  `validation.json`, which compares the model with CEB's published line length
-  (479 km of 66 kV lines; 10,492 km of all lines) and installed capacity.
 
 The notebooks in `notebooks/energy/` show the inputs and the networks.
 

@@ -2,12 +2,12 @@
 
     <data_root>/incoming/Infrastructure/Energy/...   source data, laid out as on the shared drive
     <data_root>/processed/energy/<model_data>/...    files written by the workflow
-    <data_root>/results/energy/<model_data>/...      tables and reports for people to read
+    <data_root>/results/energy/<date>-results/...    analysis results, from the pack of that date
 
 The data root is ``data_root`` in ``config/config.yaml`` (default ``<repo>/data``), and
 ``model_data`` is ``energy.model_data`` in ``config/energy/energy.yaml``: the name of a
-model-data pack. The Snakemake rules pass every path; these helpers are for calling the
-Python code directly.
+model-data pack, such as ``20261012-model-data``, whose results go to ``20261012-results``.
+The Snakemake rules pass every path; these helpers are for calling the Python code directly.
 """
 
 from __future__ import annotations
@@ -68,5 +68,10 @@ def network_output_dir(root: Path | None = None) -> Path:
     return processed_energy_dir(root) / "networks"
 
 
+def results_name(energy_config: dict | None = None) -> str:
+    """Return the results folder of the model-data pack: ``20261012-model-data`` gives ``20261012-results``."""
+    return model_data(energy_config).removesuffix("-model-data") + "-results"
+
+
 def results_energy_dir(root: Path | None = None) -> Path:
-    return Path(root or data_root()) / "results" / "energy" / model_data()
+    return Path(root or data_root()) / "results" / "energy" / results_name()

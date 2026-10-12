@@ -12,8 +12,8 @@ and ``energy.region`` and ``energy.model_data`` in ``config/energy/energy.yaml``
 - ``PROVIDED_DIR``    <pack>/provided             cleaned CEB tables
 - ``OSM_CACHE_DIR``   <data>/incoming/Infrastructure/Energy/OpenStreetMap/<region>  roads, power features, outline
 - ``NIGHTLIGHT_DIR``  <pack>/nightlight/<region>  radiance composite and lit pixels
-- ``NETWORKS_DIR``    <pack>/networks/<network>   PyPSA network, metadata, GeoParquet layers
-- ``RESULTS_DIR``     <data>/results/energy/<model_data>/<network>  generators.csv, lines.csv, validation.json
+- ``NETWORKS_DIR``    <pack>/networks/<network>   PyPSA network, metadata, GeoParquet layers, generators.csv,
+  lines.csv, validation.json
 
 Inputs (``00_inputs.ipynb``):
 
@@ -94,7 +94,6 @@ NIGHTLIGHT_MONTHLY_DIR = DATA_ROOT / str(
     )
 )
 NETWORKS_DIR = energy_paths.network_output_dir(DATA_ROOT)
-RESULTS_DIR = energy_paths.results_energy_dir(DATA_ROOT)
 
 # Rough lon/lat boxes for zooming to one island (Mauritius and Rodrigues are about 560 km apart).
 MAURITIUS_BBOX = (57.3, -20.6, 57.9, -19.9)
@@ -263,8 +262,8 @@ def load_layers(name: str) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
 
 
 def load_validation(name: str) -> dict:
-    """Return a network's validation report (``RESULTS_DIR/<name>/validation.json``), or ``{}`` if absent."""
-    path = RESULTS_DIR / name / "validation.json"
+    """Return a network's validation report (``NETWORKS_DIR/<name>/validation.json``), or ``{}`` if absent."""
+    path = NETWORKS_DIR / name / "validation.json"
     return json.loads(path.read_text()) if path.exists() else {}
 
 
