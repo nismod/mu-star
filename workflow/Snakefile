@@ -7,6 +7,7 @@ include: "0-preprocess/energy.smk"
 include: "0-preprocess/water.smk"
 include: "0-preprocess/building.smk"
 include: "1-damage/damage.smk"
+include: "2-losses/energy.smk"
 include: "5-visualise/asset.smk"
 include: "5-visualise/hazard.smk"
 

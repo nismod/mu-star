@@ -42,7 +42,8 @@ energy:
     topology_capacity_mva: 5
     # CEB 66 kV lines (inferred-provided only): 50 MVA, typical for a single
     # 66 kV circuit of the 150 mm2 conductor in the annual report (2023-24,
-    # p. 61). CEB does not publish ratings per line.
+    # p. 61). CEB does not publish ratings per line; the criticality analysis
+    # rates each line by its circuits instead (criticality below).
     transmission_voltage_kv: 66
     transmission_capacity_mva: 50
     # Line from each substation or plant to the road: 137 MVA, the average of
@@ -67,6 +68,24 @@ energy:
     # 0.4 for population; night lights replace GDP here.
     weight_nightlights: 0.6
     weight_population: 0.4
+
+  criticality:
+    # Unmet demand when each substation, CEB line or plant of inferred-provided
+    # fails (workflow/2-losses/energy.smk). One circuit of a CEB line is rated
+    # as a PyPSA line type at 66 kV, by the voltage the line was built for:
+    # 149-AL1/24-ST1A, the 150 mm2 conductor in the annual report (p. 61),
+    # 53.7 MVA; 243-AL1/39-ST1A, PyPSA-Earth's type for 132 kV, 73.7 MVA. A
+    # line's rating is that times its circuits (Power Transmission/
+    # ceb_line_circuits.csv). Placeholders until CEB gives ratings.
+    line_types:
+      66: 149-AL1/24-ST1A 110.0
+      132: 243-AL1/39-ST1A 110.0
+    # Share of a line's rating usable after a failure. PyPSA-Earth uses 0.7 as
+    # a margin for failures it does not model; here each failure is modelled.
+    s_max_pu: 1.0
+    # Plants that keep supply going in a part of the network cut off from the
+    # rest. Solar and wind farms disconnect when the grid is lost.
+    island_carriers: [thermal, hydro]
 
   nightlight:
     # Keep roads within this distance of a lit pixel or a power asset.
