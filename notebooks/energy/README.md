@@ -1,6 +1,6 @@
 # Energy notebooks
 
-Two notebooks for checking the energy model while working on `src/energy/`:
+Three notebooks for checking the energy model while working on `src/energy/`:
 
 - `00_inputs.ipynb`: the inputs (CEB data, OpenStreetMap, night lights). It
   builds and downloads nothing; a cell whose file is missing prints the command
@@ -8,11 +8,19 @@ Two notebooks for checking the energy model while working on `src/energy/`:
 - `01_networks.ipynb`: build the networks, from a cell or the terminal, then
   look at one of them: summary, map, node and edge tables, validation report
   and PyPSA network.
+- `02_criticality.ipynb`: the N-1 criticality results: the method, the demand
+  of each substation area, the transmission line ratings, the unmet demand when
+  each component fails by cause, and maps of the critical lines and substations
+  and of the distribution network left without supply. It reads the tables of
+  `build_energy_criticality` and builds nothing.
 
 After editing `src/energy/`, rebuild with `snakemake -c1 build_energy_networks`
 (or set `RUN_BUILD = True` in `01_networks.ipynb`) and rerun `01_networks.ipynb`.
+After editing `src/energy/criticality.py`, add `-R build_energy_criticality` to
+the criticality command in "Running the model" and rerun `02_criticality.ipynb`;
+the rule writes only to `data/results/`, so the OneDrive links can stay.
 
-Both import `_helpers.py` as `h`, which takes its paths from
+All three import `_helpers.py` as `h`, which takes its paths from
 `config/config.yaml` and `config/energy/energy.yaml`; its docstring lists the
 helpers. Plotting code stays here, not in `src/energy/`. Maps for users are in
 the separate viewer, [nismod/irv-standalone](https://github.com/nismod/irv-standalone).
