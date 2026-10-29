@@ -20,5 +20,10 @@ authors:
     email: shoaibcasseem@gmail.com
     affiliation: Universite des Mascareignes
     orcid: "https://orcid.org/0009-0000-6888-7080"
+  - given-names: Abdallah
+    family-names: Peerally
+    email: abdallahpeerally@gmail.com
+    affiliation: Université des Mascareignes
+    orcid: "https://orcid.org/0009-0002-4167-3933"
 repository-code: "https://github.com/nismod/mu-star"
 license: MIT
