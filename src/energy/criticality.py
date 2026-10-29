@@ -1,14 +1,17 @@
-"""Unmet demand when one substation, CEB line or power plant fails (N-1 criticality).
+"""Unmet demand when one substation, provided transmission line or power plant fails (N-1 criticality).
 
-The CEB 66 kV network of inferred-provided is solved as a linear power flow (PyPSA, HiGHS) at peak
-and at average demand, first with nothing failed, then with each asset failed in turn:
+The provided transmission network of inferred-provided is solved as a linear power flow (PyPSA, HiGHS)
+at peak and at average demand, first with nothing failed, then with each asset failed in turn:
 
-- Buses are the points where CEB lines meet. A substation's demand and plants sit on the 66 kV bus at
-  the substation. An island without CEB lines (Rodrigues) is one bus with all its plants and demand.
+- Buses are the points where provided lines meet, at the voltage the network gives them. A substation's
+  demand and plants sit on the transmission bus at the substation. An island without provided lines
+  (Rodrigues) is one bus with all its plants and demand.
 - A line's rating is its number of circuits times the rating of one circuit of its PyPSA line type at
-  66 kV; its reactance is the type's reactance per km times its length, divided by its circuits.
-  Types and circuits come from ``ceb_line_circuits.csv``. The segments of one line (its ``route``)
-  fail together.
+  the line's voltage; its reactance is the type's reactance per km times its length, divided by its
+  circuits. The type is chosen by the voltage the line was built for. A line circuits table (on
+  Mauritius, ``ceb_line_circuits.csv``) gives each line's route, design voltage and circuits; without
+  one, each line has one circuit built for the voltage it runs at. The segments of one route fail
+  together; without a table, a route is the run of segments between two substations or junctions.
 - A supply point's demand is its share of its island's peak or average demand (``energy.demand``).
 - Demand that cannot be supplied is shed. A part of the network cut off from the rest keeps supply
   only if it has a plant of an ``island_carriers`` type (thermal, hydro): solar and wind farms
@@ -34,14 +37,13 @@ import numpy as np
 import pandas as pd
 import pypsa
 
-CEB_LINE_SOURCE = "provided_transmission"
-VOLTAGE_KV = 66.0
+PROVIDED_LINE_SOURCE = "provided_transmission"
 DEFAULT_LINE_TYPES = {66: "149-AL1/24-ST1A 110.0", 132: "243-AL1/39-ST1A 110.0"}
 DEFAULT_ISLAND_CARRIERS = ("thermal", "hydro")
 SHED_COST = 10_000.0  # per MWh; plants cost nothing, so demand is shed only when it cannot be supplied
 UNLIMITED_MVA = 1e6
 MIN_REACTANCE_OHM = 1e-3  # for line segments of almost no length
-SAME_POINT_M = 50.0  # the largest distance between a substation and its 66 kV bus
+SAME_POINT_M = 50.0  # the largest distance between a substation and its transmission bus
 TOLERANCE_MW = 1e-6
 HOURS_PER_DAY = 24
 ASSET_TYPES = ("substation", "line", "plant")
@@ -49,11 +51,12 @@ ASSET_TYPES = ("substation", "line", "plant")
 
 @dataclass(frozen=True)
 class TransmissionModel:
-    """The 66 kV network solved for each failure.
+    """The transmission network solved for each failure.
 
-    ``buses``: index bus, column ``island``. ``lines``: index line_id; ``bus0``, ``bus1``, ``route``,
-    ``s_nom`` (MVA), ``x`` and ``r`` (ohm). ``plants``: index generator; ``bus``, ``p_nom`` (MW),
-    ``carrier``. ``supply_points``: index supply point (network bus_id); ``bus`` and ``island``.
+    ``buses``: index bus; ``island`` and ``v_nom`` (kV). ``lines``: index line_id; ``bus0``, ``bus1``,
+    ``route``, ``v_nom`` and ``built_for_kv`` (kV), ``circuits``, ``s_nom`` (MVA), ``x`` and ``r`` (ohm).
+    ``plants``: index generator; ``bus``, ``p_nom`` (MW), ``carrier``. ``supply_points``: index supply
+    point (network bus_id); ``bus`` and ``island``.
     """
 
     buses: pd.DataFrame
@@ -66,11 +69,15 @@ class TransmissionModel:
 class CriticalityOutputs:
     criticality: Path
     by_area: Path
+    line_ratings: Path
     metadata: Path
 
 
 def read_line_circuits(path: Path) -> pd.DataFrame:
-    """Read ``ceb_line_circuits.csv``: ``line_id``, ``route``, ``built_for_kv`` and ``circuits``, indexed by line_id."""
+    """Read a line circuits table: ``line_id``, ``route``, ``built_for_kv`` and ``circuits``, indexed by line_id.
+
+    An optional ``ends`` column names each route.
+    """
     table = pd.read_csv(path, comment="#")
     missing = {"line_id", "route", "built_for_kv", "circuits"} - set(table.columns)
     if missing:
@@ -96,53 +103,56 @@ def _bus_at_same_point(buses: pd.DataFrame, bus_id: str, candidates: list[str]) 
     )
     nearest = int(np.argmin(distances))
     if distances[nearest] > SAME_POINT_M:
-        raise ValueError(f"{bus_id}: no 66 kV bus within {SAME_POINT_M:.0f} m (nearest {distances[nearest]:.0f} m)")
+        raise ValueError(
+            f"{bus_id}: no transmission bus within {SAME_POINT_M:.0f} m (nearest {distances[nearest]:.0f} m)"
+        )
     return candidates[nearest]
+
+
+def _routes(lines: pd.DataFrame, ends: set[str]) -> pd.Series:
+    """Return the route of each line: the run of segments between buses in ``ends`` or where lines branch.
+
+    Segments join at a bus that only two lines meet and that is not in ``ends``. A route is named after
+    its first segment.
+    """
+    graph = nx.MultiGraph()
+    graph.add_edges_from(
+        (bus0, bus1, line_id) for line_id, bus0, bus1 in zip(lines.index, lines["bus0"], lines["bus1"])
+    )
+    segments = nx.Graph()
+    segments.add_nodes_from(lines.index)
+    for bus in graph.nodes:
+        if bus not in ends and graph.degree(bus) == 2:
+            segments.add_edge(*(line_id for _, _, line_id in graph.edges(bus, keys=True)))
+    route = {line_id: min(part) for part in nx.connected_components(segments) for line_id in part}
+    return pd.Series(route).reindex(lines.index)
 
 
 def transmission_model(
     network: pypsa.Network,
-    line_circuits: pd.DataFrame,
     supply_point_islands: pd.Series,
     *,
+    line_circuits: pd.DataFrame | None = None,
     line_types: dict[int, str] | None = None,
 ) -> TransmissionModel:
-    """Build the 66 kV model from a network with CEB lines (inferred-provided).
+    """Build the transmission model from a network with provided lines (inferred-provided).
 
     ``supply_point_islands`` maps each supply point (a substation, or a power station on an island
-    with no substation) to its island, as in ``service_weights_substations.csv``.
+    with no substation) to its island, as in ``service_weights_substations.csv``. ``line_circuits``
+    (see ``read_line_circuits``) gives each line's route, design voltage and circuits; without it, each
+    line has one circuit built for the voltage it runs at, and a route is the run of segments between
+    two substations or junctions. ``line_types`` maps a design voltage (kV) to the PyPSA line type of one
+    circuit.
     """
     line_types = {int(kv): name for kv, name in (line_types or DEFAULT_LINE_TYPES).items()}
     buses = network.buses
-    ceb = network.lines[network.lines["source"].eq(CEB_LINE_SOURCE)]
-    unlisted = sorted(set(ceb.index) - set(line_circuits.index))
-    unknown = sorted(set(line_circuits.index) - set(ceb.index))
-    if unlisted or unknown:
-        raise ValueError(
-            f"line circuits do not match the network: missing {unlisted[:5]}, not in network {unknown[:5]}"
-        )
-    circuits = line_circuits.reindex(ceb.index)
-    no_type = sorted(set(circuits["built_for_kv"].astype(int)) - set(line_types))
-    if no_type:
-        raise ValueError(f"no line type for lines built for {no_type} kV")
-    types = network.line_types.loc[circuits["built_for_kv"].astype(int).map(line_types)]
-    count = circuits["circuits"].astype(float).to_numpy()
-    if (count < 1).any():
-        raise ValueError("every CEB line needs at least one circuit")
-    length = ceb["length"].astype(float).to_numpy()
-    lines = pd.DataFrame(
-        {
-            "bus0": ceb["bus0"],
-            "bus1": ceb["bus1"],
-            "route": circuits["route"].astype(str),
-            "s_nom": math.sqrt(3) * VOLTAGE_KV * types["i_nom"].to_numpy() * count,
-            "x": np.maximum(types["x_per_length"].to_numpy() * length / count, MIN_REACTANCE_OHM),
-            "r": types["r_per_length"].to_numpy() * length / count,
-        },
-        index=ceb.index,
-    )
-    line_buses = sorted(set(lines["bus0"]) | set(lines["bus1"]))
-    model_buses = pd.DataFrame({"island": buses.loc[line_buses, "region"].astype(str).to_numpy()}, index=line_buses)
+    provided = network.lines[network.lines["source"].eq(PROVIDED_LINE_SOURCE)]
+    voltage = buses.loc[provided["bus0"], "v_nom"].astype(float).to_numpy()
+    if not np.allclose(voltage, buses.loc[provided["bus1"], "v_nom"].astype(float).to_numpy()):
+        raise ValueError("a provided line joins buses of different voltages")
+    line_buses = sorted(set(provided["bus0"]) | set(provided["bus1"]))
+    model_buses = buses.loc[line_buses, ["region", "v_nom"]].rename(columns={"region": "island"})
+    model_buses = model_buses.astype({"island": str, "v_nom": float})
     networked = set(model_buses["island"])
 
     supply_bus = {}
@@ -150,13 +160,14 @@ def transmission_model(
         supply_bus[bus_id] = (
             _bus_at_same_point(buses, bus_id, line_buses) if island in networked else f"island::{island}"
         )
+    # An island without lines is one bus, at the voltage of its supply points; with no lines on it, the
+    # voltage does not enter the power flow.
     island_buses = sorted({bus for bus in supply_bus.values() if bus.startswith("island::")})
-    model_buses = pd.concat(
-        [
-            model_buses,
-            pd.DataFrame({"island": [bus.removeprefix("island::") for bus in island_buses]}, index=island_buses),
-        ]
-    )
+    point_voltage = buses.loc[supply_point_islands.index, "v_nom"].astype(float)
+    point_voltage = point_voltage.groupby(supply_point_islands.astype(str).to_numpy()).max()
+    island_rows = pd.DataFrame({"island": [bus.removeprefix("island::") for bus in island_buses]}, index=island_buses)
+    island_rows["v_nom"] = island_rows["island"].map(point_voltage)
+    model_buses = pd.concat([model_buses, island_rows])
 
     plant_bus = {}
     for generator, bus in network.generators["bus"].astype(str).items():
@@ -168,6 +179,46 @@ def transmission_model(
         else:
             raise ValueError(f"{generator}: plant on {bus}, which is not a substation")
     plants = network.generators[["p_nom", "carrier"]].assign(bus=pd.Series(plant_bus))
+
+    if line_circuits is None:
+        circuits = pd.DataFrame(
+            {
+                "route": _routes(provided, set(supply_bus.values()) | set(plant_bus.values())),
+                "built_for_kv": voltage.round().astype(int),
+                "circuits": 1,
+            },
+            index=provided.index,
+        )
+    else:
+        unlisted = sorted(set(provided.index) - set(line_circuits.index))
+        unknown = sorted(set(line_circuits.index) - set(provided.index))
+        if unlisted or unknown:
+            raise ValueError(
+                f"line circuits do not match the network: missing {unlisted[:5]}, not in network {unknown[:5]}"
+            )
+        circuits = line_circuits.reindex(provided.index)
+    no_type = sorted(set(circuits["built_for_kv"].astype(int)) - set(line_types))
+    if no_type:
+        raise ValueError(f"no line type for lines built for {no_type} kV")
+    types = network.line_types.loc[circuits["built_for_kv"].astype(int).map(line_types)]
+    count = circuits["circuits"].astype(float).to_numpy()
+    if (count < 1).any():
+        raise ValueError("every provided line needs at least one circuit")
+    length = provided["length"].astype(float).to_numpy()
+    lines = pd.DataFrame(
+        {
+            "bus0": provided["bus0"],
+            "bus1": provided["bus1"],
+            "route": circuits["route"].astype(str),
+            "v_nom": voltage,
+            "built_for_kv": circuits["built_for_kv"].astype(int),
+            "circuits": circuits["circuits"].astype(int),
+            "s_nom": math.sqrt(3) * voltage * types["i_nom"].to_numpy() * count,
+            "x": np.maximum(types["x_per_length"].to_numpy() * length / count, MIN_REACTANCE_OHM),
+            "r": types["r_per_length"].to_numpy() * length / count,
+        },
+        index=provided.index,
+    )
     supply_points = pd.DataFrame(
         {"bus": pd.Series(supply_bus), "island": supply_point_islands.astype(str)}
     ).rename_axis("bus_id")
@@ -222,7 +273,7 @@ def unmet_demand(
     load = load[load.index.isin(buses) & (load > 0)]
 
     network = pypsa.Network()
-    network.madd("Bus", buses, v_nom=VOLTAGE_KV)
+    network.madd("Bus", buses, v_nom=model.buses.loc[buses, "v_nom"].to_numpy())
     network.madd(
         "Line",
         live_lines.index,
@@ -267,14 +318,17 @@ def unmet_demand(
 def failure_assets(
     model: TransmissionModel,
     network: pypsa.Network,
-    line_circuits: pd.DataFrame,
+    line_circuits: pd.DataFrame | None = None,
     substation_names: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Return the assets to fail: substations, lines (one per route) and plants.
 
-    Columns: ``asset_id``, ``asset_type``, ``name``, ``island``, ``lines``, ``bus`` and ``plants``.
+    Columns: ``asset_id``, ``asset_type``, ``name``, ``island``, ``lines``, ``bus`` and ``plants``. A line is
+    named by the ``ends`` column of ``line_circuits`` and a substation by ``substation_names`` (indexed by
+    asset_id); without them, by their ids.
     """
     names = substation_names if substation_names is not None else pd.Series(dtype=str)
+    line_circuits = line_circuits if line_circuits is not None else pd.DataFrame()
     kind = network.buses["kind"].astype(str)
     rows = []
     for bus_id, point in model.supply_points.iterrows():
@@ -391,22 +445,32 @@ def criticality(
 def build_criticality(
     *,
     network_path: Path,
-    line_circuits_path: Path,
-    substation_names_path: Path,
     substation_weights_path: Path,
     demand_levels_path: Path,
     output_dir: Path,
+    line_circuits_path: Path | None = None,
+    substation_names_path: Path | None = None,
     line_types: dict[int, str] | None = None,
     s_max_pu: float = 1.0,
     island_carriers: tuple[str, ...] = DEFAULT_ISLAND_CARRIERS,
 ) -> CriticalityOutputs:
-    """Write ``criticality.csv``, ``criticality_by_area.csv`` and ``metadata.json`` to ``output_dir``."""
+    """Write ``criticality.csv``, ``criticality_by_area.csv``, ``line_ratings.csv`` and ``metadata.json``.
+
+    ``line_circuits_path`` and ``substation_names_path`` are optional (see ``transmission_model`` and
+    ``failure_assets``); the names table has columns ``substation`` (asset_id) and ``name``.
+    """
     network = pypsa.Network(str(network_path))
-    line_circuits = read_line_circuits(line_circuits_path)
-    names = pd.read_csv(substation_names_path, comment="#").set_index("substation")["name"]
+    line_circuits = read_line_circuits(line_circuits_path) if line_circuits_path else None
+    names = (
+        pd.read_csv(substation_names_path, comment="#").set_index("substation")["name"]
+        if substation_names_path
+        else None
+    )
     weights = pd.read_csv(substation_weights_path)
     levels = pd.read_csv(demand_levels_path, comment="#")
-    model = transmission_model(network, line_circuits, weights.set_index("bus_id")["island"], line_types=line_types)
+    model = transmission_model(
+        network, weights.set_index("bus_id")["island"], line_circuits=line_circuits, line_types=line_types
+    )
     assets = failure_assets(model, network, line_circuits, names)
     demands = {level: demand_by_supply_point(weights, levels, level) for level in ("peak", "average")}
     summary, by_area, intact = criticality(
@@ -418,14 +482,19 @@ def build_criticality(
     outputs = CriticalityOutputs(
         criticality=output_dir / "criticality.csv",
         by_area=output_dir / "criticality_by_area.csv",
+        line_ratings=output_dir / "line_ratings.csv",
         metadata=output_dir / "metadata.json",
     )
     summary.round(3).to_csv(outputs.criticality, index=False)
     by_area.round(3).to_csv(outputs.by_area, index=False)
+    ratings = model.lines[["route", "built_for_kv", "circuits", "v_nom", "s_nom"]].rename(
+        columns={"route": "asset_id", "v_nom": "voltage_kv", "s_nom": "rating_mva"}
+    )
+    ratings.rename_axis("line_id").round(3).to_csv(outputs.line_ratings)
     metadata = {
         "network": str(network_path),
-        "line_circuits": str(line_circuits_path),
-        "substation_names": str(substation_names_path),
+        "line_circuits": str(line_circuits_path) if line_circuits_path else None,
+        "substation_names": str(substation_names_path) if substation_names_path else None,
         "substation_weights": str(substation_weights_path),
         "demand_levels": str(demand_levels_path),
         "line_types": {str(kv): name for kv, name in (line_types or DEFAULT_LINE_TYPES).items()},

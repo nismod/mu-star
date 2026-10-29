@@ -70,13 +70,22 @@ energy:
     weight_population: 0.4
 
   criticality:
-    # Unmet demand when each substation, CEB line or plant of inferred-provided
-    # fails (workflow/2-losses/energy.smk). One circuit of a CEB line is rated
-    # as a PyPSA line type at 66 kV, by the voltage the line was built for:
-    # 149-AL1/24-ST1A, the 150 mm2 conductor in the annual report (p. 61),
-    # 53.7 MVA; 243-AL1/39-ST1A, PyPSA-Earth's type for 132 kV, 73.7 MVA. A
-    # line's rating is that times its circuits (Power Transmission/
-    # ceb_line_circuits.csv). Placeholders until CEB gives ratings.
+    # Unmet demand when each substation, provided line or plant of
+    # inferred-provided fails (workflow/2-losses/energy.smk).
+    # Two optional tables in the incoming folder, here read from CEB's network
+    # map. line_circuits gives each line's route, the voltage it was built for
+    # and its circuits; without it, the segments between two substations or
+    # junctions form one line, with one circuit built for the voltage it runs
+    # at. substation_names names the substations; without it, they keep their
+    # ids.
+    line_circuits: Power Transmission/ceb_line_circuits.csv
+    substation_names: Substation/ceb_substation_names.csv
+    # PyPSA line type of one circuit, by the voltage a line was built for. A
+    # line's rating is that type's rating at the voltage the line runs at in
+    # the network (inferred.transmission_voltage_kv, 66 kV), times its
+    # circuits: 149-AL1/24-ST1A, the 150 mm2 conductor in the annual report
+    # (p. 61), 53.7 MVA at 66 kV; 243-AL1/39-ST1A, PyPSA-Earth's type for
+    # 132 kV, 73.7 MVA at 66 kV. Placeholders until CEB gives ratings.
     line_types:
       66: 149-AL1/24-ST1A 110.0
       132: 243-AL1/39-ST1A 110.0

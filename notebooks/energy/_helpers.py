@@ -41,7 +41,8 @@ Criticality (``02_criticality.ipynb``):
 - ``plot_criticality_map(summary, quantity)``: transmission lines and substations, coloured by the unmet demand
   when each fails, in one of ``QUANTITIES``.
 - ``plot_failure(asset_id)``: the distribution network left without supply when one component fails.
-- ``plot_line_ratings()``: transmission line ratings, by design voltage and number of circuits.
+- ``plot_line_ratings()``: the transmission line ratings the analysis used, by design voltage and number of
+  circuits.
 """
 
 from __future__ import annotations
@@ -66,7 +67,6 @@ from matplotlib.lines import Line2D
 from energy import osm as energy_osm
 from energy import paths as energy_paths
 from energy.nightlights import tile_name
-from energy.provided import LINE_CIRCUITS_FILE
 
 # --- Settings -----------------------------------------------------------------
 
@@ -559,8 +559,6 @@ CRITICALITY_NETWORK = f"inferred-provided-{REGION_SLUG}"
 CRITICALITY_DIR = energy_paths.results_energy_dir(DATA_ROOT) / "criticality" / CRITICALITY_NETWORK
 RUN_CRITICALITY = build_command(CRITICALITY_DIR / "criticality.csv")
 DEMAND_DIR = energy_paths.processed_energy_dir(DATA_ROOT) / "demand" / CRITICALITY_NETWORK
-# Voltage the provided transmission lines run at.
-TRANSMISSION_KV = float(_setting("inferred", "transmission_voltage_kv", default=66))
 
 # Colours: a blue scale for amounts, greys for context and for assets whose failure leaves no demand unmet,
 # red for the failed asset.
@@ -854,32 +852,28 @@ def _unmet_breakdown(asset_id, asset, summary, by_area) -> str:
 def plot_line_ratings(*, clip=None, ax=None, figsize=(9, 11)):
     """Map the transmission line ratings, by design voltage (colour) and number of circuits (width).
 
-    From the line circuits table in the incoming data (``LINE_CIRCUITS_FILE``). The legend gives each
-    class's rating at ``TRANSMISSION_KV``, from the line types under ``criticality`` in the energy config.
+    From ``line_ratings.csv`` of ``build_energy_criticality``, the ratings the analysis used. The legend gives
+    each class's rating at the voltage the lines run at.
     ``clip``: a ``(minx, miny, maxx, maxy)`` box in degrees; the default is the islands with transmission lines.
     """
-    import pypsa
-
-    circuits = pd.read_csv(energy_paths.incoming_energy_dir(DATA_ROOT) / LINE_CIRCUITS_FILE, comment="#")
-    types = {int(kv): name for kv, name in (_setting("criticality", "line_types", default={}) or {}).items()}
-    i_nom = pypsa.Network().line_types["i_nom"]
+    ratings = pd.read_csv(CRITICALITY_DIR / "line_ratings.csv")
     _, edges = _criticality_layers()
-    ceb = _transmission(edges).merge(circuits, on="line_id", how="left")
-    clip = clip or _island_bounds(set(ceb["region"]))
-    ceb = _clip(ceb, clip)
+    lines = _transmission(edges).merge(ratings, on="line_id", how="inner")
+    clip = clip or _island_bounds(set(lines["region"]))
+    lines = _clip(lines, clip)
     if ax is None:
         _, ax = plt.subplots(figsize=figsize)
     _draw(_clip(edges[edges["source"].eq("osm")], clip), ax, color=_CONTEXT, linewidth=0.2, zorder=1)
-    voltages = sorted(ceb["built_for_kv"].dropna().unique())
+    voltages = sorted(lines["built_for_kv"].unique())
     if len(voltages) > len(_CLASS_COLOURS):
         raise ValueError(f"{len(voltages)} design voltages; colours for {len(_CLASS_COLOURS)} only")
     colour_of = dict(zip(voltages, _CLASS_COLOURS))
-    for (kv, count), block in ceb.groupby(["built_for_kv", "circuits"], sort=True):
-        rating = math.sqrt(3) * TRANSMISSION_KV * float(i_nom.get(types.get(int(kv)), float("nan"))) * count
+    for (kv, count, rating), block in lines.groupby(["built_for_kv", "circuits", "rating_mva"], sort=True):
         circuit_word = "circuit" if count == 1 else "circuits"
         label = f"{kv:g} kV, {count:g} {circuit_word}: {rating:.0f} MVA, {block['length_km'].sum():.0f} km"
         _draw(block, ax, color=colour_of[kv], linewidth=1.2 * count, label=label, zorder=2)
-    title = f"Design voltage, circuits: rating at {TRANSMISSION_KV:g} kV, length"
+    running = "/".join(f"{kv:g}" for kv in sorted(lines["voltage_kv"].unique()))
+    title = f"Design voltage, circuits: rating at {running} kV, length"
     ax.legend(loc="upper left", frameon=False, title=title, alignment="left")
     ax.set_axis_off()
     ax.set_title("Transmission line ratings by design voltage and number of circuits", loc="left")

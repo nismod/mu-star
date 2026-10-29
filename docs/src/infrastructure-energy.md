@@ -83,10 +83,17 @@ supply is the unmet demand: demand minus supply, at each substation. Each
 substation's demand sits on its 66 kV bus, and Rodrigues, which has no CEB
 lines, is a single bus. A line's rating is its number of circuits, read from
 CEB's map, times the rating of one circuit of a standard PyPSA line type at
-66 kV: 53.7 MVA for lines built for 66 kV and 73.7 MVA for lines built for
-132 kV. A CEB line made of several segments fails as a whole. A part of the
-network cut off from the rest keeps supply only if it has a thermal or hydro
-plant, because solar and wind farms disconnect when they lose the grid.
+the voltage the line runs at in the network, 66 kV: 53.7 MVA for lines built
+for 66 kV and 73.7 MVA for lines built for 132 kV. A CEB line made of several
+segments fails as a whole. A part of the network cut off from the rest keeps
+supply only if it has a thermal or hydro plant, because solar and wind farms
+disconnect when they lose the grid.
+
+The two tables read from CEB's map are optional, and are named under
+`criticality` in `config/energy/energy.yaml`. Without the line circuits table,
+each run of segments between two substations or junctions is one line, with
+one circuit built for the voltage it runs at. Without the names table,
+substations keep their ids.
 
 Each failure is solved at peak and at average demand, which gives two
 quantities:
@@ -190,7 +197,10 @@ demand and criticality commands also need the incoming folder.
     `line_limits_peak_mw`, the part of `unmet_peak_mw` due to line ratings;
   - `criticality_by_area.csv`: the same two quantities in each substation area
     for each failure, for mapping onto the distribution network through
-    `service_weights_nodes.csv`.
+    `service_weights_nodes.csv`;
+  - `line_ratings.csv`: the rating of each transmission line segment, with
+    its line (`asset_id`), the voltage it was built for, its circuits and the
+    voltage it runs at.
 
 The notebooks in `notebooks/energy/` show the inputs, the networks and the
 criticality results.
