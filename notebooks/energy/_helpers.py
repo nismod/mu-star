@@ -29,10 +29,26 @@ Built networks (``01_networks.ipynb``):
 - ``load_validation(name)``, ``load_pypsa(name)``, ``summarise(name)``.
 - ``explore_network(name)``: interactive Plotly map; ``plot_network(name)``, ``quick_map(**layers)``: static maps.
 - ``MAURITIUS_BBOX``, ``RODRIGUES_BBOX``: boxes for the ``clip=`` argument.
+
+Criticality (``02_criticality.ipynb``):
+
+- ``CRITICALITY_DIR``: <data>/results/energy/<date>-results/criticality/inferred-provided-<region>.
+- ``load_criticality()``: ``(summary, by_area)``, the two tables of ``build_energy_criticality``.
+- ``demand_levels()``: each island's peak and average demand, with its source.
+- ``area_demand(summary)``: each substation area's share of its island's demand, and its demand in MW.
+- ``unmet_by_cause(summary, by_area)``: the unmet demand when each component fails, per day and at peak, and at
+  peak by cause (the failed substation's area, other areas without supply, areas partly supplied).
+- ``unmet_by_area(summary, by_area)``: every substation area with unmet demand for each failure, with names.
+- ``plot_criticality_map(summary, quantity)``: transmission lines and substations, coloured by the unmet demand
+  when each fails, in one of ``QUANTITIES``.
+- ``plot_failure(asset_id)``: the distribution network left without supply when one component fails.
+- ``plot_line_ratings()``: the transmission line ratings the analysis used, by design voltage and number of
+  circuits.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 import shlex
@@ -44,6 +60,10 @@ import numpy as np
 import pandas as pd
 import shapely
 import yaml
+from matplotlib import patheffects
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.lines import Line2D
 
 from energy import osm as energy_osm
 from energy import paths as energy_paths
@@ -532,3 +552,368 @@ def explore_network(name, *, roads=True, clip=None, map_style="open-street-map")
         height=650,
     )
     return fig
+
+
+# --- Criticality ------------------------------------------------------------------
+
+CRITICALITY_NETWORK = f"inferred-provided-{REGION_SLUG}"
+CRITICALITY_DIR = energy_paths.results_energy_dir(DATA_ROOT) / "criticality" / CRITICALITY_NETWORK
+RUN_CRITICALITY = build_command(CRITICALITY_DIR / "criticality.csv")
+DEMAND_DIR = energy_paths.processed_energy_dir(DATA_ROOT) / "demand" / CRITICALITY_NETWORK
+
+# Colours: a blue scale for amounts, greys for context and for assets whose failure leaves no demand unmet,
+# red for the failed asset.
+_SCALE = LinearSegmentedColormap.from_list("unmet", ["#86b6ef", "#3987e5", "#1c5cab", "#0d366b"])
+_CONTEXT, _NO_LOSS, _TEXT, _FAILED = "#dddbd5", "#a3a29c", "#52514e", "#d03b3b"
+_CLASS_COLOURS = ("#2a78d6", "#eb6834", "#1baf7a")  # one per design voltage
+_HALO = [patheffects.withStroke(linewidth=3, foreground="white")]  # keeps labels readable over lines
+
+
+def load_criticality() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return ``(summary, by_area)``: ``criticality.csv``, one row per asset, and ``criticality_by_area.csv``."""
+    summary = pd.read_csv(CRITICALITY_DIR / "criticality.csv")
+    summary["lines"] = summary["lines"].fillna("")
+    return summary, pd.read_csv(CRITICALITY_DIR / "criticality_by_area.csv")
+
+
+@functools.lru_cache(maxsize=1)
+def _criticality_layers() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    return load_layers(CRITICALITY_NETWORK)
+
+
+@functools.lru_cache(maxsize=1)
+def _node_areas() -> pd.Series:
+    """Return the substation area (``area_bus_id``) of every node, by ``bus_id``."""
+    return pd.read_csv(DEMAND_DIR / "service_weights_nodes.csv").set_index("bus_id")["area_bus_id"]
+
+
+def _area_name(area_bus_id: str, summary: pd.DataFrame) -> str:
+    """Return an area's name: its substation's, or on an island without substations, its power station's."""
+    names = summary.set_index("asset_id")["name"]
+    return str(names.get(area_bus_id.removeprefix("bus::"), area_bus_id.removeprefix("asset::")))
+
+
+def _route_of_line(summary: pd.DataFrame) -> dict[str, str]:
+    """Return the line asset (route) of each transmission line segment."""
+    lines = summary[summary["asset_type"].eq("line")]
+    return {
+        segment: asset for asset, segments in zip(lines["asset_id"], lines["lines"]) for segment in segments.split()
+    }
+
+
+def _draw(frame: gpd.GeoDataFrame, ax, **style) -> None:
+    """Plot ``frame`` on ``ax`` unless it is empty (geopandas cannot plot an empty layer)."""
+    if len(frame):
+        frame.plot(ax=ax, **style)
+
+
+def _island_bounds(islands, margin: float = 0.01) -> tuple[float, float, float, float]:
+    """Return a ``(minx, miny, maxx, maxy)`` box around all the network nodes on ``islands``."""
+    nodes, _ = _criticality_layers()
+    minx, miny, maxx, maxy = nodes[nodes["region"].isin(list(islands))].total_bounds
+    return (minx - margin, miny - margin, maxx + margin, maxy + margin)
+
+
+def _transmission(edges: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    return edges[edges["source"].eq("provided_transmission")]
+
+
+def _dot(colour: str, label: str, size: float = 8) -> Line2D:
+    return Line2D(
+        [], [], marker="o", linestyle="", markersize=size, markerfacecolor=colour, markeredgecolor="white", label=label
+    )
+
+
+# The two quantities of the criticality tables, with the words used for them in titles and colour bars.
+QUANTITIES = {
+    "unmet_mwh_per_day": ("per day of outage", "MWh per day"),
+    "unmet_peak_mw": ("at peak demand", "MW"),
+}
+
+
+@functools.lru_cache(maxsize=1)
+def _area_demand_mw() -> pd.DataFrame:
+    """Return each substation area's island, share of its island's demand, and demand at peak and average (MW).
+
+    Indexed by ``bus_id``: ``service_weights_substations.csv`` times ``demand_levels.csv``, both in ``DEMAND_DIR``.
+    """
+    weights = pd.read_csv(DEMAND_DIR / "service_weights_substations.csv").set_index("bus_id")
+    levels = pd.read_csv(DEMAND_DIR / "demand_levels.csv").pivot(index="island", columns="level", values="demand_mw")
+    return pd.DataFrame(
+        {
+            "island": weights["island"],
+            "share_of_island": weights["service_weight"],
+            "peak_mw": weights["service_weight"] * weights["island"].map(levels["peak"]),
+            "average_mw": weights["service_weight"] * weights["island"].map(levels["average"]),
+        }
+    )
+
+
+def demand_levels() -> pd.DataFrame:
+    """Return each island's peak and average demand (MW) and its source: ``demand_levels.csv`` in ``DEMAND_DIR``."""
+    return pd.read_csv(DEMAND_DIR / "demand_levels.csv")
+
+
+def area_demand(summary: pd.DataFrame) -> pd.DataFrame:
+    """Return each substation area's share of its island's demand and its demand at peak and average (MW)."""
+    table = _area_demand_mw().reset_index()
+    table.insert(0, "area", [_area_name(area, summary) for area in table.pop("bus_id")])
+    return table.sort_values(["island", "peak_mw"], ascending=[True, False]).reset_index(drop=True)
+
+
+# Where the unmet demand of one failure falls, by substation area.
+AREA_STATUS = ("failed substation's area", "without supply", "partly supplied")
+
+
+def unmet_by_area(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame:
+    """Return ``criticality_by_area.csv`` with names: one row per failure and substation area with unmet demand.
+
+    ``asset`` and ``area`` name the failed component and the area. ``area_status``, one of ``AREA_STATUS``: the
+    failed substation's own area; another area left without supply at peak; or another area that keeps some
+    supply. ``unmet_share_of_peak``: the share of the area's peak demand that is unmet. Rows follow the order of
+    :func:`unmet_by_cause`.
+    """
+    assets = summary.set_index("asset_id")
+    area_peak = _area_demand_mw()["peak_mw"]
+    table = by_area.copy()
+    is_substation = table["asset_id"].map(assets["asset_type"]).eq("substation")
+    own = is_substation & table["area_bus_id"].eq("bus::" + table["asset_id"])
+    share = table["unmet_peak_mw"] / table["area_bus_id"].map(area_peak)
+    table["area_status"] = np.select([own, share.ge(0.999)], AREA_STATUS[:2], AREA_STATUS[2])
+    table["unmet_share_of_peak"] = share
+    table["asset"] = table["asset_id"].map(assets["name"])
+    table["area"] = [_area_name(area, summary) for area in table["area_bus_id"]]
+    table["asset_mwh_per_day"] = table["asset_id"].map(assets["unmet_mwh_per_day"])
+    table["asset_peak_mw"] = table["asset_id"].map(assets["unmet_peak_mw"])
+    table = table.sort_values(
+        ["asset_mwh_per_day", "asset_peak_mw", "asset_id", "unmet_peak_mw"], ascending=[False, False, True, False]
+    )
+    columns = ["asset_id", "asset", "area", "area_bus_id", "area_status", "unmet_share_of_peak"]
+    return table[[*columns, "unmet_mwh_per_day", "unmet_peak_mw"]].reset_index(drop=True)
+
+
+def unmet_by_cause(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame:
+    """Return, for each asset whose failure leaves demand unmet, its two unmet quantities and where the unmet
+    demand at peak falls, by the ``area_status`` of :func:`unmet_by_area`.
+
+    ``failed_substation_area_peak_mw``: a failed substation's own area. ``areas_without_supply`` and
+    ``areas_without_supply_peak_mw``: the other areas that lose all their supply. ``areas_partly_supplied_peak_mw``:
+    unmet demand in areas that keep some supply, because the plants left cannot cover them or lines reach their
+    ratings. ``line_limits_peak_mw``: the part of ``unmet_peak_mw`` due to line ratings. Raises ValueError if the
+    parts do not add up to ``unmet_peak_mw``.
+    """
+    areas = unmet_by_area(summary, by_area)
+    rows = []
+    for asset_id, asset in summary.set_index("asset_id").iterrows():
+        unmet = float(asset["unmet_peak_mw"])
+        if unmet <= 0 and asset["unmet_mwh_per_day"] <= 0:
+            continue
+        failure_areas = areas[areas["asset_id"].eq(asset_id)]
+        at_peak = failure_areas.groupby("area_status")["unmet_peak_mw"].sum()
+        parts = {status: float(at_peak.get(status, 0.0)) for status in AREA_STATUS}
+        if abs(sum(parts.values()) - unmet) > 0.01:
+            raise ValueError(f"{asset_id}: the areas add up to {sum(parts.values()):.3f} MW, not {unmet:.3f} MW")
+        without = failure_areas.loc[failure_areas["area_status"].eq(AREA_STATUS[1]), "area"]
+        rows.append(
+            {
+                "asset_id": asset_id,
+                "asset": asset["name"],
+                "type": asset["asset_type"],
+                "unmet_mwh_per_day": float(asset["unmet_mwh_per_day"]),
+                "unmet_peak_mw": unmet,
+                "failed_substation_area_peak_mw": parts[AREA_STATUS[0]],
+                "areas_without_supply": ", ".join(without),
+                "areas_without_supply_peak_mw": parts[AREA_STATUS[1]],
+                "areas_partly_supplied_peak_mw": parts[AREA_STATUS[2]],
+                "line_limits_peak_mw": float(asset["line_limits_peak_mw"]),
+            }
+        )
+    table = pd.DataFrame(rows).sort_values(["unmet_mwh_per_day", "unmet_peak_mw"], ascending=False)
+    return table.reset_index(drop=True)
+
+
+def plot_criticality_map(
+    summary: pd.DataFrame, quantity: str = "unmet_mwh_per_day", *, clip=None, ax=None, figsize=(9, 11)
+):
+    """Map the transmission lines and substations, coloured by the unmet demand when each fails.
+
+    ``quantity``: ``"unmet_mwh_per_day"`` or ``"unmet_peak_mw"`` (``QUANTITIES``). Plants are not drawn: they sit
+    at substations. ``clip``: a ``(minx, miny, maxx, maxy)`` box in degrees; the default is the islands with
+    transmission lines.
+    """
+    what, unit = QUANTITIES[quantity]
+    nodes, edges = _criticality_layers()
+    unmet = summary.set_index("asset_id")[quantity]
+    ceb = _transmission(edges).copy()
+    ceb["unmet"] = ceb["line_id"].map(_route_of_line(summary)).map(unmet).fillna(0.0)
+    subs = nodes[nodes["kind"].eq("substation")].copy()
+    substation = subs["bus_id"].str.removeprefix("bus::")  # the asset_id of the criticality tables
+    subs["unmet"] = substation.map(unmet).fillna(0.0)
+    subs["name"] = substation.map(summary.set_index("asset_id")["name"]).fillna(substation)
+    clip = clip or _island_bounds(set(ceb["region"]))
+    roads, ceb, subs = (_clip(frame, clip) for frame in (edges[edges["source"].eq("osm")], ceb, subs))
+    norm = Normalize(0, max(ceb["unmet"].max(), subs["unmet"].max(), 1.0))
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+    _draw(roads, ax, color=_CONTEXT, linewidth=0.2, zorder=1)
+    hit, sub_hit = ceb["unmet"].round(1) > 0, subs["unmet"].round(1) > 0
+    _draw(ceb[~hit], ax, color=_NO_LOSS, linewidth=1.2, zorder=2)
+    if hit.any():
+        _draw(ceb[hit], ax, color=[_SCALE(norm(value)) for value in ceb.loc[hit, "unmet"]], linewidth=3, zorder=3)
+    colours = [_SCALE(norm(value)) if drawn else _NO_LOSS for value, drawn in zip(subs["unmet"], sub_hit)]
+    ax.scatter(subs.geometry.x, subs.geometry.y, s=70, c=colours, edgecolor="white", linewidth=1.5, zorder=4)
+    for name, point in zip(subs["name"], subs.geometry):
+        ax.annotate(
+            name,
+            (point.x, point.y),
+            xytext=(6, 4),
+            textcoords="offset points",
+            fontsize=8,
+            color=_TEXT,
+            path_effects=_HALO,
+        )
+    plt.colorbar(
+        ScalarMappable(norm, _SCALE), ax=ax, shrink=0.4, label=f"Unmet demand when the component fails ({unit})"
+    )
+    entries = [
+        (hit.any(), Line2D([], [], color=_SCALE(0.6), linewidth=3, label="transmission line, unmet demand")),
+        ((~hit).any(), Line2D([], [], color=_NO_LOSS, linewidth=1.2, label="transmission line, no unmet demand")),
+        (sub_hit.any(), _dot(_SCALE(0.6), "substation, unmet demand")),
+        ((~sub_hit).any(), _dot(_NO_LOSS, "substation, no unmet demand")),
+        (len(roads) > 0, Line2D([], [], color=_CONTEXT, linewidth=1, label="estimated distribution network")),
+    ]
+    ax.legend(handles=[entry for drawn, entry in entries if drawn], loc="upper left", frameon=False, fontsize=8)
+    ax.set_axis_off()
+    ax.set_title(f"Unmet demand when each component fails: {what}", loc="left")
+    return ax
+
+
+def plot_failure(
+    asset_id: str,
+    *,
+    summary: pd.DataFrame | None = None,
+    by_area: pd.DataFrame | None = None,
+    clip=None,
+    ax=None,
+    figsize=(9, 11),
+):
+    """Map the distribution lines left without supply when ``asset_id`` fails.
+
+    Each line is coloured by the share of its substation area's peak demand that is unmet; a line between two
+    areas takes the smaller share of its two ends. A box gives the unmet demand and, at peak, its causes (see
+    :func:`unmet_by_cause`). ``clip``: a ``(minx, miny, maxx, maxy)`` box in degrees; the default is the
+    component's island.
+    """
+    if summary is None or by_area is None:
+        summary, by_area = load_criticality()
+    asset = summary.set_index("asset_id").loc[asset_id]
+    nodes, edges = _criticality_layers()
+    hit = by_area[by_area["asset_id"].eq(asset_id)]
+    share = (hit["unmet_peak_mw"] / hit["area_bus_id"].map(_area_demand_mw()["peak_mw"])).clip(upper=1.0)
+    share.index = hit["area_bus_id"]
+    areas = _node_areas()
+    lines = edges[~edges["source"].eq("provided_transmission")].copy()
+    ends = [lines[end].map(areas).map(share).fillna(0.0) for end in ("bus0", "bus1")]
+    lines["share"] = np.minimum(*ends)
+    clip = clip or _island_bounds([asset["island"]])
+    lines = _clip(lines, clip)
+    ceb = _transmission(edges)
+    subs = _clip(nodes[nodes["kind"].eq("substation")], clip)
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+    unserved = lines["share"] > 0
+    _draw(lines[~unserved], ax, color=_CONTEXT, linewidth=0.3, zorder=1)
+    _draw(lines[unserved], ax, color=[_SCALE(value) for value in lines.loc[unserved, "share"]], linewidth=0.7, zorder=2)
+    _draw(_clip(ceb, clip), ax, color=_NO_LOSS, linewidth=1.0, zorder=3)
+    ax.scatter(subs.geometry.x, subs.geometry.y, s=25, color=_NO_LOSS, edgecolor="white", linewidth=1, zorder=4)
+    if asset["asset_type"] == "line":
+        failed = ceb[ceb["line_id"].isin(asset["lines"].split())]
+        _draw(failed, ax, color=_FAILED, linewidth=3, zorder=5)
+        where = failed.geometry.union_all().representative_point()
+        failed_key = Line2D([], [], color=_FAILED, linewidth=3, label="failed line")
+    else:
+        bus_id = f"bus::{asset_id}" if asset["asset_type"] == "substation" else f"asset::{asset_id}"
+        where = nodes.set_index("bus_id").geometry[bus_id]
+        ax.scatter([where.x], [where.y], s=110, color=_FAILED, edgecolor="white", linewidth=1.5, zorder=5)
+        failed_key = _dot(_FAILED, f"failed {asset['asset_type']}", size=10)
+    ax.annotate(
+        asset["name"], (where.x, where.y), xytext=(8, -12), textcoords="offset points", color=_TEXT, path_effects=_HALO
+    )
+    if unserved.any():
+        plt.colorbar(
+            ScalarMappable(Normalize(0, 1), _SCALE), ax=ax, shrink=0.4, label="Share of the area's peak demand unmet"
+        )
+    key = [failed_key, Line2D([], [], color=_CONTEXT, linewidth=1, label="distribution line, supplied")]
+    if len(_clip(ceb, clip)):
+        key.append(Line2D([], [], color=_NO_LOSS, linewidth=1, label="transmission line"))
+    if len(subs):
+        key.append(_dot(_NO_LOSS, "substation", size=6))
+    ax.legend(handles=key, loc="lower left", frameon=False, fontsize=8)
+    ax.text(
+        0.01,
+        0.99,
+        _unmet_breakdown(asset_id, asset, summary, by_area),
+        transform=ax.transAxes,
+        va="top",
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.85},  # readable over the network
+        zorder=5,
+    )
+    ax.set_axis_off()
+    ax.set_title(
+        f"Distribution network without supply when one component fails:\n{asset['name']} ({asset['asset_type']})",
+        loc="left",
+    )
+    return ax
+
+
+def _unmet_breakdown(asset_id, asset, summary, by_area) -> str:
+    """Return the unmet demand when ``asset_id`` fails, and at peak its causes (see :func:`unmet_by_cause`)."""
+    peak = float(asset["unmet_peak_mw"])
+    lines = [
+        f"Unmet demand per day of outage: {asset['unmet_mwh_per_day']:,.0f} MWh",
+        f"Unmet demand at peak: {peak:.1f} MW",
+    ]
+    if peak <= 0:
+        return "\n".join(lines)
+    why = unmet_by_cause(summary, by_area).set_index("asset_id").loc[asset_id]
+    if why["failed_substation_area_peak_mw"] > 0:
+        lines.append(f"  failed substation's area: {why['failed_substation_area_peak_mw']:.1f} MW")
+    if why["areas_without_supply_peak_mw"] > 0:
+        lines.append(
+            f"  areas without supply: {why['areas_without_supply_peak_mw']:.1f} MW ({why['areas_without_supply']})"
+        )
+    if why["areas_partly_supplied_peak_mw"] > 0:
+        lines.append(f"  areas partly supplied: {why['areas_partly_supplied_peak_mw']:.1f} MW")
+    return "\n".join(lines)
+
+
+def plot_line_ratings(*, clip=None, ax=None, figsize=(9, 11)):
+    """Map the transmission line ratings, by design voltage (colour) and number of circuits (width).
+
+    From ``line_ratings.csv`` of ``build_energy_criticality``, the ratings the analysis used. The legend gives
+    each class's rating at the voltage the lines run at.
+    ``clip``: a ``(minx, miny, maxx, maxy)`` box in degrees; the default is the islands with transmission lines.
+    """
+    ratings = pd.read_csv(CRITICALITY_DIR / "line_ratings.csv")
+    _, edges = _criticality_layers()
+    lines = _transmission(edges).merge(ratings, on="line_id", how="inner")
+    clip = clip or _island_bounds(set(lines["region"]))
+    lines = _clip(lines, clip)
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+    _draw(_clip(edges[edges["source"].eq("osm")], clip), ax, color=_CONTEXT, linewidth=0.2, zorder=1)
+    voltages = sorted(lines["built_for_kv"].unique())
+    if len(voltages) > len(_CLASS_COLOURS):
+        raise ValueError(f"{len(voltages)} design voltages; colours for {len(_CLASS_COLOURS)} only")
+    colour_of = dict(zip(voltages, _CLASS_COLOURS))
+    for (kv, count, rating), block in lines.groupby(["built_for_kv", "circuits", "rating_mva"], sort=True):
+        circuit_word = "circuit" if count == 1 else "circuits"
+        label = f"{kv:g} kV, {count:g} {circuit_word}: {rating:.0f} MVA, {block['length_km'].sum():.0f} km"
+        _draw(block, ax, color=colour_of[kv], linewidth=1.2 * count, label=label, zorder=2)
+    running = "/".join(f"{kv:g}" for kv in sorted(lines["voltage_kv"].unique()))
+    title = f"Design voltage, circuits: rating at {running} kV, length"
+    ax.legend(loc="upper left", frameon=False, title=title, alignment="left")
+    ax.set_axis_off()
+    ax.set_title("Transmission line ratings by design voltage and number of circuits", loc="left")
+    return ax

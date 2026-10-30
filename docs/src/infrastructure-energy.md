@@ -4,7 +4,8 @@ The energy workflow models the electricity network of Mauritius and Rodrigues.
 The Central Electricity Board (CEB) provided its 66 kV transmission network
 but no data on its distribution network, so the workflow estimates the
 distribution network from roads and night-time lights. It then splits each
-island's demand between its substations.
+island's demand between its substations, and measures the unmet demand when
+each substation, transmission line or power plant fails.
 
 ## Data
 
@@ -16,9 +17,9 @@ processed folder of one build, kept on the project OneDrive and named
 `yyyymmdd-model-data` after the date of the build.
 
 The public data in the table is enough to build a network inferred from
-OpenStreetMap and night lights. The other networks and the demand shares also
-need CEB's files, which are shared under licence and are not public. The
-folders are in `data/incoming/Infrastructure/Energy/`:
+OpenStreetMap and night lights. The other networks, the demand shares and the
+criticality analysis also need CEB's files, which are shared under licence and
+are not public. The folders are in `data/incoming/Infrastructure/Energy/`:
 
 | Data | Source | Folder |
 | --- | --- | --- |
@@ -26,6 +27,7 @@ folders are in `data/incoming/Infrastructure/Energy/`:
 | Night lights, 12 monthly images for 2024 | VIIRS (Earth Observation Group), downloaded | `Nighttime Lights/` |
 | Population, 100 m grid for 2020 | WorldPop, downloaded | `Population/` |
 | Substations and 66 kV lines (Mauritius) | CEB | `Substation/`, `Power Transmission/` |
+| Circuits of each line, the voltage it was built for, substation names | read from CEB's map of power stations and main transmission lines (2025) | `Power Transmission/ceb_line_circuits.csv`, `Substation/ceb_substation_names.csv` |
 | Generation sites | CEB | `Generation Source/` |
 | Monthly peak demand, annual demand by sector | CEB | `Power Demand/` |
 | Distribution network | pending | |
@@ -65,10 +67,56 @@ its own folder in `data/processed/energy/<model_data>/`:
    from the annual report: 525.7 MW at peak and 346.8 MW on average on
    Mauritius, and 8.52 MW and 5.75 MW on Rodrigues.
 
-### Interruption model (in development)
+### Criticality
 
-From the assets that fail in a hazard scenario, it will estimate how much
-demand loses supply, at peak and average demand.
+The criticality analysis measures how much each component of
+`inferred-provided-<region>` matters for supply: the unmet demand when that
+substation, CEB line or power plant fails on its own (an N-1 analysis). It
+involves no hazard and runs once. Whether a hazard event damages a component
+depends on the hazard intensity at the component and on the component's
+vulnerability curve; this analysis gives the consequence for supply if it
+does.
+
+For each failure, a linear optimal power flow (PyPSA) on the CEB 66 kV network
+supplies as much demand as the remaining network allows. The power flow does
+not include the distribution network: the demand of each substation's service
+area, from the demand shares above, sits on the substation's 66 kV bus, as do
+the plants assigned to the substation. Rodrigues, which has no CEB lines, is a
+single bus with all its plants and demand. The demand the power flow cannot
+supply is the unmet demand: demand minus supply, at each substation. On
+Rodrigues, the unmet demand of the single bus is split between the power
+stations' areas in proportion to their demand.
+
+A failed substation takes its bus out of the network, with the lines and
+plants connected to it, so the demand of its whole area is unmet. Lines and
+plants carry no demand, so the unmet demand when one of them fails lies in the
+areas of the substations that the remaining network cannot fully supply. A CEB
+line made of several segments fails as a whole. A part of the network cut off
+from the rest keeps supply only if it has a thermal or hydro plant, because
+solar and wind farms disconnect when they lose the grid.
+
+A line's rating is its number of circuits, read from CEB's map, times the
+rating of one circuit of a standard PyPSA line type at the voltage the line
+runs at in the network, 66 kV: 53.7 MVA for lines built for 66 kV and 73.7 MVA
+for lines built for 132 kV.
+
+The two tables read from CEB's map are optional, and are named under
+`criticality` in `config/energy/energy.yaml`. Without the line circuits table,
+each run of segments between two substations or junctions is one line, with
+one circuit built for the voltage it runs at. Without the names table,
+substations keep their ids.
+
+Each failure is solved at peak and at average demand, which gives two
+quantities:
+
+- `unmet_peak_mw`: the unmet demand in the worst hour (MW);
+- `unmet_mwh_per_day`: the unmet energy per day of outage (MWh), which is the
+  unmet demand at average demand over 24 hours. Multiplied by a restoration
+  time in days, it gives the energy not supplied.
+
+The per-day value is exact when whole areas lose supply. It is too low for
+shortfalls that occur only near peak: on Rodrigues, losing a power station
+leaves demand unmet at peak but not at average demand.
 
 ## Running the model
 
@@ -78,9 +126,9 @@ environment (see the [Developer's README](./dev-introduction.md)).
 ### Setting up the data
 
 The workflow downloads the public data itself, which is enough to build
-`inferred-osm-<region>`. The other networks and the demand shares also need
-the CEB files. Project members get these by linking two folders of the
-project OneDrive into the repository:
+`inferred-osm-<region>`. The other networks, the demand shares and the
+criticality analysis also need the CEB files. Project members get these by
+linking two folders of the project OneDrive into the repository:
 
 ```shell
 SHARED="<synced OneDrive project folder>"  # contains Incoming Data and Processed Data
@@ -125,13 +173,15 @@ snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/base-mauritius/base-ma
 # the combined network, then its demand shares
 snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/inferred-provided-mauritius-rodrigues/inferred-provided-mauritius-rodrigues.nc"
 snakemake -c1 "data/processed/energy/$MODEL_DATA/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv"
+# the criticality of the combined network, in a results folder with the pack's date
+snakemake -c1 "data/results/energy/${MODEL_DATA%-model-data}-results/criticality/inferred-provided-mauritius-rodrigues/criticality.csv"
 # all three networks
 snakemake -c1 build_energy_networks
 ```
 
 Add `-n` to a command to list the jobs it would run without running them.
 With the pack in place, the network commands have nothing to do, while the
-demand command also needs the incoming folder.
+demand and criticality commands also need the incoming folder.
 
 ## Outputs
 
@@ -151,8 +201,22 @@ demand command also needs the incoming folder.
     area's and each node's share of its island's demand;
   - `demand_levels.csv`: each island's peak and average demand, with its
     source.
+- `data/results/energy/<date>-results/criticality/inferred-provided-<region>/`,
+  where `<date>` is the date of the pack:
+  - `criticality.csv`: one row per substation, line and plant, with
+    `unmet_mwh_per_day` and `unmet_peak_mw` when that component fails, and
+    `line_limits_peak_mw`, the part of `unmet_peak_mw` due to line ratings;
+  - `criticality_by_area.csv`: one row for each failure and each service
+    area left with unmet demand, with the same two quantities. `area_bus_id`
+    names the area by the bus of its substation (or power station, on
+    Rodrigues), which `service_weights_nodes.csv` links to the nodes of the
+    distribution network;
+  - `line_ratings.csv`: the rating of each transmission line segment, with
+    its line (`asset_id`), the voltage it was built for, its circuits and the
+    voltage it runs at.
 
-The notebooks in `notebooks/energy/` show the inputs and the networks.
+The notebooks in `notebooks/energy/` show the inputs, the networks and the
+criticality results.
 
 ## Limitations
 
@@ -162,4 +226,15 @@ The notebooks in `notebooks/energy/` show the inputs and the networks.
   between its plants. An island with no power asset at all gets a placeholder
   substation on its roads.
 - Rooftop solar and plants with no location yet are left out.
-- Voltages and capacities are placeholders, and no power flow is run.
+- The voltages and capacities in the networks are placeholders. The
+  criticality analysis, the only part that runs a power flow, rates lines by
+  standard line types, which are placeholders too until CEB provides ratings.
+- The criticality analysis fails one component at a time. The unmet demand
+  when a hazard damages several components at once is not the sum of the
+  single-failure values: a substation fed by two lines keeps its supply when
+  either line fails, but loses it all when both do.
+- Every plant, solar and wind included, can produce up to its installed
+  capacity, so the criticality analysis may underestimate shortages of
+  generation.
+- The CTSAV plant is connected to Combo, the nearest substation; CEB's map
+  connects it to Union Vale.
