@@ -10,9 +10,9 @@ Three notebooks for checking the energy model while working on `src/energy/`:
   and PyPSA network.
 - `02_criticality.ipynb`: the N-1 criticality results: the method, the demand
   of each substation area, the transmission line ratings, the unmet demand when
-  each component fails by cause, and maps of the critical lines and substations
-  and of the distribution network left without supply. It reads the tables of
-  `build_energy_criticality` and builds nothing.
+  each component fails, by cause and by substation area, and maps of the
+  critical lines and substations and of the distribution network left without
+  supply. It reads the tables of `build_energy_criticality` and builds nothing.
 
 After editing `src/energy/`, rebuild with `snakemake -c1 build_energy_networks`
 (or set `RUN_BUILD = True` in `01_networks.ipynb`) and rerun `01_networks.ipynb`.

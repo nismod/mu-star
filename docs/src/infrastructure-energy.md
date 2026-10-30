@@ -78,16 +78,27 @@ vulnerability curve; this analysis gives the consequence for supply if it
 does.
 
 For each failure, a linear optimal power flow (PyPSA) on the CEB 66 kV network
-supplies as much demand as the remaining network allows. The demand it cannot
-supply is the unmet demand: demand minus supply, at each substation. Each
-substation's demand sits on its 66 kV bus, and Rodrigues, which has no CEB
-lines, is a single bus. A line's rating is its number of circuits, read from
-CEB's map, times the rating of one circuit of a standard PyPSA line type at
-the voltage the line runs at in the network, 66 kV: 53.7 MVA for lines built
-for 66 kV and 73.7 MVA for lines built for 132 kV. A CEB line made of several
-segments fails as a whole. A part of the network cut off from the rest keeps
-supply only if it has a thermal or hydro plant, because solar and wind farms
-disconnect when they lose the grid.
+supplies as much demand as the remaining network allows. The power flow does
+not include the distribution network: the demand of each substation's service
+area, from the demand shares above, sits on the substation's 66 kV bus, as do
+the plants assigned to the substation. Rodrigues, which has no CEB lines, is a
+single bus with all its plants and demand. The demand the power flow cannot
+supply is the unmet demand: demand minus supply, at each substation. On
+Rodrigues, the unmet demand of the single bus is split between the power
+stations' areas in proportion to their demand.
+
+A failed substation takes its bus out of the network, with the lines and
+plants connected to it, so the demand of its whole area is unmet. Lines and
+plants carry no demand, so the unmet demand when one of them fails lies in the
+areas of the substations that the remaining network cannot fully supply. A CEB
+line made of several segments fails as a whole. A part of the network cut off
+from the rest keeps supply only if it has a thermal or hydro plant, because
+solar and wind farms disconnect when they lose the grid.
+
+A line's rating is its number of circuits, read from CEB's map, times the
+rating of one circuit of a standard PyPSA line type at the voltage the line
+runs at in the network, 66 kV: 53.7 MVA for lines built for 66 kV and 73.7 MVA
+for lines built for 132 kV.
 
 The two tables read from CEB's map are optional, and are named under
 `criticality` in `config/energy/energy.yaml`. Without the line circuits table,
@@ -195,9 +206,11 @@ demand and criticality commands also need the incoming folder.
   - `criticality.csv`: one row per substation, line and plant, with
     `unmet_mwh_per_day` and `unmet_peak_mw` when that component fails, and
     `line_limits_peak_mw`, the part of `unmet_peak_mw` due to line ratings;
-  - `criticality_by_area.csv`: the same two quantities in each substation area
-    for each failure, for mapping onto the distribution network through
-    `service_weights_nodes.csv`;
+  - `criticality_by_area.csv`: one row for each failure and each service
+    area left with unmet demand, with the same two quantities. `area_bus_id`
+    names the area by the bus of its substation (or power station, on
+    Rodrigues), which `service_weights_nodes.csv` links to the nodes of the
+    distribution network;
   - `line_ratings.csv`: the rating of each transmission line segment, with
     its line (`asset_id`), the voltage it was built for, its circuits and the
     voltage it runs at.

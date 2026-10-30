@@ -37,7 +37,8 @@ Criticality (``02_criticality.ipynb``):
 - ``demand_levels()``: each island's peak and average demand, with its source.
 - ``area_demand(summary)``: each substation area's share of its island's demand, and its demand in MW.
 - ``unmet_by_cause(summary, by_area)``: the unmet demand when each component fails, per day and at peak, and at
-  peak by cause (own area, areas cut off, areas partly supplied).
+  peak by cause (the failed substation's area, other areas without supply, areas partly supplied).
+- ``unmet_by_area(summary, by_area)``: every substation area with unmet demand for each failure, with names.
 - ``plot_criticality_map(summary, quantity)``: transmission lines and substations, coloured by the unmet demand
   when each fails, in one of ``QUANTITIES``.
 - ``plot_failure(asset_id)``: the distribution network left without supply when one component fails.
@@ -660,31 +661,59 @@ def area_demand(summary: pd.DataFrame) -> pd.DataFrame:
     return table.sort_values(["island", "peak_mw"], ascending=[True, False]).reset_index(drop=True)
 
 
+# Where the unmet demand of one failure falls, by substation area.
+AREA_STATUS = ("failed substation's area", "without supply", "partly supplied")
+
+
+def unmet_by_area(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame:
+    """Return ``criticality_by_area.csv`` with names: one row per failure and substation area with unmet demand.
+
+    ``asset`` and ``area`` name the failed component and the area. ``area_status``, one of ``AREA_STATUS``: the
+    failed substation's own area; another area left without supply at peak; or another area that keeps some
+    supply. ``unmet_share_of_peak``: the share of the area's peak demand that is unmet. Rows follow the order of
+    :func:`unmet_by_cause`.
+    """
+    assets = summary.set_index("asset_id")
+    area_peak = _area_demand_mw()["peak_mw"]
+    table = by_area.copy()
+    is_substation = table["asset_id"].map(assets["asset_type"]).eq("substation")
+    own = is_substation & table["area_bus_id"].eq("bus::" + table["asset_id"])
+    share = table["unmet_peak_mw"] / table["area_bus_id"].map(area_peak)
+    table["area_status"] = np.select([own, share.ge(0.999)], AREA_STATUS[:2], AREA_STATUS[2])
+    table["unmet_share_of_peak"] = share
+    table["asset"] = table["asset_id"].map(assets["name"])
+    table["area"] = [_area_name(area, summary) for area in table["area_bus_id"]]
+    table["asset_mwh_per_day"] = table["asset_id"].map(assets["unmet_mwh_per_day"])
+    table["asset_peak_mw"] = table["asset_id"].map(assets["unmet_peak_mw"])
+    table = table.sort_values(
+        ["asset_mwh_per_day", "asset_peak_mw", "asset_id", "unmet_peak_mw"], ascending=[False, False, True, False]
+    )
+    columns = ["asset_id", "asset", "area", "area_bus_id", "area_status", "unmet_share_of_peak"]
+    return table[[*columns, "unmet_mwh_per_day", "unmet_peak_mw"]].reset_index(drop=True)
+
+
 def unmet_by_cause(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame:
     """Return, for each asset whose failure leaves demand unmet, its two unmet quantities and where the unmet
-    demand at peak falls.
+    demand at peak falls, by the ``area_status`` of :func:`unmet_by_area`.
 
-    ``own_area_peak_mw``: a failed substation's own area. ``cut_off`` and ``cut_off_peak_mw``: the other areas
-    that lose all their supply. ``partly_supplied_peak_mw``: unmet demand in areas that keep some supply, because
-    the plants left cannot cover them or lines reach their ratings. ``line_limits_peak_mw``: the part of
-    ``unmet_peak_mw`` due to line ratings. Raises ValueError if the parts do not add up to ``unmet_peak_mw``.
+    ``failed_substation_area_peak_mw``: a failed substation's own area. ``areas_without_supply`` and
+    ``areas_without_supply_peak_mw``: the other areas that lose all their supply. ``areas_partly_supplied_peak_mw``:
+    unmet demand in areas that keep some supply, because the plants left cannot cover them or lines reach their
+    ratings. ``line_limits_peak_mw``: the part of ``unmet_peak_mw`` due to line ratings. Raises ValueError if the
+    parts do not add up to ``unmet_peak_mw``.
     """
-    area_peak = _area_demand_mw()["peak_mw"]
+    areas = unmet_by_area(summary, by_area)
     rows = []
     for asset_id, asset in summary.set_index("asset_id").iterrows():
         unmet = float(asset["unmet_peak_mw"])
         if unmet <= 0 and asset["unmet_mwh_per_day"] <= 0:
             continue
-        areas = by_area[by_area["asset_id"].eq(asset_id)]
-        own = areas["area_bus_id"].eq(f"bus::{asset_id}") & (asset["asset_type"] == "substation")
-        whole = areas["unmet_peak_mw"].ge(0.999 * areas["area_bus_id"].map(area_peak)) & ~own
-        parts = {
-            "own_area_peak_mw": areas.loc[own, "unmet_peak_mw"].sum(),
-            "cut_off_peak_mw": areas.loc[whole, "unmet_peak_mw"].sum(),
-            "partly_supplied_peak_mw": areas.loc[~own & ~whole, "unmet_peak_mw"].sum(),
-        }
+        failure_areas = areas[areas["asset_id"].eq(asset_id)]
+        at_peak = failure_areas.groupby("area_status")["unmet_peak_mw"].sum()
+        parts = {status: float(at_peak.get(status, 0.0)) for status in AREA_STATUS}
         if abs(sum(parts.values()) - unmet) > 0.01:
             raise ValueError(f"{asset_id}: the areas add up to {sum(parts.values()):.3f} MW, not {unmet:.3f} MW")
+        without = failure_areas.loc[failure_areas["area_status"].eq(AREA_STATUS[1]), "area"]
         rows.append(
             {
                 "asset_id": asset_id,
@@ -692,10 +721,10 @@ def unmet_by_cause(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame
                 "type": asset["asset_type"],
                 "unmet_mwh_per_day": float(asset["unmet_mwh_per_day"]),
                 "unmet_peak_mw": unmet,
-                "own_area_peak_mw": parts["own_area_peak_mw"],
-                "cut_off": ", ".join(_area_name(area, summary) for area in areas.loc[whole, "area_bus_id"]),
-                "cut_off_peak_mw": parts["cut_off_peak_mw"],
-                "partly_supplied_peak_mw": parts["partly_supplied_peak_mw"],
+                "failed_substation_area_peak_mw": parts[AREA_STATUS[0]],
+                "areas_without_supply": ", ".join(without),
+                "areas_without_supply_peak_mw": parts[AREA_STATUS[1]],
+                "areas_partly_supplied_peak_mw": parts[AREA_STATUS[2]],
                 "line_limits_peak_mw": float(asset["line_limits_peak_mw"]),
             }
         )
@@ -821,7 +850,15 @@ def plot_failure(
     if len(subs):
         key.append(_dot(_NO_LOSS, "substation", size=6))
     ax.legend(handles=key, loc="lower left", frameon=False, fontsize=8)
-    ax.text(0.01, 0.99, _unmet_breakdown(asset_id, asset, summary, by_area), transform=ax.transAxes, va="top")
+    ax.text(
+        0.01,
+        0.99,
+        _unmet_breakdown(asset_id, asset, summary, by_area),
+        transform=ax.transAxes,
+        va="top",
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.85},  # readable over the network
+        zorder=5,
+    )
     ax.set_axis_off()
     ax.set_title(
         f"Distribution network without supply when one component fails:\n{asset['name']} ({asset['asset_type']})",
@@ -831,7 +868,7 @@ def plot_failure(
 
 
 def _unmet_breakdown(asset_id, asset, summary, by_area) -> str:
-    """Return the unmet demand when ``asset_id`` fails, and at peak its causes (own area, cut off, partly supplied)."""
+    """Return the unmet demand when ``asset_id`` fails, and at peak its causes (see :func:`unmet_by_cause`)."""
     peak = float(asset["unmet_peak_mw"])
     lines = [
         f"Unmet demand per day of outage: {asset['unmet_mwh_per_day']:,.0f} MWh",
@@ -840,12 +877,14 @@ def _unmet_breakdown(asset_id, asset, summary, by_area) -> str:
     if peak <= 0:
         return "\n".join(lines)
     why = unmet_by_cause(summary, by_area).set_index("asset_id").loc[asset_id]
-    if why["own_area_peak_mw"] > 0:
-        lines.append(f"  own area: {why['own_area_peak_mw']:.1f} MW")
-    if why["cut_off_peak_mw"] > 0:
-        lines.append(f"  areas cut off: {why['cut_off_peak_mw']:.1f} MW ({why['cut_off']})")
-    if why["partly_supplied_peak_mw"] > 0:
-        lines.append(f"  areas partly supplied: {why['partly_supplied_peak_mw']:.1f} MW")
+    if why["failed_substation_area_peak_mw"] > 0:
+        lines.append(f"  failed substation's area: {why['failed_substation_area_peak_mw']:.1f} MW")
+    if why["areas_without_supply_peak_mw"] > 0:
+        lines.append(
+            f"  areas without supply: {why['areas_without_supply_peak_mw']:.1f} MW ({why['areas_without_supply']})"
+        )
+    if why["areas_partly_supplied_peak_mw"] > 0:
+        lines.append(f"  areas partly supplied: {why['areas_partly_supplied_peak_mw']:.1f} MW")
     return "\n".join(lines)
 
 
