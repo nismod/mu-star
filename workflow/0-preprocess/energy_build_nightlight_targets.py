@@ -1,4 +1,4 @@
-"""Extract VIIRS nightlight connection targets from the radiance composite."""
+"""Find the lit pixels ("targets") of the radiance composite inside the area of interest."""
 
 from pathlib import Path
 

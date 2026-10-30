@@ -82,7 +82,7 @@ def test_build_base_network_exports_network_files(tmp_path):
     output_dir = tmp_path / "processed" / "energy" / "networks"
     _write_base_inputs(input_dir)
 
-    export_root = tmp_path / "out" / "energy"
+    export_root = tmp_path / "results" / "energy"
     outputs = build_network(
         "base",
         input_dir=input_dir,
@@ -219,7 +219,7 @@ def test_build_inferred_network_for_region_uses_cached_osm_files(tmp_path):
         power_path=power_path,
         nightlight_targets=targets_path,
         max_anchor_distance_m=100,
-        export_root=tmp_path / "out" / "energy",
+        export_root=tmp_path / "results" / "energy",
     )
 
     metadata = json.loads(outputs.metadata.read_text())
@@ -244,7 +244,7 @@ def test_build_inferred_network_for_region_uses_cached_osm_files(tmp_path):
     assert metadata["generator_roots"] == 0
     assert metadata["anchored_power_assets"] == 1
     assert metadata["has_demand"] is False
-    # Provenance names the targets file actually read, its checksum and its own metadata.
+    # The metadata records the targets file, its SHA-256 and its metadata.json.
     assert metadata["nightlight_targets"] == str(targets_path)
     assert len(metadata["nightlight_targets_sha256"]) == 64
     assert metadata["nightlight_targets_metadata"]["nightlight_threshold"] == 0.2
@@ -271,11 +271,11 @@ def test_build_inferred_network_for_region_uses_cached_osm_files(tmp_path):
     inferred_validation = json.loads(outputs.validation.read_text())
     assert inferred_validation["status"] == "valid_with_warnings"
     assert any("cannot supply demand" in warning for warning in inferred_validation["warnings"])
-    assert any("Model line length differs" in warning for warning in inferred_validation["warnings"])
+    assert any(warning.startswith("Line length is") for warning in inferred_validation["warnings"])
     length_check = inferred_validation["checks"]["line_length_against_published_ceb_total"]
     assert length_check["status"] == "warning"
     assert length_check["reference_total_km"] == 10_492.2
-    assert length_check["reference_scope"].startswith("CEB total transmission")
+    assert length_check["reference_scope"] == "CEB's circuit length at all voltages"
 
 
 def test_build_inferred_places_a_provisional_root_when_a_region_has_no_power_assets(tmp_path):
@@ -404,14 +404,60 @@ def test_build_inferred_provided_uses_only_provided_power_assets(tmp_path):
     assert set(network.generators.index) == {"plant"}
     assert network.generators.loc["plant", "bus"] == "bus::A"
     assert {"bus::A", "bus::B", "asset::plant"} <= set(network.buses.index)
-    # The provided transmission backbone keeps its own voltage and meets the
-    # distribution roads through transformers at the junction buses.
+    # The CEB 66 kV lines keep 66 kV and meet the 11 kV roads through transformers.
     assert metadata["inferred_transmission_voltage_kv"] == 66
     assert metadata["transformers"] >= 1
     assert len(network.transformers) == metadata["transformers"]
     bus_voltages = set(network.buses["v_nom"].round().astype(int))
     assert 66 in bus_voltages
     assert 11 in bus_voltages
+
+
+def test_build_inferred_provided_connects_an_island_plant_at_its_own_node(tmp_path):
+    input_dir = tmp_path / "processed" / "energy" / "provided"
+    island_plant = {
+        "generator_id": "island-plant",
+        "bus_id": None,
+        "region": "rodrigues",
+        "carrier": "thermal",
+        "output_capacity_mw": 6.0,
+        "capacity_basis": "electrical_output",
+        "marginal_cost": 0.0,
+        "lon": 63.42,
+        "lat": -19.68,
+    }
+    _write_base_inputs(input_dir, extra_generator_rows=[island_plant])
+    generators = pd.read_csv(input_dir / "generators.csv")
+    generators["region"] = generators["region"].fillna("mauritius")
+    generators.to_csv(input_dir / "generators.csv", index=False)
+    mauritius_roads, _ = _roads(tmp_path, [(57.5, -20.2), (57.6, -20.2)], "mauritius")
+    rodrigues_roads, _ = _roads(tmp_path, [(63.41, -19.68), (63.43, -19.68)], "rodrigues")
+    roads = gpd.GeoDataFrame(pd.concat([mauritius_roads, rodrigues_roads], ignore_index=True), crs="EPSG:4326")
+    roads_path = tmp_path / "cache" / "mauritius-rodrigues" / "roads.parquet"
+    roads_path.parent.mkdir(parents=True)
+    roads.to_parquet(roads_path)
+
+    outputs = build_network(
+        "inferred-provided",
+        region="mauritius-rodrigues",
+        input_dir=input_dir,
+        output_dir=tmp_path / "networks",
+        roads_path=roads_path,
+        nightlight_targets=roads,
+        max_anchor_distance_m=20_000,
+    )
+
+    metadata = json.loads(outputs.metadata.read_text())
+    network = pypsa.Network(outputs.network)
+    # The Rodrigues plant is a power asset, so no placeholder substation is added;
+    # the plant connects to the island's roads from its own node.
+    assert metadata["provisional_roots"] == 0
+    assert network.generators.loc["island-plant", "bus"] == "asset::island-plant"
+    assert network.generators.loc["plant", "bus"] == "bus::A"
+    assert "bus::RODRIGUES_PROVISIONAL_ROOT" not in network.buses.index
+    assert (
+        network.lines["bus0"].eq("asset::island-plant").any() or network.lines["bus1"].eq("asset::island-plant").any()
+    )
 
 
 def test_build_inferred_provided_keeps_a_generator_without_bus_for_review(tmp_path):
@@ -437,12 +483,12 @@ def test_build_inferred_provided_keeps_a_generator_without_bus_for_review(tmp_pa
         roads_path=roads_path,
         nightlight_targets=roads,
         max_anchor_distance_m=20_000,
-        export_root=tmp_path / "out",
+        export_root=tmp_path / "results",
     )
 
     network = pypsa.Network(outputs.network)
     validation = json.loads(outputs.validation.read_text())
     assert set(network.generators.index) == {"plant"}
-    assert any("retained for review" in warning for warning in validation["warnings"])
+    assert any("left out of the network because they have no bus_id" in warning for warning in validation["warnings"])
     exported = pd.read_csv(outputs.generators)
     assert exported.loc[exported["generator_id"].eq("orphan"), "bus_id"].isna().all()

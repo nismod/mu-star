@@ -1,4 +1,4 @@
-"""Mauritius electricity network generation from provided and inferred sources."""
+"""Build electricity network models of Mauritius from CEB data, OpenStreetMap and night lights."""
 
 from energy.build import build_network
 from energy.network import assert_fixed_capacity, build_topology_network

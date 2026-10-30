@@ -1,8 +1,7 @@
-"""Estimate how total demand may be shared between substations.
+"""Share demand between substations by the length of distribution lines nearest to each.
 
-Precomputed and OSM distribution lines are used only to estimate service areas
-and the share of demand served by each substation. They are not confirmed
-engineering data and are not added to the electrical network calculation.
+A line segment counts toward the substation nearest its centroid (EPSG:32740). With no lines, the
+shares are equal. The lines only set the shares; they are not added to the network.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ def build_service_weights(
     precomputed_lines: gpd.GeoDataFrame | None = None,
     osm_distribution_lines: gpd.GeoDataFrame | None = None,
 ) -> pd.DataFrame:
-    """Use mapped line length to estimate each substation's share of demand."""
+    """Return each substation's ``service_weight`` (shares adding to one) and its km of nearest lines by source."""
     buses = substations.to_crs(METRIC_CRS)
     sources: list[gpd.GeoDataFrame] = []
     for name, layer in (

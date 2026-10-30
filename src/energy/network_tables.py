@@ -1,4 +1,4 @@
-"""Human-readable network tables and lightweight model validation."""
+"""Write each network's ``generators.csv``, ``lines.csv`` and ``validation.json``."""
 
 from __future__ import annotations
 
@@ -54,14 +54,14 @@ LINE_TEMPLATE_COLUMNS = (
 # CEB reports 442 km of overhead and 36.9 km of underground 66 kV lines.
 CEB_TRANSMISSION_LENGTH_KM = 478.9
 CEB_TRANSMISSION_LENGTH_SOURCE = "https://ceb.mu/fact-sheets/grid-infrastructure"
-# The same CEB fact sheet reports 10,492.2 circuit-km across transmission,
-# medium-voltage distribution and low-voltage distribution. This is the
-# appropriate published comparator for the island-wide inferred network.
+# The same fact sheet reports 10,492.2 circuit-km of transmission plus medium- and low-voltage
+# distribution; the inferred networks are compared with this.
 CEB_TOTAL_NETWORK_LENGTH_KM = 10_492.2
 CEB_TOTAL_NETWORK_LENGTH_SOURCE = CEB_TRANSMISSION_LENGTH_SOURCE
-# CEB Annual Report 2023-2024, pp. 50-51: grand total installed capacity,
-# including CEB, IPP, SSDG and MSDG generation.
-CEB_REPORTED_INSTALLED_GENERATION_MW = 881.56
+# CEB Annual Report 2023-2024: grand total installed capacity of CEB, IPP, SSDG and MSDG generation
+# by island (Mauritius pp. 50-51, Rodrigues p. 97). A network is checked against the islands it covers.
+CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW = {"mauritius": 881.56, "rodrigues": 15.30}
+CEB_REPORTED_INSTALLED_GENERATION_MW = CEB_REPORTED_INSTALLED_GENERATION_BY_ISLAND_MW["mauritius"]
 CEB_REPORTED_GENERATION_CAPACITY_SOURCE = (
     "https://ceb.mu/files/files/publications/Annual%20Report/CEB%20AR%202023-2024.pdf"
 )
@@ -88,7 +88,7 @@ def _ordered_csv_frame(
     frame: pd.DataFrame,
     preferred_columns: tuple[str, ...],
 ) -> pd.DataFrame:
-    """Return a CSV-safe frame with the public columns first."""
+    """Return ``frame`` without geometry and with ``preferred_columns`` first (added empty if missing)."""
     result = pd.DataFrame(frame.drop(columns="geometry", errors="ignore")).copy()
     for column in preferred_columns:
         if column not in result:
@@ -98,7 +98,10 @@ def _ordered_csv_frame(
 
 
 def normalise_generator_table(generators: pd.DataFrame) -> pd.DataFrame:
-    """Keep the human schema stable while retaining useful source columns."""
+    """Return generators with ``GENERATOR_EXPORT_COLUMNS`` first and every other column kept.
+
+    ``capacity_unit`` (``MW_e``) and ``capacity_basis`` (``electrical_output``) are filled in when absent.
+    """
     result = _ordered_csv_frame(generators, GENERATOR_EXPORT_COLUMNS)
     if "capacity_unit" not in generators:
         result["capacity_unit"] = "MW_e"
@@ -108,12 +111,12 @@ def normalise_generator_table(generators: pd.DataFrame) -> pd.DataFrame:
 
 
 def normalise_line_table(lines: pd.DataFrame) -> pd.DataFrame:
-    """Keep the human line schema stable while retaining provenance columns."""
+    """Return lines with ``LINE_TEMPLATE_COLUMNS`` first and every other column kept."""
     return _ordered_csv_frame(lines, LINE_TEMPLATE_COLUMNS)
 
 
 def write_input_templates(output_dir: Path) -> InputTemplateOutputs:
-    """Write header-only CSVs that document accepted user-input schemas."""
+    """Write header-only ``generators.csv`` and ``lines.csv`` templates for user-supplied tables."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     generators_path = output_dir / "generators.csv"
@@ -180,10 +183,10 @@ def validate_model_tables(
     generation_capacity_tolerance_fraction: float = 0.10,
     allow_incomplete_generators: bool = False,
 ) -> dict[str, object]:
-    """Validate the public tables and return a human-reviewable report.
+    """Check the bus, line and generator tables; return the report that goes into ``validation.json``.
 
-    The published CEB length comparison is deliberately advisory: mapped route
-    length and CEB circuit length are not guaranteed to use the same basis.
+    A line length or installed capacity outside its tolerance of the CEB figure gives a warning, not an
+    error, as mapped route length and CEB circuit length may be measured differently.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -203,20 +206,22 @@ def validate_model_tables(
     if not generator_missing:
         complete_generators = generators[list(GENERATOR_REQUIRED_COLUMNS)].notna().all(axis=1)
     if generators.empty and not generator_missing:
-        warnings.append("No generators are present; this topology-only network cannot supply demand.")
+        warnings.append("No generators, so this network cannot supply demand.")
     elif allow_incomplete_generators and not generator_missing:
         incomplete_count = int((~complete_generators).sum())
         if incomplete_count:
+            incomplete = generators.loc[~complete_generators, list(GENERATOR_REQUIRED_COLUMNS)]
+            missing = [column for column in GENERATOR_REQUIRED_COLUMNS if incomplete[column].isna().any()]
             warnings.append(
-                f"{incomplete_count} generator records are retained for review but "
-                "omitted from the PyPSA network until required values are populated."
+                f"{incomplete_count} generators are left out of the network because they have no "
+                f"{' or '.join(missing)}."
             )
     if "marginal_cost_basis" in generators:
         proxy_costs = generators["marginal_cost_basis"].astype(str).str.contains("proxy", case=False, na=False)
         if proxy_costs.any():
             warnings.append(
-                f"{int(proxy_costs.sum())} generator records use a neutral dispatch-cost "
-                "proxy suitable for VoLL topology tests, not operating-cost analysis."
+                f"{int(proxy_costs.sum())} generators share a placeholder marginal cost, so the network can "
+                "show which demand goes unserved but not what generation costs."
             )
 
     _check_ids(buses, "bus_id", "buses", errors)
@@ -276,7 +281,7 @@ def validate_model_tables(
     if reference_line_length_km is None:
         line_length_check = {
             "status": "not_applicable",
-            "reason": "No like-for-like published length is configured for this source.",
+            "reason": "No published line length to compare with.",
         }
     else:
         relative_difference = abs(comparison_line_length_km - reference_line_length_km) / float(
@@ -293,26 +298,27 @@ def validate_model_tables(
             "reference_total_km": float(reference_line_length_km),
             "relative_difference": relative_difference,
             "tolerance_fraction": line_length_tolerance_fraction,
-            "reference_scope": reference_line_length_scope or "published line-length reference",
+            "reference_scope": reference_line_length_scope or "the published line length",
             "reference_source": reference_line_length_source or CEB_TRANSMISSION_LENGTH_SOURCE,
             "comparison_note": reference_line_length_note
             or (
-                "CEB reports 442 km overhead plus 36.9 km underground at 66 kV; "
-                "the model total may use a different route/circuit-length basis."
+                "CEB reports 442 km overhead and 36.9 km underground at 66 kV; "
+                "the model may count route length, not circuit length."
             ),
         }
         if not within_tolerance:
-            comparison_label = reference_line_length_scope or "the published line-length reference"
+            comparison_label = reference_line_length_scope or "the published line length"
+            direction = "below" if comparison_line_length_km < reference_line_length_km else "above"
             warnings.append(
-                f"Model line length differs from {comparison_label} by "
-                f"{relative_difference:.1%}; review coverage and length basis."
+                f"Line length is {comparison_line_length_km:,.0f} km, {relative_difference:.0%} {direction} "
+                f"{comparison_label} ({float(reference_line_length_km):,.0f} km)."
             )
 
     generation_capacity_check: dict[str, object]
     if reference_generation_capacity_mw is None:
         generation_capacity_check = {
             "status": "not_applicable",
-            "reason": "No reported installed-generation total is configured for this source.",
+            "reason": "No CEB generation total to compare with.",
         }
     else:
         relative_difference = abs(total_generator_output_capacity_mw - reference_generation_capacity_mw) / float(
@@ -327,21 +333,18 @@ def validate_model_tables(
             "coverage_fraction": coverage_fraction,
             "relative_difference": relative_difference,
             "tolerance_fraction": generation_capacity_tolerance_fraction,
-            "capacity_basis": "installed electrical output capacity",
+            "capacity_basis": "installed capacity",
             "report_period": "2023-2024",
             "reference_source": CEB_REPORTED_GENERATION_CAPACITY_SOURCE,
             "comparison_note": (
-                "The CEB grand total includes CEB, IPP, SSDG and MSDG generation; "
-                "the model includes only generators with capacity and network-bus data."
+                "CEB's total covers its own plants, independent producers (IPP) and small and medium "
+                "distributed generation (SSDG, MSDG); the model counts only generators with a capacity and a bus."
             ),
         }
         if not within_tolerance:
             warnings.append(
-                "Modelled generator output capacity covers "
-                f"{coverage_fraction:.1%} of the CEB-reported installed total "
-                f"({total_generator_output_capacity_mw:.2f} MW versus "
-                f"{reference_generation_capacity_mw:.2f} MW); review missing plant "
-                "coverage and scope."
+                f"Generators in the network total {total_generator_output_capacity_mw:,.0f} MW, "
+                f"{coverage_fraction:.0%} of CEB's installed {reference_generation_capacity_mw:,.0f} MW."
             )
 
     return {
@@ -382,7 +385,7 @@ def write_model_tables(
     generation_capacity_tolerance_fraction: float = 0.10,
     allow_incomplete_generators: bool = False,
 ) -> tuple[ModelTableOutputs, dict[str, object]]:
-    """Write source-specific human tables and their validation report."""
+    """Write ``generators.csv``, ``lines.csv`` and ``validation.json``; return their paths and the report."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     generators_path = output_dir / "generators.csv"

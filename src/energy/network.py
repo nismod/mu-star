@@ -35,11 +35,9 @@ def _bus_voltage_kv(
     *,
     default_voltage_kv: float,
 ) -> float:
-    """Return one nominal bus voltage consistent with its connected AC lines.
+    """Return the bus voltage in kV: its own ``v_nom_kv``, else its lines' voltage, else ``default_voltage_kv``.
 
-    A bus with an explicit ``v_nom_kv`` keeps it (and its lines must agree); a
-    bus without one takes the single voltage of its lines; a bus with no lines
-    at all takes ``default_voltage_kv``.
+    Raises ValueError if the lines disagree with the bus's ``v_nom_kv`` or, without one, with each other.
     """
     connected_voltage_values = np.array(sorted(connected_voltages), dtype=float)
 
@@ -76,18 +74,12 @@ def build_topology_network(
     line_reactance_ohm_per_km: float = 0.4,
     default_voltage_kv: float = 66.0,
 ) -> pypsa.Network:
-    """Build a fixed-capacity network topology without demand time series.
+    """Return a PyPSA network of the buses, lines, transformers and generators, with no demand.
 
-    ``default_voltage_kv`` is used only for buses that have no explicit voltage
-    and no connected lines.
-
-    The model cannot build extra capacity. Missing line limits or power-station
-    capacities cause a clear error rather than being estimated by the model.
-
-    Generator ``output_capacity_mw`` is electrical output capacity and is
-    passed directly to ``Generator.p_nom``. Line ``s_nom_mva`` is an
-    apparent-power rating. This function does not convert capacities to or
-    from an LHV basis.
+    Capacities are fixed: nothing is extendable, and a missing line ``s_nom_mva`` (MVA) or generator
+    ``output_capacity_mw``, ``marginal_cost`` or ``bus_id`` raises ValueError. ``output_capacity_mw``
+    is electrical output in MW, not fuel input, and becomes ``Generator.p_nom`` unconverted.
+    ``default_voltage_kv`` applies only to buses with no voltage and no lines.
     """
     if "output_capacity_mw" not in generators and "capacity_mw" in generators:
         raise ValueError(
@@ -182,7 +174,6 @@ def build_topology_network(
     line_frame["line_id"] = line_frame["line_id"].astype(str)
     line_frame = line_frame.set_index("line_id")
     lengths = line_frame["length_km"].astype(float).to_numpy()
-    # PyPSA Line.s_nom is the branch apparent-power rating in MVA.
     network.madd(
         "Line",
         line_frame.index,
@@ -234,7 +225,6 @@ def build_topology_network(
         efficiency = row.get("efficiency", 1.0)
         if pd.isna(efficiency):
             efficiency = 1.0
-        # Generator.p_nom limits electrical output at the connected bus.
         network.add(
             "Generator",
             str(row["generator_id"]),
@@ -258,7 +248,11 @@ def attach_demand(
     generator_availability: pd.DataFrame | None = None,
     value_of_lost_load: float = 10_000,
 ) -> pypsa.Network:
-    """Return a run-ready copy of ``network`` with demand and load shedding."""
+    """Return a copy of ``network`` with a load and a load-shedding generator at each bus with demand.
+
+    ``demand_profile`` (MW) has a ``demand_mw`` column, split between buses by ``service_weights``,
+    or one column per ``bus_id``. Shed load costs ``value_of_lost_load``.
+    """
     _require_columns(service_weights, {"bus_id", "service_weight"}, "service_weights")
 
     if not network.loads.empty or (
@@ -358,7 +352,7 @@ def build_operational_network(
     line_resistance_ohm_per_km: float = 0.01,
     line_reactance_ohm_per_km: float = 0.4,
 ) -> pypsa.Network:
-    """Build a time-series supply model using only existing assets."""
+    """Return :func:`build_topology_network` with :func:`attach_demand` applied."""
     topology = build_topology_network(
         buses,
         lines,
@@ -376,7 +370,7 @@ def build_operational_network(
 
 
 def assert_fixed_capacity(network: pypsa.Network) -> None:
-    """Reject settings that let the model build extra assets."""
+    """Raise ValueError if any generator, line, link, storage unit or store is extendable."""
     checks = (
         ("generators", "p_nom_extendable"),
         ("lines", "s_nom_extendable"),

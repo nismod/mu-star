@@ -1,11 +1,10 @@
-from pathlib import Path
-
 import geopandas as gpd
 import networkx as nx
 import pytest
 from shapely.geometry import LineString, Point
 
 from energy.base_topology import CEB_SUBSTATION_NAMES, derive_base_topology
+from energy.paths import processed_energy_dir
 
 
 def test_base_topology_connects_short_route_gaps_and_keeps_substations():
@@ -138,9 +137,9 @@ def test_base_topology_applies_ceb_names_without_overwriting_provided_names():
 
 
 def test_ceb_base_regression_restores_provided_loops_and_amaury_junction():
-    root = Path(__file__).resolve().parents[3]
-    substation_path = root / "data/processed/energy/provided/snapped_substations.parquet"
-    route_path = root / "data/processed/energy/provided/transmission_routes.parquet"
+    provided = processed_energy_dir() / "provided"
+    substation_path = provided / "snapped_substations.parquet"
+    route_path = provided / "transmission_routes.parquet"
     if not substation_path.exists() or not route_path.exists():
         pytest.skip("CEB prepared source data is not available")
 

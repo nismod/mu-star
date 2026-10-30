@@ -19,7 +19,7 @@ Tips:
 ## Deliverable
 
 <!-- Be concrete. Could be the file (or file patterns) to produce, e.g.
-     `data/out/loss/layer-power/rp/peril-flood/subperil-fluvial/ensemble-0/losses.zarr`
+     `data/results/loss/layer-power/rp/peril-flood/subperil-fluvial/ensemble-0/losses.zarr`
      and/or the code/rule to add. -->
 
 ## Inputs available
