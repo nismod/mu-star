@@ -42,7 +42,8 @@ energy:
     topology_capacity_mva: 5
     # CEB 66 kV lines (inferred-provided only): 50 MVA, typical for a single
     # 66 kV circuit of the 150 mm2 conductor in the annual report (2023-24,
-    # p. 61). CEB does not publish ratings per line.
+    # p. 61). CEB does not publish ratings per line; the criticality analysis
+    # rates each line by its circuits instead (criticality below).
     transmission_voltage_kv: 66
     transmission_capacity_mva: 50
     # Line from each substation or plant to the road: 137 MVA, the average of
@@ -67,6 +68,33 @@ energy:
     # 0.4 for population; night lights replace GDP here.
     weight_nightlights: 0.6
     weight_population: 0.4
+
+  criticality:
+    # Unmet demand when each substation, provided line or plant of
+    # inferred-provided fails (workflow/2-losses/energy.smk).
+    # Two optional tables in the incoming folder, here read from CEB's network
+    # map. line_circuits gives each line's route, the voltage it was built for
+    # and its circuits; without it, the segments between two substations or
+    # junctions form one line, with one circuit built for the voltage it runs
+    # at. substation_names names the substations; without it, they keep their
+    # ids.
+    line_circuits: Power Transmission/ceb_line_circuits.csv
+    substation_names: Substation/ceb_substation_names.csv
+    # PyPSA line type of one circuit, by the voltage a line was built for. A
+    # line's rating is that type's rating at the voltage the line runs at in
+    # the network (inferred.transmission_voltage_kv, 66 kV), times its
+    # circuits: 149-AL1/24-ST1A, the 150 mm2 conductor in the annual report
+    # (p. 61), 53.7 MVA at 66 kV; 243-AL1/39-ST1A, PyPSA-Earth's type for
+    # 132 kV, 73.7 MVA at 66 kV. Placeholders until CEB gives ratings.
+    line_types:
+      66: 149-AL1/24-ST1A 110.0
+      132: 243-AL1/39-ST1A 110.0
+    # Share of a line's rating usable after a failure. PyPSA-Earth uses 0.7 as
+    # a margin for failures it does not model; here each failure is modelled.
+    s_max_pu: 1.0
+    # Plants that keep supply going in a part of the network cut off from the
+    # rest. Solar and wind farms disconnect when the grid is lost.
+    island_carriers: [thermal, hydro]
 
   nightlight:
     # Keep roads within this distance of a lit pixel or a power asset.
