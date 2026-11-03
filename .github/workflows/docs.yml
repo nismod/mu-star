@@ -25,6 +25,7 @@ jobs:
               with:
                   fetch-depth: 0
             - name: Cache
+              id: cargo-cache
               uses: actions/cache@v6
               with:
                 path: |
@@ -36,6 +37,7 @@ jobs:
                 key: ${{ runner.os }}-cargo-mdb-0.5.4-bib-0.5.3-katex-0.10.0
 
             - name: Install mdbook
+              if: steps.cargo-cache.outputs.cache-hit != 'true'
               run: |
                   cargo install mdbook --version 0.5.4
                   cargo install mdbook-bib --version 0.5.3
