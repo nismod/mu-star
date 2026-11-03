@@ -39,8 +39,10 @@ Criticality (``02_criticality.ipynb``):
 - ``unmet_by_cause(summary, by_area)``: the unmet demand when each component fails, per day and at peak, and at
   peak by cause (the failed substation's area, other areas without supply, areas partly supplied).
 - ``unmet_by_area(summary, by_area)``: every substation area with unmet demand for each failure, with names.
-- ``plot_criticality_map(summary, quantity)``: transmission lines and substations, coloured by the unmet demand
-  when each fails, in one of ``QUANTITIES``.
+- ``failures_by_island(summary)``: each island's peak demand and plant capacity, and the number of components
+  failed and of failures leaving demand unmet, by type.
+- ``plot_criticality_map(summary, quantity)``: transmission lines, substations and plants, coloured by the unmet
+  demand when each fails, in one of ``QUANTITIES``.
 - ``plot_failure(asset_id)``: the distribution network left without supply when one component fails.
 - ``plot_line_ratings()``: the transmission line ratings the analysis used, by design voltage and number of
   circuits.
@@ -618,10 +620,29 @@ def _transmission(edges: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return edges[edges["source"].eq("provided_transmission")]
 
 
-def _dot(colour: str, label: str, size: float = 8) -> Line2D:
+def _dot(colour: str, label: str, size: float = 8, marker: str = "o") -> Line2D:
     return Line2D(
-        [], [], marker="o", linestyle="", markersize=size, markerfacecolor=colour, markeredgecolor="white", label=label
+        [],
+        [],
+        marker=marker,
+        linestyle="",
+        markersize=size,
+        markerfacecolor=colour,
+        markeredgecolor="white",
+        label=label,
     )
+
+
+@functools.lru_cache(maxsize=1)
+def _plants() -> gpd.GeoDataFrame:
+    """Return the plants of the criticality network at their own sites.
+
+    From ``generators.csv`` of the network; plants without a location are not in the network and are left out.
+    """
+    table = pd.read_csv(NETWORKS_DIR / CRITICALITY_NETWORK / "generators.csv").dropna(subset=["bus_id"])
+    table = table.rename(columns={"generator_id": "asset_id", "region": "island", "output_capacity_mw": "capacity_mw"})
+    points = gpd.points_from_xy(table["lon"], table["lat"], crs="EPSG:4326")
+    return gpd.GeoDataFrame(table[["asset_id", "name", "carrier", "island", "capacity_mw"]], geometry=points)
 
 
 # The two quantities of the criticality tables, with the words used for them in titles and colour bars.
@@ -659,6 +680,33 @@ def area_demand(summary: pd.DataFrame) -> pd.DataFrame:
     table = _area_demand_mw().reset_index()
     table.insert(0, "area", [_area_name(area, summary) for area in table.pop("bus_id")])
     return table.sort_values(["island", "peak_mw"], ascending=[True, False]).reset_index(drop=True)
+
+
+def failures_by_island(summary: pd.DataFrame) -> pd.DataFrame:
+    """Return, for each island, its peak demand and plant capacity (MW), and the number of substations, lines and
+    plants failed and of those failures that leave demand unmet.
+
+    ``largest_plant_mw``: the island's largest plant. When ``plant_capacity_mw`` minus it exceeds ``peak_demand_mw``,
+    no single plant failure on the island leaves demand unmet for lack of generation.
+    """
+    plants = _plants()
+    peak = demand_levels().query("level == 'peak'").set_index("island")["demand_mw"]
+    table = pd.DataFrame(
+        {
+            "peak_demand_mw": peak,
+            "plant_capacity_mw": plants.groupby("island")["capacity_mw"].sum(),
+            "largest_plant_mw": plants.groupby("island")["capacity_mw"].max(),
+        }
+    )
+    unmet = summary["unmet_peak_mw"].gt(0) | summary["unmet_mwh_per_day"].gt(0)
+    failed = summary.groupby(["island", "asset_type"]).size()
+    leaving = summary[unmet].groupby(["island", "asset_type"]).size()
+    for asset_type in ("substation", "line", "plant"):
+        table[f"{asset_type}s_failed"] = [int(failed.get((island, asset_type), 0)) for island in table.index]
+        table[f"{asset_type}s_leaving_demand_unmet"] = [
+            int(leaving.get((island, asset_type), 0)) for island in table.index
+        ]
+    return table.rename_axis("island").reset_index()
 
 
 # Where the unmet demand of one failure falls, by substation area.
@@ -735,11 +783,11 @@ def unmet_by_cause(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame
 def plot_criticality_map(
     summary: pd.DataFrame, quantity: str = "unmet_mwh_per_day", *, clip=None, ax=None, figsize=(9, 11)
 ):
-    """Map the transmission lines and substations, coloured by the unmet demand when each fails.
+    """Map the transmission lines, substations and plants, coloured by the unmet demand when each fails.
 
-    ``quantity``: ``"unmet_mwh_per_day"`` or ``"unmet_peak_mw"`` (``QUANTITIES``). Plants are not drawn: they sit
-    at substations. ``clip``: a ``(minx, miny, maxx, maxy)`` box in degrees; the default is the islands with
-    transmission lines.
+    ``quantity``: ``"unmet_mwh_per_day"`` or ``"unmet_peak_mw"`` (``QUANTITIES``). Plants are drawn at their own
+    sites. ``clip``: a ``(minx, miny, maxx, maxy)`` box in degrees; the default is the islands with transmission
+    lines.
     """
     what, unit = QUANTITIES[quantity]
     nodes, edges = _criticality_layers()
@@ -750,16 +798,30 @@ def plot_criticality_map(
     substation = subs["bus_id"].str.removeprefix("bus::")  # the asset_id of the criticality tables
     subs["unmet"] = substation.map(unmet).fillna(0.0)
     subs["name"] = substation.map(summary.set_index("asset_id")["name"]).fillna(substation)
+    plants = _plants().copy()
+    plants["unmet"] = plants["asset_id"].map(unmet).fillna(0.0)
     clip = clip or _island_bounds(set(ceb["region"]))
-    roads, ceb, subs = (_clip(frame, clip) for frame in (edges[edges["source"].eq("osm")], ceb, subs))
-    norm = Normalize(0, max(ceb["unmet"].max(), subs["unmet"].max(), 1.0))
+    roads, ceb, subs, plants = (_clip(frame, clip) for frame in (edges[edges["source"].eq("osm")], ceb, subs, plants))
+    plants = plants.sort_values("unmet")  # a plant with unmet demand is drawn over one at the same site without
+    norm = Normalize(0, max([frame["unmet"].max() for frame in (ceb, subs, plants) if len(frame)] + [1.0]))
     if ax is None:
         _, ax = plt.subplots(figsize=figsize)
     _draw(roads, ax, color=_CONTEXT, linewidth=0.2, zorder=1)
-    hit, sub_hit = ceb["unmet"].round(1) > 0, subs["unmet"].round(1) > 0
+    hit, sub_hit, plant_hit = ceb["unmet"].round(1) > 0, subs["unmet"].round(1) > 0, plants["unmet"].round(1) > 0
     _draw(ceb[~hit], ax, color=_NO_LOSS, linewidth=1.2, zorder=2)
     if hit.any():
         _draw(ceb[hit], ax, color=[_SCALE(norm(value)) for value in ceb.loc[hit, "unmet"]], linewidth=3, zorder=3)
+    plant_colours = [_SCALE(norm(value)) if drawn else _NO_LOSS for value, drawn in zip(plants["unmet"], plant_hit)]
+    ax.scatter(
+        plants.geometry.x,
+        plants.geometry.y,
+        s=36,
+        marker="s",
+        c=plant_colours,
+        edgecolor="white",
+        linewidth=1,
+        zorder=4,
+    )
     colours = [_SCALE(norm(value)) if drawn else _NO_LOSS for value, drawn in zip(subs["unmet"], sub_hit)]
     ax.scatter(subs.geometry.x, subs.geometry.y, s=70, c=colours, edgecolor="white", linewidth=1.5, zorder=4)
     for name, point in zip(subs["name"], subs.geometry):
@@ -771,6 +833,7 @@ def plot_criticality_map(
             fontsize=8,
             color=_TEXT,
             path_effects=_HALO,
+            zorder=5,
         )
     plt.colorbar(
         ScalarMappable(norm, _SCALE), ax=ax, shrink=0.4, label=f"Unmet demand when the component fails ({unit})"
@@ -780,6 +843,8 @@ def plot_criticality_map(
         ((~hit).any(), Line2D([], [], color=_NO_LOSS, linewidth=1.2, label="transmission line, no unmet demand")),
         (sub_hit.any(), _dot(_SCALE(0.6), "substation, unmet demand")),
         ((~sub_hit).any(), _dot(_NO_LOSS, "substation, no unmet demand")),
+        (plant_hit.any(), _dot(_SCALE(0.6), "plant, unmet demand", size=7, marker="s")),
+        ((~plant_hit).any(), _dot(_NO_LOSS, "plant, no unmet demand", size=7, marker="s")),
         (len(roads) > 0, Line2D([], [], color=_CONTEXT, linewidth=1, label="estimated distribution network")),
     ]
     ax.legend(handles=[entry for drawn, entry in entries if drawn], loc="upper left", frameon=False, fontsize=8)
