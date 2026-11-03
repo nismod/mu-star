@@ -1,4 +1,4 @@
-"""Cache the monthly VIIRS radiance tiles (opt-in download)."""
+"""Download the monthly VIIRS radiance tiles that are missing (with ``--allow-download``)."""
 
 from pathlib import Path
 

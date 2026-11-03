@@ -1,4 +1,4 @@
-"""Derive the base transmission topology from provided route geometry."""
+"""Build the CEB 66 kV network (buses and lines) from its substation points and routes."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ METRIC_CRS = "EPSG:32740"
 STATION_JOIN_TOLERANCE_M = 100.0
 MEANINGFUL_CYCLE_AREA_M2 = 1_000_000.0
 
-# The provided point layer has generic labels. These names are transcribed from
-# the supplied CEB 2025 network map, in the point layer's north-to-south order.
+# The CEB substation points have generic labels. These names are read off the CEB
+# 2025 network map, in the points' north-to-south order.
 CEB_SUBSTATION_NAMES = {
     "SUB_001": "Sottise",
     "SUB_002": "Belle Vue",
@@ -38,8 +38,8 @@ CEB_SUBSTATION_NAMES = {
     "SUB_018": "St Louis",
 }
 
-# This 171.5 m discontinuity opens the Ebene-Wooton side of the blue loop on
-# the CEB map. It is kept explicit rather than hidden in a broad global snap.
+# A 171.5 m break in the CEB routes opens the Ebene-Wooton side of the blue loop on the
+# CEB map. It is joined here (up to 200 m) rather than by raising the gap tolerance for all routes.
 PROVIDED_ROUTE_JOINS = (
     (
         "CEB_EBENE_WOOTON",
@@ -87,7 +87,7 @@ def _node_key(coordinate: tuple[float, ...]) -> tuple[float, float]:
 
 
 def _linework_graph(linework) -> nx.MultiGraph:
-    """Return noded linework without collapsing distinct parallel routes."""
+    """Return a multigraph of the lines, ends rounded to 1 mm, keeping parallel lines as separate edges."""
     graph = nx.MultiGraph()
     for segment in _segments(linework):
         coordinates = list(segment.coords)
@@ -112,7 +112,7 @@ def _station_gap_connectors(
     substations: gpd.GeoDataFrame,
     tolerance_m: float,
 ) -> tuple[list[LineString], set[frozenset[int]]]:
-    """Join route ends through one station anchor instead of a connector clique."""
+    """Join route pieces near a substation through one point; return the lines and the joined piece pairs."""
     components = _component_geometries(linework)
     connectors: list[LineString] = []
     station_pairs: set[frozenset[int]] = set()
@@ -139,7 +139,7 @@ def _station_gap_connectors(
 
 
 def _candidate_clusters(candidates: list[dict[str, object]], tolerance_m: float) -> list[set[int]]:
-    """Group gap candidates that describe one local multi-route junction."""
+    """Group gap candidates linked by midpoints within ``tolerance_m`` of each other: one group per junction."""
     graph = nx.Graph()
     graph.add_nodes_from(range(len(candidates)))
     for first, second in combinations(range(len(candidates)), 2):
@@ -156,7 +156,7 @@ def _route_gap_connectors(
     *,
     excluded_component_pairs: set[frozenset[int]] | None = None,
 ) -> list[LineString]:
-    """Connect local route gaps using one minimal junction tree per location."""
+    """Join route pieces up to ``tolerance_m`` apart; where several meet, use the shortest set of joins."""
     if tolerance_m < 0:
         raise ValueError("route_gap_tolerance_m must be non-negative")
     if tolerance_m == 0:
@@ -204,7 +204,7 @@ def _route_gap_connectors(
 
 
 def _provided_route_gap_connectors(route_parts: gpd.GeoDataFrame) -> list[LineString]:
-    """Return the small set of CEB-map joins that lack a station anchor."""
+    """Return the joins in ``PROVIDED_ROUTE_JOINS``; ValueError if a gap is not between 1 mm and its maximum."""
     by_id = route_parts.set_index("route_part_id")["geometry"]
     connectors: list[LineString] = []
     for _, first_id, second_id, maximum_distance_m in PROVIDED_ROUTE_JOINS:
@@ -233,7 +233,7 @@ def _deduplicate_connectors(connectors: list[LineString]) -> list[LineString]:
 
 
 def _meaningful_cycle_count(graph: nx.MultiGraph) -> int:
-    """Count independent cycles whose mapped footprint is at least 1 km²."""
+    """Count loops enclosing at least 1 km², including loops of parallel routes between two nodes."""
     count = sum(
         Polygon(cycle).area >= MEANINGFUL_CYCLE_AREA_M2 for cycle in nx.cycle_basis(nx.Graph(graph)) if len(cycle) >= 3
     )
@@ -283,7 +283,7 @@ def _segment_source(
     if gap_distance < 0.01 and route_distance >= 0.01:
         return {
             "source": "derived_route_gap",
-            # None (not pd.NA): PyPSA writes these object columns to netCDF and cannot serialise NAType.
+            # None, not pd.NA: PyPSA cannot write NAType to netCDF.
             "source_route_id": None,
             "source_route_part_id": None,
             "circuit_id": None,
@@ -318,9 +318,8 @@ def _split_graph_at_substations(
     graph = nx.MultiGraph()
     for segment in _segments(linework):
         cut_distances = []
-        # GEOS can leave a connector endpoint a few floating-point units off
-        # the route it was projected onto. Explicit cuts make the intended
-        # junction survive noding and the millimetre-rounded graph keys.
+        # Cut the line where a substation or a joining line's end is within 2 cm. GEOS can
+        # leave those points slightly off the line, and the junction would then be lost.
         for point in [*bus_points.values(), *connector_points]:
             if segment.distance(point) >= 0.02:
                 continue
@@ -387,11 +386,11 @@ def derive_base_topology(
     default_voltage_kv: float = 66,
     topology_capacity_mva: float = 10_000,
 ) -> DerivedBaseTopology:
-    """Create a connected, topology-only base network from provided geometry.
+    """Build the substation and junction buses and the lines of the CEB 66 kV network, in EPSG:4326.
 
-    Short gaps between route components are retained as explicit derived
-    connectors. Line ratings use a deliberately non-binding topology proxy
-    until reviewed engineering ratings are available.
+    Gaps in the routes are bridged by straight lines (source ``derived_route_gap``); route ends
+    with no substation are dropped. Lines are rated ``topology_capacity_mva`` (10,000 MVA) so that
+    none limits flow; replace with CEB ratings.
     """
     _require_columns(snapped_substations, {"bus_id", "geometry"}, "substations")
     _require_columns(
