@@ -30,5 +30,10 @@ authors:
     email: jomaigre@student.udm.ac.mu
     affiliation: Universite des Mascareignes
     orcid: https://orcid.org/0009-0005-7470-4152
+  - given-names: Carlo
+    family-names: Palazzi
+    email: carlo.palazzi@ouce.ox.ac.uk
+    affiliation: University of Oxford
+    orcid: "https://orcid.org/0009-0005-1119-954X"
 repository-code: "https://github.com/nismod/mu-star"
 license: MIT
