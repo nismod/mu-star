@@ -110,7 +110,7 @@ def test_base_validation_retains_incomplete_generator_records_as_warnings():
 
     assert report["status"] == "valid_with_warnings"
     assert report["errors"] == []
-    assert any("omitted from the PyPSA network" in item for item in report["warnings"])
+    assert any("left out of the network" in item for item in report["warnings"])
 
 
 def test_validation_compares_modelled_and_reported_generation_capacity():
@@ -130,7 +130,7 @@ def test_validation_compares_modelled_and_reported_generation_capacity():
     assert check["model_total_mw"] == 50.0
     assert check["reference_total_mw"] == 100.0
     assert check["coverage_fraction"] == 0.5
-    assert any("covers 50.0%" in item for item in report["warnings"])
+    assert any("50% of CEB's installed 100 MW" in item for item in report["warnings"])
 
 
 def test_inferred_validation_uses_explicit_whole_network_reference():

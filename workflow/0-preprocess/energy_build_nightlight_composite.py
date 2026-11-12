@@ -1,4 +1,4 @@
-"""Reduce the cached monthly VIIRS tiles to one radiance composite."""
+"""Combine the monthly VIIRS tiles into one radiance raster (pixelwise median)."""
 
 from pathlib import Path
 

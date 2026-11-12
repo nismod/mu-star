@@ -24,11 +24,14 @@ from energy.osm import (
 def test_region_shortcuts_and_paths(tmp_path):
     assert {"rodrigues", "agalega", "st_brandon"} <= set(REGIONS)
     assert region_query("mauritius") == "Mauritius Island, Mauritius"
-    # Open-ended: any query is accepted, and slugged for cache/output paths.
+    # Any query is accepted and turned into a file-name-safe key.
     assert region_query("Rodrigues, Mauritius") == "Rodrigues, Mauritius"
     assert region_slug("Rodrigues, Mauritius") == "rodrigues_mauritius"
     assert region_slug("drive_service") == "drive_service"
-    assert roads_cache_relative("Rodrigues").as_posix() == "incoming/energy/osm/rodrigues/roads.parquet"
+    assert (
+        roads_cache_relative("Rodrigues").as_posix()
+        == "incoming/Infrastructure/Energy/OpenStreetMap/rodrigues/roads.parquet"
+    )
     assert osm_roads_path("Rodrigues", data_root=tmp_path) == tmp_path / roads_cache_relative("Rodrigues")
     assert osm_roads_path("Rodrigues", "all", data_root=tmp_path).name == "roads-all.parquet"
     assert osm_power_path("Rodrigues", data_root=tmp_path).name == "power.parquet"
@@ -88,8 +91,7 @@ def test_fetch_osm_roads_preserves_highway_class_and_drops_reverse_twins(monkeyp
 
     edges = gpd.GeoDataFrame(
         {
-            # osmnx yields a plain string for most ways and a list for merged
-            # edges; missing tags come through as None.
+            # osmnx gives a string for most ways, a list for merged edges and None if missing.
             "highway": ["residential", ["tertiary", "service"], "Primary", None, "residential"],
             "geometry": [
                 LineString([(57.50, -20.20), (57.501, -20.20)]),
@@ -109,7 +111,7 @@ def test_fetch_osm_roads_preserves_highway_class_and_drops_reverse_twins(monkeyp
     output = fetch_osm_roads("mauritius", network_type="drive", overwrite=True, allow_download=True, data_root=tmp_path)
     roads = gpd.read_parquet(output)
 
-    assert output == tmp_path / "incoming" / "energy" / "osm" / "mauritius" / "roads.parquet"
+    assert output == osm_roads_path("mauritius", data_root=tmp_path)
     assert list(roads.columns) == ["source", "region", "highway", "geometry"]
     assert len(roads) == 4
     highway = list(roads["highway"])
@@ -127,7 +129,7 @@ def test_fetch_osm_power_features_handles_osmnx_multiindex(monkeypatch, tmp_path
         names=["element_type", "osmid"],
     )
     features = gpd.GeoDataFrame(
-        {"power": ["substation", "generator"]},
+        {"power": ["substation", "generator"], "name": ["Fort George", None], "operator": ["CEB", None]},
         geometry=[Point(57.55, -20.25), Point(57.58, -20.29)],
         crs="EPSG:4326",
         index=index,
@@ -145,6 +147,9 @@ def test_fetch_osm_power_features_handles_osmnx_multiindex(monkeypatch, tmp_path
     power = gpd.read_parquet(path)
     assert list(power["bus_id"]) == ["MAURITIUS_SUB_001", "MAURITIUS_SUB_002"]
     assert list(power["power"]) == ["substation", "generator"]
+    assert power["name"].iloc[0] == "Fort George" and power["operator"].iloc[0] == "CEB"
+    assert power["name"].isna().iloc[1]
+    assert power["plant_source"].isna().all()
     assert power.crs == "EPSG:4326"
 
 
