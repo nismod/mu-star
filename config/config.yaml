@@ -9,7 +9,8 @@ metadata:
 
 damage:
   # Damage configuration workbook: asset types, hazards, vulnerability, costs
-  # and damage curves. Not committed; see example/config/ for the structure.
+  # and damage curves. Git-ignored, so place your copy here; see
+  # example/config/ for the structure.
   config: "config/damage/asset-type-cost-curves.xlsx"
   # Number of Monte Carlo samples per asset/scenario
   n_samples: 10000

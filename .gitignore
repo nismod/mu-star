@@ -92,3 +92,6 @@ venv.bak/
 
 # Example workflow outputs
 example/results/
+
+# Project damage configuration workbook, not shared in this repository
+config/damage/*.xlsx

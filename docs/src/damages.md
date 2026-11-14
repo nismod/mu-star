@@ -121,7 +121,8 @@ attributes to an xarray Dataset with a CRS before writing it.
 
 ### Damage configuration workbook
 
-The workbook (`config["damage"]["config"]`) relates asset types, hazards,
+The workbook (`config["damage"]["config"]`, by default
+`config/damage/asset-type-cost-curves.xlsx`, which is git-ignored) relates asset types, hazards,
 vulnerability, costs and damage curves. Its README sheet describes each column.
 The sheets used are:
 
