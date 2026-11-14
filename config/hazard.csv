@@ -1,0 +1,7 @@
+# Hazard data for direct damage analysis, one row per peril/subperil data cube.
+# peril, subperil: used in output paths as "peril-{peril}/subperil-{subperil}"
+# path: GeoZarr store relative to the data root, with a "return_period" dimension
+# variable: name of the intensity variable in the store
+# hazard: key in the "hazard" sheet of the damage config workbook, giving the intensity metric
+peril,subperil,path,variable,hazard,description
+flood,pluvial,processed/hazard/rp/peril-flood/subperil-pluvial.zarr,inundation,swio_rafi_pluvial,SWIO RAFI pluvial flooding due to extratropical cyclones

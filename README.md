@@ -122,6 +122,20 @@ Activate it any time you pick up work on this repository:
 micromamba activate mu-star
 ```
 
+Alternatively, use [`pixi`](https://pixi.sh/), which reads its configuration
+from `pyproject.toml`:
+
+```shell
+pixi install
+pixi run test        # run the tests
+pixi run example     # run the direct damages workflow on the example data
+pixi shell           # or start a shell in the environment
+```
+
+Either way, the `nismod-snail` dependency is installed from the
+`feat/mc-damages` branch on GitHub until the Monte Carlo damages are released,
+which needs a C++ compiler and CMake (the pixi environment includes them).
+
 Install `nbstripout` to ensure that no outputs are committed with any jupyter
 notebooks:
 
@@ -228,6 +242,21 @@ capacities are placeholders, and energy has no disruption analysis yet. See
 `docs/src/infrastructure-energy.md` for the method, inputs, outputs and current
 limitations.
 
+### Direct damages
+
+The direct damages workflow (`workflow/1-damage/`) splits asset layers on
+hazard grids, looks up hazard intensity and samples damages with
+[snail](https://github.com/nismod/snail), using the asset types, damage curves
+and costs in a damage configuration workbook. Layers and hazards are listed in
+`config/layer.csv` and `config/hazard.csv`. See `docs/src/damages.md` for
+inputs, outputs and method.
+
+The `example/` directory holds a small set of open data to run it on:
+
+```shell
+snakemake -c2 example/results/damage/summary.csv --configfile example/config.yaml
+```
+
 ### Testing
 
 Test the helper library and other included packages by activating the
@@ -236,6 +265,9 @@ environment and running the following from this directory:
 ```shell
 python -m pytest -n 2 src/
 ```
+
+This includes an integration test that runs the direct damages workflow on the
+example data. Skip it with `-m "not integration"`.
 
 Run auto-formatting and check for common minor problems using `ruff`:
 

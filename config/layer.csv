@@ -1,0 +1,6 @@
+# Asset layers for direct damage analysis, one row per processed asset file.
+# layer: short name, used in output paths as "layer-{layer}" (letters, digits, underscores)
+# path: GeoParquet file relative to the data root, with "asset_id" (unique) and
+#   "asset_type" (matching the damage config workbook) columns
+# sector: transport, energy, water or buildings
+layer,path,sector,description

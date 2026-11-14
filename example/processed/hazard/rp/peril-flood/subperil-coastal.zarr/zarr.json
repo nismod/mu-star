@@ -1,0 +1,50 @@
+{
+  "attributes": {
+    "title": "Coastal flood depth, WRI Aqueduct Floods (with subsidence), clipped to Port Louis",
+    "source": "Ward et al. (2020) Aqueduct Floods Methodology, CC-BY-4.0, via https://doi.org/10.5281/zenodo.23271097",
+    "zarr_conventions": [
+      {
+        "uuid": "f17cb550-5864-4468-aeb7-f3180cfb622f",
+        "name": "proj",
+        "description": "Coordinate reference system information for geospatial data",
+        "schema_url": "https://raw.githubusercontent.com/zarr-conventions/proj/refs/tags/v0.1/schema.json",
+        "spec_url": "https://github.com/zarr-conventions/proj/blob/v0.1/README.md"
+      },
+      {
+        "uuid": "689b58e2-cf7b-45e0-9fff-9cfc0883d6b4",
+        "name": "spatial",
+        "description": "Spatial coordinate information",
+        "schema_url": "https://raw.githubusercontent.com/zarr-conventions/spatial/refs/tags/v0.1/schema.json",
+        "spec_url": "https://github.com/zarr-conventions/spatial/blob/v0.1/README.md"
+      }
+    ],
+    "spatial:dimensions": [
+      "y",
+      "x"
+    ],
+    "spatial:shape": [
+      51,
+      54
+    ],
+    "spatial:transform": [
+      0.008333333333333396,
+      0.0,
+      57.26666666666666,
+      0.0,
+      -0.008333333333333358,
+      -19.950000000000003
+    ],
+    "spatial:transform_type": "affine",
+    "spatial:bbox": [
+      57.26666666666666,
+      -20.375000000000004,
+      57.71666666666666,
+      -19.950000000000003
+    ],
+    "spatial:registration": "pixel",
+    "proj:wkt2": "GEOGCRS[\"WGS 84\",DATUM[\"World Geodetic System 1984\",ELLIPSOID[\"WGS 84\",6378137,298.257223563,LENGTHUNIT[\"metre\",1]]],PRIMEM[\"Greenwich\",0,ANGLEUNIT[\"degree\",0.0174532925199433]],CS[ellipsoidal,2],AXIS[\"geodetic latitude (Lat)\",north,ORDER[1],ANGLEUNIT[\"degree\",0.0174532925199433]],AXIS[\"geodetic longitude (Lon)\",east,ORDER[2],ANGLEUNIT[\"degree\",0.0174532925199433]],ID[\"EPSG\",4326]]",
+    "proj:code": "EPSG:4326"
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

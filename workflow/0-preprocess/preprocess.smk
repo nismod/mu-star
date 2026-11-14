@@ -76,4 +76,8 @@ rule collate_SWIO_RAFI_flooding:
 
         da = da.transpose("scenario", "return_period", "y", "x")
 
-        da.to_dataset().to_zarr(output.cube)
+        from damages.geozarr import with_geozarr_attrs
+
+        # record the grid using GeoZarr spatial: and proj: attributes
+        ds = with_geozarr_attrs(da.to_dataset())
+        ds.to_zarr(output.cube, consolidated=False)

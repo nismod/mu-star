@@ -1,0 +1,4 @@
+# Example asset layers, see config/layer.csv for column definitions
+layer,path,sector,description
+road,processed/asset/layer-road.gpq,transport,OpenStreetMap trunk to tertiary roads around Port Louis
+power,processed/asset/layer-power.gpq,energy,WRI Global Power Plant Database plants around Port Louis
