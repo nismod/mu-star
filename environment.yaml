@@ -10,6 +10,7 @@ dependencies:
       - -e .[dev]
       - nismod-snail
       # transport: nismod-tfm (transport_flow_model) also needed; TODO pin a working release
+      #   (radiation model changes are on tfm branch claude/land-transport-workflow-draft-j0njkf)
       - h3>=4
       - osmium
   - geopandas

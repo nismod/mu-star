@@ -1,6 +1,9 @@
 """Journey-to-work trips between zones with the radiation model.
 
-Trips are persons per day, one way (home to work). See transport.radiation.
+Trips are persons per day, one way (home to work). Uses
+transport_flow_model.radiation_flows on the road skim: employed residents
+produce trips, and jobs are the destination mass and the intervening
+opportunities.
 
 Output: origin_zone, destination_zone, trips (pairs with trips > 0).
 Summary JSON: totals and mean trip time / distance, for sense checks.
@@ -11,9 +14,9 @@ import json
 import click
 import numpy as np
 import pandas as pd
+from transport_flow_model import radiation_flows
 
 from transport.land import read_config
-from transport.radiation import prune_small_flows, radiation_trips
 
 
 @click.command()
@@ -37,15 +40,15 @@ def main(config_path, zones, skim, output, output_summary):
     production = workers * (1.0 - cfg["intrazonal_share"])
     origin_mass = {"employed_residents": workers, "jobs": jobs}[cfg["origin_mass"]]
 
-    trips = radiation_trips(
+    trips = radiation_flows(
         impedance,
         production,
         origin_mass,
         jobs,
         max_impedance=cfg["max_impedance"],
         normalisation=cfg["normalisation"],
+        min_flow=cfg["min_trips"],
     )
-    trips = prune_small_flows(trips, cfg["min_trips"])
 
     o, d = np.nonzero(trips)
     od = pd.DataFrame({"origin_zone": ids[o], "destination_zone": ids[d], "trips": trips[o, d]})

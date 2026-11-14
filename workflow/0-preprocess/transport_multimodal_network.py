@@ -6,8 +6,9 @@ docs/src/infrastructure-transport.md for the method.
 Outputs
     links.parquet           LINK_COLUMNS; the input network for transport_flow_model
                             (edge_from / edge_to / edge_id / cost / capacity)
-    nodes.geoparquet        node_id, kind, zone_id, nearest_metro_km (zone pt nodes), geometry
-    failure-units.parquet   asset_type (road|metro), asset_id, road_class, link_ids (list)
+    nodes.geoparquet        node_id, kind, zone_id, has_access, geometry
+    failure-units.parquet   asset_type (road|metro|metro_station), asset_id, road_class,
+                            link_ids (list)
 """
 
 import click
@@ -155,7 +156,7 @@ def main(
     board = pd.DataFrame(
         {
             "edge_id": "board/bus/" + tail,
-            "edge_from": "bus_stop/" + calls["stop_id"],
+            "edge_from": "bus_stop/" + calls["stop_id"] + "/dep",
             "edge_to": call_nodes,
             "layer": "bus_board",
             "mode": "bus",
@@ -170,7 +171,7 @@ def main(
         {
             "edge_id": "alight/bus/" + tail,
             "edge_from": call_nodes,
-            "edge_to": "bus_stop/" + calls["stop_id"],
+            "edge_to": "bus_stop/" + calls["stop_id"] + "/arr",
             "layer": "bus_alight",
             "mode": "bus",
             "asset_id": None,
@@ -183,7 +184,7 @@ def main(
     parts += [bus_links, board, alight]
 
     # Metro: same pattern; one line, two directions.
-    pd.DataFrame(
+    metro_links = pd.DataFrame(
         {
             "edge_id": "metro/" + metro["direction"].astype(str) + "/" + metro["segment_id"],
             "edge_from": "metro/" + metro["direction"].astype(str) + "/" + metro["from_station"],
@@ -203,12 +204,13 @@ def main(
             metro[["direction", "to_station", "headway_min"]].rename(columns={"to_station": "station_id"}),
         ]
     ).drop_duplicates(["direction", "station_id"])
+    parts.append(metro_links)
     mnode = "metro/" + mcalls["direction"].astype(str) + "/" + mcalls["station_id"]
     parts += [
         pd.DataFrame(
             {
                 "edge_id": "board/" + mnode,
-                "edge_from": "metro_station/" + mcalls["station_id"],
+                "edge_from": "metro_station/" + mcalls["station_id"] + "/dep",
                 "edge_to": mnode,
                 "layer": "metro_board",
                 "mode": "metro",
@@ -223,7 +225,7 @@ def main(
             {
                 "edge_id": "alight/" + mnode,
                 "edge_from": mnode,
-                "edge_to": "metro_station/" + mcalls["station_id"],
+                "edge_to": "metro_station/" + mcalls["station_id"] + "/arr",
                 "layer": "metro_alight",
                 "mode": "metro",
                 "asset_id": None,
@@ -235,49 +237,67 @@ def main(
         ),
     ]
 
-    # Walk access: zone/<id>/pt <-> bus stops and metro stations within walking distance.
-    pt_points = pd.concat(
-        [
-            pd.DataFrame({"node": "bus_stop/" + stops["stop_id"], "geometry": stops.geometry}),
-            pd.DataFrame({"node": "metro_station/" + stations["station_id"], "geometry": stations.geometry}),
-        ],
-        ignore_index=True,
-    )
-    pt_points = geopandas.GeoDataFrame(pt_points, crs=stops.crs)
-    za, pb, dist = nearest_pairs(zones.geometry, pt_points.geometry, 10, conn["walk_max_km"] * 1000)
-    walk_km = dist / 1000.0 * conn["walk_detour_factor"]
-    access = pd.DataFrame(
-        {
-            "edge_from": [zone_node(z, "pt") for z in zones["zone_id"].to_numpy()[za]],
-            "edge_to": pt_points["node"].to_numpy()[pb],
-            "layer": "walk_access",
-            "mode": "walk",
-            "asset_id": None,
-            "length_km": walk_km,
-            "time_min": weight["walk"] * walk_km / conn["walk_speed_kph"] * 60.0,
-            "fare": 0.0,
-            "capacity": INF,
-        }
-    )
-    parts.append(both_ways(access, "walk/" + zones["zone_id"].to_numpy()[za] + "/" + pt_points["node"].to_numpy()[pb]))
+    # Walk access. Bus and metro trips have separate centroids and stay on their
+    # own networks (no bus <-> metro transfers; TODO feeder bus):
+    #   zone/<id>/bus   <-> bus stops within walk_max_km
+    #   zone/<id>/metro <-> metro stations within metro_walk_max_km
+    def walk_links(points, node_ids, kind, max_km):
+        za, pb, dist = nearest_pairs(zones.geometry, points, 10, max_km * 1000)
+        walk_km = dist / 1000.0 * conn["walk_detour_factor"]
+        access = pd.DataFrame(
+            {
+                "edge_from": [zone_node(z, kind) for z in zones["zone_id"].to_numpy()[za]],
+                "edge_to": node_ids[pb],
+                "layer": "walk_access",
+                "mode": "walk",
+                "asset_id": None,
+                "length_km": walk_km,
+                "time_min": weight["walk"] * walk_km / conn["walk_speed_kph"] * 60.0,
+                "fare": 0.0,
+                "capacity": INF,
+            }
+        )
+        # Walk in to the departure side, walk out from the arrival side, so a
+        # trip cannot walk through a stop without boarding.
+        prefix = "walk/" + zones["zone_id"].to_numpy()[za] + "/" + node_ids[pb]
+        inbound = access.assign(edge_id=prefix + "/in", edge_to=access["edge_to"] + "/dep")
+        outbound = access.assign(
+            edge_id=prefix + "/out", edge_from=access["edge_to"] + "/arr", edge_to=access["edge_from"]
+        )
+        return pd.concat([inbound, outbound], ignore_index=True)
 
-    # Walk transfers between bus stops and metro stations.
-    sa, sb, dist = nearest_pairs(stations.geometry, stops.geometry, 10, conn["transfer_max_km"] * 1000)
-    tkm = dist / 1000.0 * conn["walk_detour_factor"]
-    transfer = pd.DataFrame(
-        {
-            "edge_from": "metro_station/" + stations["station_id"].to_numpy()[sa],
-            "edge_to": "bus_stop/" + stops["stop_id"].to_numpy()[sb],
-            "layer": "walk_transfer",
-            "mode": "walk",
-            "asset_id": None,
-            "length_km": tkm,
-            "time_min": weight["walk"] * tkm / conn["walk_speed_kph"] * 60.0,
-            "fare": 0.0,
-            "capacity": INF,
-        }
+    # Interchange at a stop or station (arrival side -> departure side), for
+    # changing bus route or metro direction. The boarding link carries the
+    # wait and transfer penalty.
+    interchange_nodes = np.r_[
+        ("bus_stop/" + stops["stop_id"]).to_numpy(), ("metro_station/" + stations["station_id"]).to_numpy()
+    ]
+    parts.append(
+        pd.DataFrame(
+            {
+                "edge_id": "interchange/" + interchange_nodes,
+                "edge_from": interchange_nodes + "/arr",
+                "edge_to": interchange_nodes + "/dep",
+                "layer": "interchange",
+                "mode": "walk",
+                "asset_id": None,
+                "length_km": 0.0,
+                "time_min": 0.0,
+                "fare": 0.0,
+                "capacity": INF,
+            }
+        )
     )
-    parts.append(both_ways(transfer, "walk/transfer/" + transfer["edge_from"] + "/" + transfer["edge_to"]))
+
+    parts.append(walk_links(stops.geometry, ("bus_stop/" + stops["stop_id"]).to_numpy(), "bus", conn["walk_max_km"]))
+    parts.append(
+        walk_links(
+            stations.geometry,
+            ("metro_station/" + stations["station_id"]).to_numpy(),
+            "metro",
+            conn["metro_walk_max_km"],
+        )
+    )
 
     links = pd.concat(parts, ignore_index=True)
     if "road_edge_ids" not in links:
@@ -295,28 +315,23 @@ def main(
         raise ValueError(f"Duplicate link ids, e.g. {links.loc[links.edge_id.duplicated(), 'edge_id'].head().tolist()}")
     links.to_parquet(output_links, index=False)
 
-    # Nodes (for checks and for the mode split's metro catchment).
-    station_tree = cKDTree(np.c_[stations.geometry.x, stations.geometry.y])
-    nearest_metro_km = station_tree.query(np.c_[zones.geometry.x, zones.geometry.y])[0] / 1000.0
+    # Nodes. has_access marks zone centroids that are joined to their network
+    # (the mode split only sends trips between connected centroids).
+    linked = set(links["edge_from"])
+    zone_rows = [
+        pd.DataFrame(
+            {
+                "node_id": [zone_node(z, kind) for z in zones.zone_id],
+                "kind": f"zone_{kind}",
+                "zone_id": zones.zone_id,
+                "geometry": zones.geometry,
+            }
+        )
+        for kind in ("car", "bus", "metro")
+    ]
     nodes = pd.concat(
         [
-            pd.DataFrame(
-                {
-                    "node_id": [zone_node(z, "car") for z in zones.zone_id],
-                    "kind": "zone_car",
-                    "zone_id": zones.zone_id,
-                    "geometry": zones.geometry,
-                }
-            ),
-            pd.DataFrame(
-                {
-                    "node_id": [zone_node(z, "pt") for z in zones.zone_id],
-                    "kind": "zone_pt",
-                    "zone_id": zones.zone_id,
-                    "nearest_metro_km": nearest_metro_km,
-                    "geometry": zones.geometry,
-                }
-            ),
+            *zone_rows,
             pd.DataFrame({"node_id": "road/" + rnodes.node_id, "kind": "road", "geometry": rnodes.geometry}),
             pd.DataFrame({"node_id": "bus_stop/" + stops.stop_id, "kind": "bus_stop", "geometry": stops.geometry}),
             pd.DataFrame(
@@ -329,6 +344,7 @@ def main(
         ],
         ignore_index=True,
     )
+    nodes["has_access"] = nodes["node_id"].isin(linked)
     geopandas.GeoDataFrame(nodes, crs=zones.crs).to_parquet(output_nodes)
 
     # Failure units: what each physical asset takes with it when it fails.
@@ -348,8 +364,34 @@ def main(
     road_units = road_units.merge(roads[["edge_id", "road_class"]].rename(columns={"edge_id": "asset_id"}), how="left")
     metro_units = links[links.layer == "metro"].groupby("asset_id")["edge_id"].agg(list).reset_index()
     metro_units = metro_units.rename(columns={"edge_id": "link_ids"}).assign(asset_type="metro", road_class=None)
-    # TODO: station closures as failure units (all board/alight links at a station).
-    units = pd.concat([road_units, metro_units], ignore_index=True)[
+    # Station closures: every boarding and alighting link at the station, both
+    # directions. Trains still run through.
+    board = links[links.layer == "metro_board"]
+    alight = links[links.layer == "metro_alight"]
+    station_links = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "asset_id": board["edge_from"].str.removeprefix("metro_station/").str.removesuffix("/dep"),
+                    "link": board["edge_id"],
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "asset_id": alight["edge_to"].str.removeprefix("metro_station/").str.removesuffix("/arr"),
+                    "link": alight["edge_id"],
+                }
+            ),
+        ]
+    )
+    station_units = (
+        station_links.groupby("asset_id")["link"]
+        .agg(list)
+        .reset_index()
+        .rename(columns={"link": "link_ids"})
+        .assign(asset_type="metro_station", road_class=None)
+    )
+    units = pd.concat([road_units, metro_units, station_units], ignore_index=True)[
         ["asset_type", "asset_id", "road_class", "link_ids"]
     ]
     units.to_parquet(output_failure_units, index=False)

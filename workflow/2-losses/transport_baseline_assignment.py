@@ -39,7 +39,7 @@ def load_network(links: pd.DataFrame) -> Network:
 
 
 def mode_of(node_ids: pd.Series) -> pd.Series:
-    """zone/<id>/car -> car, zone/<id>/pt -> pt."""
+    """zone/<id>/<mode> -> <mode> (car, bus or metro)."""
     return node_ids.str.rsplit("/", n=1).str[-1]
 
 
@@ -74,21 +74,20 @@ def main(
     unassigned = result.unassigned.to_pandas()
 
     if cfg["mode_split"]["pt_overflow"] == "car":
-        # Second pass: PT trips that did not fit go by car, on top of the first-pass loads.
+        # Second pass: bus/metro trips that did not fit go by car, on top of the first-pass loads.
         # TODO: check that tfm treats the network "flow" column as occupied capacity here
         # (it does for capacity-constrained allocation, per its docs).
-        overflow = unassigned[mode_of(unassigned.origin_id) == "pt"].copy()
+        is_pt = mode_of(unassigned.origin_id).isin(["bus", "metro"])
+        overflow = unassigned[is_pt].copy()
         if len(overflow):
             for column in ("origin_id", "destination_id"):
-                overflow[column] = overflow[column].str.replace(r"/pt$", "/car", regex=True)
+                overflow[column] = overflow[column].str.replace(r"/(bus|metro)$", "/car", regex=True)
             loaded = links[NETWORK_COLUMNS].copy()
             loaded["capacity"] = loaded["capacity"].replace(np.inf, BIG_CAPACITY)
             loaded = loaded.merge(result.link_flows.to_pandas()[["edge_id", "flow"]], on="edge_id")
             second = assign(Network(loaded), Demand(overflow), "sequential", include_paths=True, **options)
             paths = pd.concat([paths, second.paths.to_pandas()], ignore_index=True)
-            unassigned = pd.concat(
-                [unassigned[mode_of(unassigned.origin_id) != "pt"], second.unassigned.to_pandas()], ignore_index=True
-            )
+            unassigned = pd.concat([unassigned[~is_pt], second.unassigned.to_pandas()], ignore_index=True)
 
     # Recompute link flows from all paths, so the second pass is included.
     edge_flow = paths[["edge_path", "flow"]].explode("edge_path").groupby("edge_path")["flow"].sum()

@@ -6,10 +6,12 @@ unique string node and link ids):
 Nodes
     road/<node_id>                      road junction
     zone/<zone_id>/car                  car trips start and end here
-    zone/<zone_id>/pt                   bus, metro (and walk) trips start and end here
-    bus_stop/<stop_id>                  physical bus stop (walk network side)
+    zone/<zone_id>/bus                  bus trips start and end here
+    zone/<zone_id>/metro                metro trips start and end here
+    bus_stop/<stop_id>/dep|arr          bus stop: departure side (walk in, board)
+                                        and arrival side (alight, walk out)
     bus/<route_id>/<direction>/<stop_id>  a route's call at a stop (in-vehicle side)
-    metro_station/<station_id>          physical station (walk network side)
+    metro_station/<station_id>/dep|arr  metro station, split the same way
     metro/<direction>/<station_id>      the line's call at a station (in-vehicle side)
 
 Links (``layer`` column)
@@ -21,8 +23,8 @@ Links (``layer`` column)
     metro           metro/<direction>/<seq>
     metro_board     board/metro/<direction>/<station_id>
     metro_alight    alight/metro/<direction>/<station_id>
-    walk_access     walk/<zone_id>/<stop node>/in|out
-    walk_transfer   walk/transfer/<from node>/<to node>
+    walk_access     walk/<zone_id>/<stop or station>/in (to dep) | out (from arr)
+    interchange     interchange/<stop or station>: arr -> dep, to change route
 """
 
 from __future__ import annotations
@@ -66,7 +68,7 @@ def h3_resolution(zoning: str) -> int:
 
 
 def zone_node(zone_id: str, kind: str) -> str:
-    if kind not in ("car", "pt"):
+    if kind not in ("car", "bus", "metro"):
         raise ValueError(kind)
     return f"zone/{zone_id}/{kind}"
 

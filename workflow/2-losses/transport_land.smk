@@ -6,11 +6,12 @@ DRAFT. Needs the outputs of workflow/0-preprocess/transport_land.smk.
    multimodal network with transport_flow_model (sequential, capacity constrained,
    so bus and metro capacity binds; roads unconstrained unless configured).
 2. Failure sets: one scenario per physical asset that carries baseline flow
-   (a road edge, together with the bus segments over it, or a metro segment),
+   (a road edge together with the bus segments over it, a metro segment, or a
+   metro station closure),
    split into a fixed number of batches.
 3. Criticality: per batch, transport_flow_model.disrupt reroutes the affected
    flows; we report the changes in journey time, distance and generalised cost,
-   and the isolated trips.
+   and count the isolated trips.
 4. Summary: one row per failed asset, joined to its geometry for mapping.
 
 Wildcards:
@@ -32,9 +33,9 @@ rule transport_baseline_assignment:
     """
     Assign the baseline demand. Writes link flows (by mode), per-path detail
     (needed by disrupt), per-OD journey time / distance / cost, and the demand
-    that could not be assigned (PT over capacity, or no path).
+    that could not be assigned (bus or metro over capacity, or no path).
 
-    If mode_split.pt_overflow is "car", unassigned PT trips are moved to their
+    If mode_split.pt_overflow is "car", unassigned bus and metro trips are moved to their
     car centroids and assigned in a second pass.
 
     Test with:

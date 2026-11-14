@@ -2,19 +2,27 @@
 
 Provided schema:
     bus_stops.gpkg        stop_id, name, geometry (Point)
-    bus_routes.gpkg       route_id, name, operator, headway_min (peak, optional),
-                          vehicle_capacity (optional), geometry (LineString, optional, for QA)
-    bus_route_stops.csv   route_id, direction (0/1), stop_sequence (int), stop_id
+    bus_routes.gpkg       route_id, name, operator, and the peak service level as
+                          frequency_per_hour or headway_min; geometry
+                          (LineString, optional, for QA)
+    bus_route_stops.csv   route_id, direction (0/1), stop_sequence (int), stop_id,
+                          time_to_next_min (scheduled time to the next stop,
+                          including dwell; blank on the last stop)
 
-Method (draft): snap each stop to its nearest road node, then for each pair
-of consecutive stops on a route take the fastest road path between them. The
+All routes use the standard vehicle size bus.vehicle_capacity. In-vehicle
+time is the scheduled time between stops; where missing it falls back to road
+free-flow time / bus.speed_factor + bus.dwell_min.
+
+Road mapping (draft), used to link road failures to bus segments: snap each
+stop to its nearest road node, then for each pair of consecutive stops on a
+route take the fastest road path between them. The
 segment's road_edge_ids are the road edges on that path. TODO: constrain the
 path to stay near the route geometry (map matching) where route shapes exist,
 since the fastest path is not always the route the bus takes.
 
 Output segments: segment_id, route_id, direction, seq, from_stop, to_stop,
-road_edge_ids (list), length_km, time_min (in-vehicle, incl. dwell),
-headway_min, vehicle_capacity, geometry.
+road_edge_ids (list), length_km, time_min (in-vehicle), time_source
+(timetable|road), headway_min, vehicle_capacity, geometry.
 """
 
 import click
@@ -98,12 +106,12 @@ def main(config_path, stops, routes, route_stops, road_edges, road_nodes, output
     routes = pd.DataFrame(routes.drop(columns="geometry", errors="ignore"))
     routes["route_id"] = routes["route_id"].astype(str)
     routes = routes.set_index("route_id")
-    headway = routes.get("headway_min", pd.Series(dtype=float)).reindex(routes.index).fillna(bus["default_headway_min"])
-    capacity = (
-        routes.get("vehicle_capacity", pd.Series(dtype=float))
-        .reindex(routes.index)
-        .fillna(bus["default_vehicle_capacity"])
-    )
+    headway = pd.Series(float("nan"), index=routes.index)
+    if "headway_min" in routes:
+        headway = routes["headway_min"].astype(float)
+    if "frequency_per_hour" in routes:
+        headway = headway.fillna(60.0 / routes["frequency_per_hour"].astype(float))
+    headway = headway.fillna(bus["default_headway_min"])
 
     sequence = sequence.sort_values(["route_id", "direction", "stop_sequence"])
     sequence["next_stop"] = sequence.groupby(["route_id", "direction"])["stop_id"].shift(-1)
@@ -120,6 +128,8 @@ def main(config_path, stops, routes, route_stops, road_edges, road_nodes, output
             raise ValueError(f"No road path between stops {row.stop_id} and {row.next_stop} on route {row.route_id}")
         road_ids = [pair_edge[hop] for hop in hops]
         info = edge_info.loc[road_ids] if road_ids else edge_info.iloc[0:0]
+        scheduled = getattr(row, "time_to_next_min", float("nan"))
+        timetabled = pd.notna(scheduled)
         records.append(
             {
                 "segment_id": f"{row.route_id}/{row.direction}/{row.stop_sequence}",
@@ -130,9 +140,12 @@ def main(config_path, stops, routes, route_stops, road_edges, road_nodes, output
                 "to_stop": row.next_stop,
                 "road_edge_ids": road_ids,
                 "length_km": info["length_km"].sum(),
-                "time_min": info["time_min"].sum() / bus["speed_factor"] + bus["dwell_min"],
+                "time_min": (
+                    float(scheduled) if timetabled else info["time_min"].sum() / bus["speed_factor"] + bus["dwell_min"]
+                ),
+                "time_source": "timetable" if timetabled else "road",
                 "headway_min": headway[row.route_id],
-                "vehicle_capacity": capacity[row.route_id],
+                "vehicle_capacity": bus["vehicle_capacity"],
                 "geometry": linemerge(list(info.geometry)) if road_ids else None,
             }
         )

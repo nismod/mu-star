@@ -8,7 +8,7 @@ Flow of data:
 
     census table + boundaries ──┐
     WorldPop ───────────────────┼─> residents per H3 cell ─┐
-    H3 economic activity (GVA) ─┴─> jobs per H3 cell ──────┼─> zones
+    H3 economic activity ───────┴─> jobs per H3 cell ──────┼─> zones
                                                            │
     roads ──> road network ──┬─> bus network ──┐           │
     bus stops/routes ────────┘                 ├─> multimodal network (+ zone connectors)
@@ -123,22 +123,22 @@ rule transport_residents_h3:
 
 rule transport_jobs_h3:
     """
-    Turn the H3 economic activity layer (GVA by sector) into jobs per cell at
-    the zoning resolution: GVA / GVA-per-worker by sector where that table is
-    available, then (optionally) scale to total employed residents.
+    Turn the H3 economic activity layer (output by sector, wide) into jobs
+    per cell: output / output-per-worker by sector where the productivity
+    table is available, then (optionally) scale to total employed residents.
 
     Test with:
     snakemake -c1 data/processed/transport/zones/h3-r8/jobs.parquet
     """
     input:
-        activity=tl_input("economic_activity"),
+        activity=rules.economic_activity_h3.output.activity,
         residents=rules.transport_residents_h3.output.residents,
         script=f"{TL_SCRIPTS}/transport_jobs_h3.py",
     params:
         # Optional input: an empty string means "not available".
-        gva_per_worker=lambda wc: (
-            f"{wc.data}/{TL_INPUTS['gva_per_worker']}"
-            if TL_INPUTS.get("gva_per_worker") and Path(f"{wc.data}/{TL_INPUTS['gva_per_worker']}").exists()
+        output_per_worker=lambda wc: (
+            f"{wc.data}/{TL_INPUTS['output_per_worker']}"
+            if TL_INPUTS.get("output_per_worker") and Path(f"{wc.data}/{TL_INPUTS['output_per_worker']}").exists()
             else ""
         ),
     output:
@@ -147,7 +147,7 @@ rule transport_jobs_h3:
         """
         python {input.script} --config {TL_CONFIG} --zoning {wildcards.zoning} \
             --activity {input.activity} --residents {input.residents} \
-            --gva-per-worker "{params.gva_per_worker}" \
+            --output-per-worker "{params.output_per_worker}" \
             --output {output.jobs}
         """
 
@@ -259,15 +259,19 @@ rule transport_multimodal_network:
     and connect the zones to it:
 
     - zone/<id>/car centroids join road nodes (car connectors);
-    - zone/<id>/pt centroids join bus stops and metro stations (walk links);
-    - boarding and alighting links carry waiting time and fares;
-    - short walk links join bus stops and metro stations (transfers).
+    - zone/<id>/bus centroids walk to bus stops, and zone/<id>/metro
+      centroids walk to metro stations;
+    - boarding and alighting links carry waiting time and fares. Each stop and
+      station has a departure side (walk in, board) and an arrival side
+      (alight, walk out), so no trip can walk through a stop without riding.
 
-    Car and PT trips start and end at different centroids, so one assignment
-    keeps the modes apart without a mode attribute in the router.
+    Car, bus and metro trips start and end at different centroids, and bus and
+    metro do not connect, so one assignment keeps the modes apart without a
+    mode attribute in the router.
 
     Also writes the failure units: one row per physical asset that can fail
-    (road edge, metro segment), listing every network link it removes.
+    (road edge, metro segment, metro station), listing every network link it
+    removes.
 
     Test with:
     snakemake -c1 data/processed/transport/networks/multimodal/h3-r8/links.parquet
@@ -351,8 +355,9 @@ rule transport_mode_split:
     Split zone-to-zone commuting trips into car, bus, metro and walk using fixed
     shares by distance band, scale to the peak period, and write the demand
     table for assignment with origin and destination as network node ids
-    (zone/<id>/car or zone/<id>/pt). Walk-only trips are dropped and counted
-    in the summary.
+    (zone/<id>/car, zone/<id>/bus or zone/<id>/metro). Metro applies only
+    where both ends can walk to a station. Walk-only trips are dropped and
+    counted in the summary.
 
     Test with:
     snakemake -c1 data/processed/transport/demand/h3-r8/demand-by-mode.parquet

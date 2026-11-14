@@ -7,7 +7,8 @@ flows). Demand with no remaining path within capacity is isolated.
 Outputs
     scenario-impacts.parquet  one row per scenario: affected_flow, rerouted_flow,
         isolated_flow, delta_time_min_total (person-minutes), delta_length_km_total
-        (person-km), delta_cost_total, isolated_cost, each also split by mode (_car, _pt)
+        (person-km) and delta_cost_total, each also split by mode (_car, _bus, _metro).
+        Isolated trips are counted, not costed.
     od-impacts.parquet  one row per scenario and affected OD pair (see
         transport.costs.disruption_deltas), with scenario_id and mode
 """
@@ -45,8 +46,7 @@ TOTALS = [
 def main(
     config_path, batch, links_path, paths_path, link_flows, failure_sets, output_scenario_impacts, output_od_impacts
 ):
-    cfg = read_config(config_path)
-    isolated_cost = cfg["cost"]["isolated_trip_cost"]
+    read_config(config_path)  # validates the config; no settings used here yet
 
     links = pd.read_parquet(links_path)
     table = links[NETWORK_COLUMNS].copy()
@@ -92,7 +92,6 @@ def main(
     by_mode = od.pivot_table(index="scenario_id", columns="mode", values=TOTALS, aggfunc="sum", fill_value=0.0)
     by_mode.columns = [f"{value}_{mode}" for value, mode in by_mode.columns]
     impacts = sets[["scenario_id"]].set_index("scenario_id").join(total).join(by_mode).fillna(0.0)
-    impacts["isolated_cost"] = impacts["isolated_flow"] * isolated_cost if isolated_cost is not None else np.nan
     impacts["evaluated"] = ~impacts.index.isin([s.id for s in results.skipped])
     impacts.reset_index().to_parquet(output_scenario_impacts, index=False)
 

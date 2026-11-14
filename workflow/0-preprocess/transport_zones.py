@@ -24,7 +24,7 @@ def main(residents, jobs, config_path, output):
     cfg = read_config(config_path)
     zones = pd.read_parquet(residents).merge(pd.read_parquet(jobs), on="h3_index", how="outer")
     value_columns = [
-        c for c in zones.columns if c in ("population", "employed_residents", "jobs", "gva") or c.startswith("jobs_")
+        c for c in zones.columns if c in ("population", "employed_residents", "jobs", "output") or c.startswith("jobs_")
     ]
     zones[value_columns] = zones[value_columns].fillna(0.0)
     zones = zones[(zones["employed_residents"] > 0) | (zones["jobs"] > 0)].copy()
