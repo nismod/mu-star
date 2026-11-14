@@ -2,7 +2,12 @@
 
 Output: GeoParquet of points (population-weighted centroid, or the cell centre
 where there are no residents) with columns zone_id (= h3_index), population,
-employed_residents, jobs, census_zone_id, plus the jobs_<sector> columns.
+employed_residents, jobs, census_zone_id, district, plus the jobs_<sector>
+columns.
+
+census_zone_id and district come from the census zone that contains the H3
+cell centre (or the nearest one, for cells on the coast), so cells with jobs
+but no residents also get a district.
 """
 
 import click
@@ -18,9 +23,10 @@ from transport.land import read_config
 @click.command()
 @click.option("--residents", required=True)
 @click.option("--jobs", required=True)
+@click.option("--census-zones", required=True)
 @click.option("--config", "config_path", default="config/transport/transport.yaml")
 @click.option("--output", required=True)
-def main(residents, jobs, config_path, output):
+def main(residents, jobs, census_zones, config_path, output):
     cfg = read_config(config_path)
     zones = pd.read_parquet(residents).merge(pd.read_parquet(jobs), on="h3_index", how="outer")
     value_columns = [
@@ -35,6 +41,16 @@ def main(residents, jobs, config_path, output):
     cx, cy = to_metric.transform(centres[:, 1], centres[:, 0])
     zones["centroid_x"] = zones["centroid_x"].fillna(pd.Series(cx, index=zones.index))
     zones["centroid_y"] = zones["centroid_y"].fillna(pd.Series(cy, index=zones.index))
+
+    # Census zone and district of each cell, by its centre.
+    centre_points = geopandas.GeoDataFrame(
+        {"h3_index": zones["h3_index"].to_numpy()}, geometry=geopandas.points_from_xy(cx, cy), crs=cfg["crs_metric"]
+    )
+    census = geopandas.read_parquet(census_zones)[["zone_id", "district", "geometry"]].to_crs(cfg["crs_metric"])
+    located = geopandas.sjoin_nearest(centre_points, census, how="left").drop_duplicates("h3_index")
+    located = located.set_index("h3_index")
+    zones["census_zone_id"] = zones["h3_index"].map(located["zone_id"])
+    zones["district"] = zones["h3_index"].map(located["district"])
 
     # TODO: clip to cfg["study_area"] (main island) once we have an island outline.
     zones = zones.rename(columns={"h3_index": "zone_id"})

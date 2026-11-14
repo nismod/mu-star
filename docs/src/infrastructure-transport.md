@@ -18,7 +18,8 @@ It has four stages:
    the island using WorldPop. Jobs come from mu-star's H3 economic activity
    layer, converted with sectoral productivity. A radiation model from
    [transport_flow_model](https://github.com/nismod/transport_flow_model)
-   (tfm) links the two.
+   (tfm) links the two. The result is checked against, and by default scaled
+   to, the census district-to-district travel-to-work table (Table CA27).
 2. **Network.** Build one directed multimodal network of roads, bus routes and
    the metro line, with zone connectors. Each link carries a generalised cost
    in MUR per trip.
@@ -32,6 +33,8 @@ It has four stages:
    time, distance and cost, and count the trips that are isolated.
 
 ```text
+census CA27 (district OD) ─────────────────────────────────────────────────────────────────────────┐
+                                                                                                   │ targets + validation
 census table + boundaries ─┬─> census zones ─┬─> WorldPop scaled to census ─> residents per H3 cell ─┐
 WorldPop ──────────────────┘                 │                                                      │
 economic_activity_h3 (output by sector) ──────┴──────(output per worker)────> jobs per H3 cell ─────┤
@@ -82,6 +85,7 @@ involves zones does.
 ```text
 {data}/incoming/                                  provided (schemas below)
   Socio-economic/Census/census-residential-zones.xlsx, .gpkg
+  Socio-economic/Census/CA27-travel-to-work-district.xlsx
   Socio-economic/GDP/output-per-worker-by-sector.csv
   Population/WorldPop/mus_ppp_2020_constrained.tif
   Infrastructure/Transport/road/roads.gpkg
@@ -94,6 +98,7 @@ involves zones does.
   population/census-zones.geoparquet
   population/worldpop-scaled.tif
   population/worldpop-census-check.csv
+  population/census-district-od.parquet, census-district-od-summary.json
   zones/{zoning}/residents.parquet
   zones/{zoning}/jobs.parquet
   zones/{zoning}/zones.geoparquet
@@ -102,7 +107,7 @@ involves zones does.
   networks/metro/stations.geoparquet, segments.geoparquet
   networks/multimodal/{zoning}/links.parquet, nodes.geoparquet, failure-units.parquet
   demand/{zoning}/road-skim.parquet
-  demand/{zoning}/commute-od.parquet, commute-od-summary.json
+  demand/{zoning}/commute-od.parquet, commute-od-summary.json, district-od-comparison.csv
   demand/{zoning}/demand-by-mode.parquet, demand-by-mode-summary.json
 
 {data}/out/transport/land/{zoning}/
@@ -127,9 +132,17 @@ official totals.
 | `zone_id`                 | str  | join key to the boundary file          |
 | `population`              | num  | resident population                    |
 | `employed_residents`      | num  | employed persons by place of residence |
+| `district`                | str  | the district the zone is in (matching the CA27 names) |
 
 The boundaries are polygons with the same zone id, given by
 `census_boundaries_zone_id`.
+
+**Census Table CA27** (travel to work) gives the employed population by
+district of residence (rows) and district of work (columns). The parser's
+layout options (sheet, header row, total rows and columns to drop,
+non-district workplace columns such as "abroad" or "at home", and name
+fixes) are under `inputs.census_district_od_layout`. They are a guess until
+we see the file. Districts outside the study area (Rodrigues) are dropped.
 
 **WorldPop** is a gridded population raster (about 100 m) in persons per
 pixel. We use it only for the spatial pattern within each census zone, after
@@ -191,6 +204,8 @@ All parameters live in `config/transport/transport.yaml`. The main ones:
 | `radiation.max_impedance`          | 120               | no commuting beyond this                                                   |
 | `radiation.origin_mass`            | `employed_residents` | see the radiation model below                                           |
 | `radiation.normalisation`          | `row`             | each employed resident makes exactly one trip                              |
+| `radiation.district_od`            | `constrain`       | scale to the CA27 district totals (`constrain`), or only compare (`validate`) |
+| `radiation.district_od_method`     | `ipf`             | `ipf` also keeps each cell's production; `block` matches the district totals exactly |
 | `mode_split.shares`                | placeholder       | single national walk / car / bus / metro shares                            |
 | `mode_split.metro_fallback`        | `bus`             | where the metro share goes when an end has no station within walking distance |
 | `mode_split.pt_overflow`           | `unserved`        | bus or metro demand over capacity is reported, or moved to car             |
@@ -240,6 +255,35 @@ Rows are renormalised, so that every employed resident makes one trip within
 `max_impedance`. OD pairs below `min_trips` are dropped, and their trips are
 spread back over the same origin's other pairs. The road skim comes from tfm's
 `RadiationModel.impedance_matrix` (igraph Dijkstra, directed).
+
+**District constraint and validation (CA27).** Every cell gets a district,
+from the census zone that contains its centre. CA27 counts all workers,
+including those who work in their own cell, so the comparison uses the full
+matrix, with each cell's intrazonal trips on the diagonal.
+
+1. *Validate.* The radiation matrix is aggregated to districts and compared
+   with CA27 (tfm `aggregate_od`, `od_fit`). We report:
+   - the common part of commuters (CPC);
+   - CPC after scaling CA27 to the modelled total (`cpc_shares`, the pattern
+     only);
+   - R² and RMSE of district-pair flows;
+   - the share of trips that stay within their district.
+
+   These go in `commute-od-summary.json`, with each district pair in
+   `district-od-comparison.csv`.
+2. *Constrain* (default). tfm `scale_to_aggregate` scales the cell matrix to
+   the CA27 district-to-district totals, keeping the radiation pattern within
+   each district pair. With `ipf`, it first rescales each CA27 row to the
+   modelled employed residents of that district, then alternates between
+   matching district pairs and keeping each cell's production. So CA27
+   supplies *where people from each district work*, and the census zone table
+   supplies *how many work*. That absorbs differences in coverage or census
+   year between the two tables.
+3. The diagonal (intrazonal trips, not assigned) is split off again.
+
+District pairs with CA27 flow but no modelled flow (for example, beyond
+`max_impedance`) can't be matched, because scaling cannot create flow. They
+show up as `unplaced_trips` in the summary.
 
 **Mode split.** There is no mode-choice data, so every OD pair takes the
 same national walk / car / bus / metro shares. Bus and metro are separate
@@ -367,13 +411,14 @@ cells.
 | `transport_scale_worldpop`      | written                                                                                   |
 | `transport_residents_h3`        | written                                                                                   |
 | `transport_jobs_h3`             | written (wide schema, output per worker)                                                  |
-| `transport_zones`               | written; study-area clip TODO                                                             |
+| `transport_zones`               | written (district from census zones); study-area clip TODO                                |
 | `transport_road_network`        | written; connected-component cleaning TODO; run on toy data                               |
 | `transport_bus_network`         | draft; timetable times; road mapping uses the fastest path, not map matching; run on toy data |
 | `transport_metro_network`       | draft; run on toy data                                                                    |
 | `transport_multimodal_network`  | draft; run on toy data                                                                    |
 | `transport_road_skim`           | written (tfm); run on toy data                                                            |
-| `transport_radiation_od`        | written (tfm); run on toy data                                                            |
+| `transport_census_district_od`  | draft parser (CA27 layout unknown); run on a mock CA27 spreadsheet                        |
+| `transport_radiation_od`        | written (tfm), with CA27 validation and constraint; run on toy data                       |
 | `transport_mode_split`          | written; national shares are placeholders; run on toy data                                |
 | `transport_baseline_assignment` | written; run on toy data                                                                  |
 | `transport_failure_sets`        | written; run on toy data                                                                  |
@@ -391,6 +436,8 @@ inputs.
 - **OD estimation**: tfm's radiation model, extended for separate masses and
   correct intervening opportunities.
 - **Zones**: H3 resolution 8.
+- **District OD**: census Table CA27 validates the radiation OD and, by
+  default, constrains it to district-to-district totals.
 - **Modes**: car, bus and metro as separate modes, each with its own centroid,
   in one multimodal network.
 - **Mode shares**: single national shares, with bus and metro given
@@ -422,15 +469,22 @@ inputs.
    path? Is the column naming (`h3_index`, `gva_<ISIC section>`) right?
 5. **Census details.** Which census year is it, and what are the zone codes
    and column names? Are there total/subtotal rows to drop? Does employment
-   cover informal work?
-6. **Intra-zonal trips.** At resolution 8 these are short walks. Is
+   cover informal work? Does the census zone table give each zone's district?
+6. **CA27 layout.** Is it a district × district matrix, with residence in
+   rows? Which non-district workplace categories does it have (abroad, at
+   home, no fixed place)? Is it the same census year as the zone table?
+7. **Constrain or calibrate.** Should CA27 also be used to calibrate the
+   radiation settings (time or distance impedance, `max_impedance`,
+   `origin_mass`, `intrazonal_share`) by fit, before the constraint? Or hold
+   some of it out for validation?
+8. **Intra-zonal trips.** At resolution 8 these are short walks. Is
    `intrazonal_share = 0` acceptable?
-7. **Metro data.** We need Metro Express headways, train capacity, run times
+9. **Metro data.** We need Metro Express headways, train capacity, run times
    and fares.
-8. **Costs.** We need agreed values of time and vehicle operating costs, and
+10. **Costs.** We need agreed values of time and vehicle operating costs, and
    bus fares.
-9. **Rodrigues.** Should it be excluded, or run as a separate study area?
-10. **tfm release.** When the tfm branch is merged, should we publish a
+11. **Rodrigues.** Should it be excluded, or run as a separate study area?
+12. **tfm release.** When the tfm branch is merged, should we publish a
     release? Publishing needs manylinux / macOS / Windows wheels, for example
     via maturin-action. The current publish workflow (`python -m build`)
     would produce a plain `linux_x86_64` wheel, which PyPI rejects.
@@ -453,6 +507,9 @@ which mu-star pins in `environment.yaml`.
   zones within the threshold. This changes `generate` results.
 - `RadiationModel.flows` returns Demand-ready flows, with `min_flow` pruning.
 - `RadiationModel.impedance_matrix` uses igraph Dijkstra, optionally directed.
+- `aggregate_od`, `scale_to_aggregate` (block or IPF),
+  `common_part_of_commuters` and `od_fit` constrain and validate a zone OD
+  against aggregate OD data, such as CA27.
 - `radiation_probabilities` and `radiation_flows` are vectorised matrix
   functions. They replace a per-pair Python loop that was O(Z³).
 

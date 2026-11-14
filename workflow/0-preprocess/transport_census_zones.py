@@ -1,6 +1,6 @@
 """Join the census residential-zone table to its boundaries.
 
-Output columns: zone_id (str), population, employed_residents,
+Output columns: zone_id (str), district, population, employed_residents,
 employment_rate (= employed_residents / population), geometry.
 """
 
@@ -24,6 +24,7 @@ def main(config_path, table, boundaries, output):
     require_columns(census, columns.values(), "census table")
     census = census.rename(columns={v: k for k, v in columns.items()})[list(columns)]
     census["zone_id"] = census["zone_id"].astype(str).str.strip()
+    census["district"] = census["district"].astype(str).str.strip()
     # TODO: drop total / subtotal rows once we see the spreadsheet layout.
     if census["zone_id"].duplicated().any():
         raise ValueError(f"Duplicate census zone ids: {census.loc[census.zone_id.duplicated(), 'zone_id'].tolist()}")

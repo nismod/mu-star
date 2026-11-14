@@ -27,9 +27,25 @@ transport_land:
       zone_id: TODO_zone_code
       population: TODO_total_population
       employed_residents: TODO_employed_population
+      district: TODO_district_name  # the district each census zone is in
     census_boundaries: incoming/Socio-economic/Census/census-residential-zones.gpkg  # TODO
     census_boundaries_zone_id: TODO_zone_code
     worldpop: incoming/Population/WorldPop/mus_ppp_2020_constrained.tif  # TODO: year / product
+    # Census Table CA27: employed population by district of residence (rows)
+    # and district of work (columns). TODO: check the layout against the file.
+    census_district_od: incoming/Socio-economic/Census/CA27-travel-to-work-district.xlsx
+    census_district_od_layout:
+      sheet: null          # null = first sheet
+      header_row: 0        # row (0-based) holding the workplace district names
+      index_column: 0      # column holding the residence district names
+      # Rows / columns to drop (totals).
+      drop: [Total, TOTAL]
+      # Workplace columns that are not districts (e.g. abroad, at home, no
+      # fixed place). Reported in the summary, not used as OD targets.
+      other_workplaces: []
+      # Map CA27 district names to the names in the census zone table, where
+      # they differ (e.g. "Port Louis": "Port-Louis").
+      rename: {}
     # The H3 economic activity layer is produced by a mu-star rule
     # (economic_activity_h3, currently a stub), not given as a path here. It is
     # wide: one row per cell, one column of output per sector.
@@ -92,6 +108,13 @@ transport_land:
     # Drop OD pairs below this many trips. The dropped trips are spread back
     # over each origin's remaining pairs.
     min_trips: 0.5
+    # District-to-district totals from census Table CA27.
+    #   "constrain": scale the cell OD to match the CA27 totals (always also validated)
+    #   "validate": only compare the cell OD with CA27, aggregated to districts
+    district_od: constrain
+    # "ipf" matches the district totals and keeps each cell's trip production;
+    # "block" matches the district totals exactly, but changes cell production.
+    district_od_method: ipf
 
   # --- Mode split (no mode-choice data; fixed shares) --------------------------
   mode_split:

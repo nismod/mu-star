@@ -6,6 +6,7 @@ open questions in docs/src/infrastructure-transport.md are resolved.
 
 Flow of data:
 
+    census CA27 district OD ────────────────────────────────────────┐ (targets / validation)
     census table + boundaries ──┐
     WorldPop ───────────────────┼─> residents per H3 cell ─┐
     H3 economic activity ───────┴─> jobs per H3 cell ──────┼─> zones
@@ -164,12 +165,14 @@ rule transport_zones:
     input:
         residents=rules.transport_residents_h3.output.residents,
         jobs=rules.transport_jobs_h3.output.jobs,
+        census_zones=rules.transport_census_zones.output.zones,
         script=f"{TL_SCRIPTS}/transport_zones.py",
     output:
         zones="{data}/processed/transport/zones/{zoning}/zones.geoparquet",
     shell:
         """
         python {input.script} --config {TL_CONFIG} --residents {input.residents} --jobs {input.jobs} \
+            --census-zones {input.census_zones} \
             --output {output.zones}
         """
 
@@ -326,11 +329,40 @@ rule transport_road_skim:
         """
 
 
+rule transport_census_district_od:
+    """
+    Parse census Table CA27 (employed population by district of residence and
+    district of work) into a long district-to-district table, the targets and
+    validation data for the radiation model.
+
+    Test with:
+    snakemake -c1 data/processed/transport/population/census-district-od.parquet
+    """
+    input:
+        table=tl_input("census_district_od"),
+        zones=rules.transport_census_zones.output.zones,
+        script=f"{TL_SCRIPTS}/transport_census_district_od.py",
+    output:
+        od="{data}/processed/transport/population/census-district-od.parquet",
+        summary="{data}/processed/transport/population/census-district-od-summary.json",
+    shell:
+        """
+        python {input.script} --config {TL_CONFIG} \
+            --table {input.table} --zones {input.zones} \
+            --output {output.od} --output-summary {output.summary}
+        """
+
+
 rule transport_radiation_od:
     """
     Journey-to-work trips between zones (persons per day, one way, home to
     work) from the radiation model: employed residents produce trips and jobs
     attract them.
+
+    The unconstrained result is always compared with census Table CA27,
+    aggregated to districts (district-od-comparison.csv, and fit metrics in the
+    summary). With radiation.district_od = "constrain", the cell OD is then
+    scaled to match the CA27 district-to-district totals.
 
     Test with:
     snakemake -c1 data/processed/transport/demand/h3-r8/commute-od.parquet
@@ -338,15 +370,18 @@ rule transport_radiation_od:
     input:
         zones=rules.transport_zones.output.zones,
         skim=rules.transport_road_skim.output.skim,
+        district_od=rules.transport_census_district_od.output.od,
         script=f"{TL_SCRIPTS}/transport_radiation_od.py",
     output:
         od="{data}/processed/transport/demand/{zoning}/commute-od.parquet",
         summary="{data}/processed/transport/demand/{zoning}/commute-od-summary.json",
+        comparison="{data}/processed/transport/demand/{zoning}/district-od-comparison.csv",
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
-            --zones {input.zones} --skim {input.skim} \
-            --output {output.od} --output-summary {output.summary}
+            --zones {input.zones} --skim {input.skim} --district-od {input.district_od} \
+            --output {output.od} --output-summary {output.summary} \
+            --output-comparison {output.comparison}
         """
 
 
