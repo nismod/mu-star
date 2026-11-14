@@ -17,6 +17,9 @@ Then, across all layers and hazards:
 Check the damage configuration workbook with:
     snakemake -c1 {data}/results/damage/damage-config-report.txt
 
+Report what will be calculated, and what is missing, with:
+    snakemake -c1 damage_report
+
 Run the example with:
     snakemake -c1 example/results/damage/summary.csv --configfile example/config.yaml
 """
@@ -69,6 +72,35 @@ rule validate_damage_config:
         python {input.script:q} \
             --damage-config {input.damage_config:q} \
             --output {output.report:q}
+        """
+
+
+rule damage_report:
+    """
+    Report available asset layers and hazards, and which damage calculations
+    will run or are missing configuration, for the data root
+    (config["data_root"], default "data"). Writes
+    {data_root}/results/damage/report.md and prints it. Runs every time it is
+    requested by name.
+
+    Test with:
+    snakemake -c1 damage_report --configfile example/config.yaml
+    """
+    params:
+        data_root = config.get("data_root", "data"),
+        layers = config["metadata"]["layer"],
+        hazards = config["metadata"]["hazard"],
+        damage_config = config["damage"]["config"],
+        report = f"{config.get('data_root', 'data')}/results/damage/report.md",
+        script = "workflow/1-damage/damage_report.py",
+    shell:
+        """
+        python {params.script:q} \
+            --data-root {params.data_root:q} \
+            --layers {params.layers:q} \
+            --hazards {params.hazards:q} \
+            --damage-config {params.damage_config:q} \
+            --output {params.report:q}
         """
 
 
