@@ -3,10 +3,12 @@ configfile: "config/config.yaml"
 include: "0-preprocess/preprocess.smk"
 include: "0-preprocess/catalogue-open-data.smk"
 include: "0-preprocess/transport.smk"
+include: "0-preprocess/transport_land.smk"
 include: "0-preprocess/energy.smk"
 include: "0-preprocess/water.smk"
 include: "0-preprocess/building.smk"
 include: "1-damage/damage.smk"
+include: "2-losses/transport_land.smk"
 include: "5-visualise/asset.smk"
 include: "5-visualise/hazard.smk"
 
@@ -18,3 +20,5 @@ wildcard_constraints:
     scenario=r"[A-Za-z0-9][A-Za-z0-9_-]*",
     sector = r"transport|energy|water|building",
     geom_type = r"node|edge|area",
+    zoning=r"h3-r\d+",
+    batch=r"batch-\d{4}",

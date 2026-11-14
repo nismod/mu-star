@@ -9,6 +9,8 @@ dependencies:
   - pip:
       - -e .[dev]
       - nismod-snail
+      # transport: nismod-tfm (transport_flow_model) also needed; TODO pin a working release
+      - h3>=4
       - osmium
   - geopandas
   - hatchling
