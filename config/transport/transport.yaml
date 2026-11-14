@@ -95,17 +95,13 @@ transport_land:
 
   # --- Mode split (no mode-choice data; fixed shares) --------------------------
   mode_split:
-    # Shares by trip distance band (road km, upper bound inclusive). Each row
-    # must sum to 1. Walk-only trips are removed from network assignment.
-    # Bus and metro are separate modes with their own centroids: bus trips use
-    # only the bus network, and metro trips only the metro line (walking to and
-    # from stations).
-    # TODO: research. These could be derived from ridership statistics
-    # (metro daily boardings, bus passengers) divided by commuting trips.
-    bands:
-      - {max_km: 2,    walk: 0.40, car: 0.35, bus: 0.25, metro: 0.00}
-      - {max_km: 10,   walk: 0.00, car: 0.55, bus: 0.40, metro: 0.05}
-      - {max_km: 1000, walk: 0.00, car: 0.60, bus: 0.32, metro: 0.08}
+    # Single national shares, applied to every OD pair. Must sum to 1. Walk
+    # trips are removed from network assignment. Bus and metro are separate
+    # modes with their own centroids: bus trips use only the bus network, and
+    # metro trips only the metro line (walking to and from stations).
+    # TODO: research. Could be derived from ridership statistics (metro daily
+    # boardings, bus passengers) and the share of trips that are commutes.
+    shares: {walk: 0.10, car: 0.50, bus: 0.35, metro: 0.05}
     # The metro share applies only where both ends have a station within
     # connectors.metro_walk_max_km. Elsewhere it goes to this mode.
     metro_fallback: bus
@@ -196,5 +192,14 @@ transport_land:
     # with no baseline flow are always skipped.
     road_classes: null
     min_baseline_flow: 1.0
+    # Trips left with no path on their own mode switch to these modes in turn,
+    # assigned on the disrupted network. Unlisted modes stay isolated.
+    # Isolated trips are counted, not costed.
+    fallback:
+      metro: [bus, car]
+    # With fixed mode shares, a mode switch can look like an improvement (e.g.
+    # car cheaper than metro in generalised cost). If true, the deltas of OD
+    # pairs that switch mode are floored at zero (the baseline mode was preferred).
+    mode_shift_floor: true
     # Failure scenarios are split into this many batches (snakemake jobs).
     n_batches: 64

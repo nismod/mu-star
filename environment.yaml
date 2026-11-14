@@ -9,8 +9,10 @@ dependencies:
   - pip:
       - -e .[dev]
       - nismod-snail
-      # transport: nismod-tfm (transport_flow_model) also needed; TODO pin a working release
-      #   (radiation model changes are on tfm branch claude/land-transport-workflow-draft-j0njkf)
+      # transport_flow_model, pinned to a git commit until a working release is
+      # published (radiation model changes, branch claude/land-transport-workflow-draft-j0njkf).
+      # Builds a Rust extension with maturin, hence rust below.
+      - nismod-tfm @ git+https://github.com/nismod/transport_flow_model@8c2f848da43e1e5fc8238bb255cdae4160a628bd
       - h3>=4
       - osmium
   - geopandas
@@ -32,6 +34,7 @@ dependencies:
   - pyarrow
   - pypsa>=0.30,<0.31
   - pytest
+  - rust  # to build nismod-tfm from git
   - scipy
   - shapely
   - bioconda::snakemake

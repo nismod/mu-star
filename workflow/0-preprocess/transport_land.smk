@@ -308,7 +308,7 @@ rule transport_road_skim:
     """
     Free-flow shortest-path time and distance between every pair of zone car
     centroids on the road network (connectors included). This is the impedance
-    for the radiation model and the distance for distance-banded mode shares.
+    for the radiation model (and distance for reporting).
 
     Test with:
     snakemake -c1 data/processed/transport/demand/h3-r8/road-skim.parquet
@@ -352,8 +352,8 @@ rule transport_radiation_od:
 
 rule transport_mode_split:
     """
-    Split zone-to-zone commuting trips into car, bus, metro and walk using fixed
-    shares by distance band, scale to the peak period, and write the demand
+    Split zone-to-zone commuting trips into car, bus, metro and walk using
+    single national shares, scale to the peak period, and write the demand
     table for assignment with origin and destination as network node ids
     (zone/<id>/car, zone/<id>/bus or zone/<id>/metro). Metro applies only
     where both ends can walk to a station. Walk-only trips are dropped and
@@ -364,7 +364,6 @@ rule transport_mode_split:
     """
     input:
         od=rules.transport_radiation_od.output.od,
-        skim=rules.transport_road_skim.output.skim,
         nodes=rules.transport_multimodal_network.output.nodes,
         script=f"{TL_SCRIPTS}/transport_mode_split.py",
     output:
@@ -373,6 +372,6 @@ rule transport_mode_split:
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
-            --od {input.od} --skim {input.skim} --nodes {input.nodes} \
+            --od {input.od} --nodes {input.nodes} \
             --output {output.demand} --output-summary {output.summary}
         """

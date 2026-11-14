@@ -1,7 +1,7 @@
 """Split commuting trips by mode and turn them into assignment demand.
 
-Each OD pair takes the walk / car / bus / metro shares of its road-distance
-band. Metro applies only where both ends' metro centroids reach a station on
+Every OD pair takes the same national walk / car / bus / metro shares
+(mode_split.shares). Metro applies only where both ends' metro centroids reach a station on
 foot (connectors.metro_walk_max_km). Otherwise the metro share goes to
 mode_split.metro_fallback. Bus applies only where both ends reach a bus stop.
 Otherwise the bus share goes to car. Walk trips are dropped from assignment
@@ -27,24 +27,19 @@ MODES = ("walk", "car", "bus", "metro")
 @click.command()
 @click.option("--config", "config_path", required=True)
 @click.option("--od", "od_path", required=True)
-@click.option("--skim", required=True)
 @click.option("--nodes", required=True)
 @click.option("--output", required=True)
 @click.option("--output-summary", required=True)
-def main(config_path, od_path, skim, nodes, output, output_summary):
+def main(config_path, od_path, nodes, output, output_summary):
     cfg = read_config(config_path)
     split = cfg["mode_split"]
     period_share = cfg["period"]["peak_period_share"]
 
-    od = pd.read_parquet(od_path).merge(pd.read_parquet(skim), on=["origin_zone", "destination_zone"], how="left")
-    bands = pd.DataFrame(split["bands"]).sort_values("max_km")
-    shares = bands[list(MODES)].to_numpy()
-    if not np.allclose(shares.sum(axis=1), 1.0):
-        raise ValueError("mode_split.bands shares must sum to 1 in each band")
-    band = np.minimum(
-        np.searchsorted(bands["max_km"].to_numpy(), od["length_km"].to_numpy(), side="left"), len(bands) - 1
-    )
-    s = pd.DataFrame(shares[band], columns=list(MODES), index=od.index)
+    od = pd.read_parquet(od_path)
+    national = pd.Series(split["shares"], dtype=float).reindex(list(MODES)).fillna(0.0)
+    if not np.isclose(national.sum(), 1.0):
+        raise ValueError("mode_split.shares must sum to 1")
+    s = pd.DataFrame([national.to_numpy()] * len(od), columns=list(MODES), index=od.index)
 
     node_table = pd.read_parquet(nodes, columns=["node_id", "kind", "zone_id", "has_access"])
 

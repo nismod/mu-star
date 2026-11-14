@@ -35,6 +35,9 @@ def main(
 ):
     cfg = read_config(config_path)
     impacts = pd.concat([pd.read_parquet(path) for path in scenario_impacts], ignore_index=True)
+    # Batches without any mode shift have no shifted_to_<mode> columns.
+    shift_columns = [c for c in impacts.columns if c.startswith("shifted_to_")]
+    impacts[shift_columns] = impacts[shift_columns].fillna(0.0)
     sets = pd.read_parquet(failure_sets).drop(columns=["link_ids"])
     table = sets.merge(impacts, on="scenario_id", how="left")
 

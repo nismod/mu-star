@@ -22,12 +22,13 @@ It has four stages:
 2. **Network.** Build one directed multimodal network of roads, bus routes and
    the metro line, with zone connectors. Each link carries a generalised cost
    in MUR per trip.
-3. **Baseline.** Split trips into walk, car, bus and metro with fixed shares,
-   then assign peak-period demand with tfm. The assignment is sequential and
+3. **Baseline.** Split trips into walk, car, bus and metro with single
+   national shares, then assign peak-period demand with tfm. The assignment is sequential and
    capacity constrained: bus and metro capacity binds, and roads are
    unconstrained.
 4. **Criticality.** Fail each road edge, metro segment and metro station on
-   its own and reroute the affected trips. Report the increases in journey
+   its own and reroute the affected trips. Metro trips with no metro path left
+   fall back to bus, then car. Report the increases in journey
    time, distance and cost, and count the trips that are isolated.
 
 ```text
@@ -52,7 +53,7 @@ networks) and `workflow/2-losses/transport_land.smk` (assignment and
 criticality). The jobs layer comes from the rule `economic_activity_h3` in
 `workflow/0-preprocess/economy.smk`, which is currently a stub. Parameters are
 in `config/transport/transport.yaml`, and the scripts sit next to the rule
-files. Helpers are in `src/transport/` (`costs.py`, `land.py`).
+files. Helpers are in `src/transport/` (`costs.py`, `fallback.py`, `land.py`).
 
 ```bash
 # everything, default zoning
@@ -61,8 +62,9 @@ snakemake -c8 transport_land_all
 snakemake -c8 data/out/transport/land/h3-r8/criticality/asset-criticality.geoparquet
 ```
 
-The analysis needs `nismod-tfm` and `h3`. `h3` is in `environment.yaml`, but
-`nismod-tfm` is not yet: see the open questions.
+The analysis needs `nismod-tfm` and `h3`, both in `environment.yaml`. tfm is
+installed from a pinned git commit, which builds its Rust extension, so `rust`
+is in the environment too.
 
 ### Wildcards
 
@@ -189,7 +191,7 @@ All parameters live in `config/transport/transport.yaml`. The main ones:
 | `radiation.max_impedance`          | 120               | no commuting beyond this                                                   |
 | `radiation.origin_mass`            | `employed_residents` | see the radiation model below                                           |
 | `radiation.normalisation`          | `row`             | each employed resident makes exactly one trip                              |
-| `mode_split.bands`                 | placeholder       | walk / car / bus / metro shares by road-distance band                      |
+| `mode_split.shares`                | placeholder       | single national walk / car / bus / metro shares                            |
 | `mode_split.metro_fallback`        | `bus`             | where the metro share goes when an end has no station within walking distance |
 | `mode_split.pt_overflow`           | `unserved`        | bus or metro demand over capacity is reported, or moved to car             |
 | `period.peak_period_share`, `peak_period_hours` | 0.6, 2 h | the share of daily commuting in the modelled period, and its length |
@@ -200,6 +202,8 @@ All parameters live in `config/transport/transport.yaml`. The main ones:
 | `metro.train_capacity`, `default_headway_min` | 1500, 6 | metro service                                                        |
 | `criticality.fail`                 | `[road, metro, metro_station]` | the asset types to fail                                       |
 | `criticality.road_classes`         | null (all)        | can limit which road edges are failed. No limit by default                 |
+| `criticality.fallback`             | `metro: [bus, car]` | modes that isolated trips switch to, in order                            |
+| `criticality.mode_shift_floor`     | true              | deltas of OD pairs that switch mode are floored at zero                    |
 | `criticality.n_batches`            | 64                | the number of criticality jobs                                             |
 
 ### Method
@@ -237,9 +241,9 @@ Rows are renormalised, so that every employed resident makes one trip within
 spread back over the same origin's other pairs. The road skim comes from tfm's
 `RadiationModel.impedance_matrix` (igraph Dijkstra, directed).
 
-**Mode split.** There is no mode-choice data, so each OD pair takes fixed
-walk / car / bus / metro shares from its road-distance band. Bus and metro
-are separate modes:
+**Mode split.** There is no mode-choice data, so every OD pair takes the
+same national walk / car / bus / metro shares. Bus and metro are separate
+modes:
 
 - bus is cheap and covers the whole island;
 - metro is a single, relatively expensive line;
@@ -303,6 +307,22 @@ each affected OD pair we compare the time, distance and cost of the rerouted
 paths with those of the same flow on its baseline paths
 (`transport.costs.disruption_deltas`).
 
+**Mode fallback.** Trips left with no path on their own mode switch to the
+modes in `criticality.fallback`, in order (`transport.fallback.mode_fallback`).
+The default sends metro trips to bus, then car. Each fallback mode is
+assigned on the disrupted network, between that mode's zone centroids, on top
+of the flows already there. So bus capacity still binds, and anything that
+doesn't fit moves on to car. What is left is isolated. Bus trips cut off by a
+road failure do not fall back (that could be added as `bus: [car]`).
+
+With fixed mode shares, switching mode can look like an improvement. For
+example, car is often cheaper than metro in generalised cost, but people were
+assigned to metro anyway. So with `mode_shift_floor` (the default), the
+time / distance / cost deltas of OD pairs that switch mode are floored at
+zero: the baseline mode is taken as preferred. As a result, metro failures
+show up mainly as `shifted_to_bus` / `shifted_to_car` trips, rather than as
+time or cost.
+
 The outputs for each asset are:
 
 - `affected_flow`, `rerouted_flow` and `isolated_flow` (trips in the period).
@@ -310,7 +330,8 @@ The outputs for each asset are:
 - `delta_time_min_total` (extra person-minutes);
 - `delta_length_km_total` (extra person-km);
 - `delta_cost_total` (MUR);
-- the same quantities split by mode (`_car`, `_bus`, `_metro`);
+- `shifted_to_bus`, `shifted_to_car`: trips that switched mode;
+- the same quantities split by original mode (`_car`, `_bus`, `_metro`);
 - ranks, and shares of the baseline totals.
 
 `asset-criticality.geoparquet` joins all of this to the road edge or metro
@@ -353,10 +374,10 @@ cells.
 | `transport_multimodal_network`  | draft; run on toy data                                                                    |
 | `transport_road_skim`           | written (tfm); run on toy data                                                            |
 | `transport_radiation_od`        | written (tfm); run on toy data                                                            |
-| `transport_mode_split`          | written; shares are placeholders; run on toy data                                         |
+| `transport_mode_split`          | written; national shares are placeholders; run on toy data                                |
 | `transport_baseline_assignment` | written; run on toy data                                                                  |
 | `transport_failure_sets`        | written; run on toy data                                                                  |
-| `transport_criticality_batch`   | written; run on toy data                                                                  |
+| `transport_criticality_batch`   | written, with mode fallback; run on toy data                                              |
 | `transport_criticality_summary` | written; run on toy data (station geometry TODO)                                          |
 
 "Run on toy data" means every script from the road network to the summary ran
@@ -372,25 +393,30 @@ inputs.
 - **Zones**: H3 resolution 8.
 - **Modes**: car, bus and metro as separate modes, each with its own centroid,
   in one multimodal network.
-- **Mode shares**: fixed shares by distance band, with bus and metro given
-  separately. The values still need research.
+- **Mode shares**: single national shares, with bus and metro given
+  separately. The values still need research (e.g. from ridership
+  statistics).
+- **Metro access**: walking only for now (no feeder bus or park and ride).
+- **Metro disruption**: metro trips fall back to bus, then car. Deltas for
+  mode switches are floored at zero.
 - **Bus data**: route frequencies and between-stop timings, with a standard
   vehicle size.
 - **Roads**: unconstrained, including under disruption.
 - **Failures**: road edges (all classes), metro segments and metro stations.
   Not road junctions.
 - **Isolated trips**: counted, not costed.
+- **tfm dependency**: a git install pinned to a commit.
 
 ### Open questions
 
-1. **Mode shares.** Which ridership statistics (metro daily boardings, bus
-   passengers per day) can calibrate the shares? Should shares be calibrated
-   to hit ridership totals, rather than set by distance band?
-2. **Metro access.** Should metro trips be able to use a feeder bus or car
-   (park and ride) to reach stations? At present they can only walk.
-3. **Metro disruption.** At present, metro trips cut off by a metro failure
-   are all isolated, because they cannot switch mode. Should they be able to
-   fall back to bus (or car) under disruption?
+1. **Mode share values.** Which ridership statistics (metro daily boardings,
+   bus passengers per day) and which commuting fraction should set the
+   national shares?
+2. **Bus fallback.** Should bus trips cut off by a road failure fall back to
+   car (`fallback: {bus: [car]}`), or stay isolated?
+3. **Mode-shift floor.** Is flooring the deltas of mode-switching trips at
+   zero the right way to value a forced mode switch? An alternative would be
+   to report the raw (possibly negative) deltas separately.
 4. **Economic layer.** Who owns `economic_activity_h3`, and is
    `processed/economy/{zoning}/economic-activity.parquet` the right output
    path? Is the column naming (`h3_index`, `gva_<ISIC section>`) right?
@@ -404,13 +430,20 @@ inputs.
 8. **Costs.** We need agreed values of time and vehicle operating costs, and
    bus fares.
 9. **Rodrigues.** Should it be excluded, or run as a separate study area?
-10. **Environment.** The published `nismod-tfm` 0.2.0rc1 wheel contains only
-    `_version.py`. The tfm changes here are on a branch. How should mu-star
-    depend on tfm: a git install, or a new release?
+10. **tfm release.** When the tfm branch is merged, should we publish a
+    release? Publishing needs manylinux / macOS / Windows wheels, for example
+    via maturin-action. The current publish workflow (`python -m build`)
+    would produce a plain `linux_x86_64` wheel, which PyPI rejects.
 
 ### Changes to transport_flow_model
 
-These are on the tfm branch `claude/land-transport-workflow-draft-j0njkf`.
+These are on the tfm branch `claude/land-transport-workflow-draft-j0njkf`,
+which mu-star pins in `environment.yaml`.
+
+- *Packaging*: the build backend is now maturin, so installs contain the
+  package and the Rust extension. Previously the published 0.2.0rc1 wheel
+  contained only `_version.py`. The version now comes from `Cargo.toml`
+  (`0.2.0-rc.2`).
 
 - `RadiationModel.generate(..., destination_relevance_column=...)` takes
   separate origin and destination masses. It also has a `normalisation`
