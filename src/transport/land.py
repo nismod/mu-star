@@ -66,6 +66,9 @@ ACTIVE_MODES = ("walk", "cycle")
 #: the multimodal network onwards; zones, demand estimation and road
 #: networks are shared by all scenarios.
 SCENARIO_SECTIONS = ("mode_split", "period", "cost", "bus", "metro", "criticality", "school")
+#: Settings inside SCENARIO_SECTIONS that scenarios may not change: the bus
+#: detours (transport_bus_detours) are computed once per island with them.
+SCENARIO_FIXED = ("criticality.bus_detour", "bus.speed_factor")
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -83,6 +86,18 @@ def deep_merge(base: dict, override: dict) -> dict:
         else:
             out[key] = value
     return out
+
+
+def _dotted_keys(overrides: dict, prefix: str = "") -> list[str]:
+    """Every overridden setting as a dotted path (``{"a": {"b": 1}, "c.d": 2}`` -> ``["a.b", "c.d"]``)."""
+    keys = []
+    for key, value in overrides.items():
+        path = f"{prefix}{key}"
+        if isinstance(value, dict) and value:
+            keys += _dotted_keys(value, path + ".")
+        else:
+            keys.append(path)
+    return keys
 
 
 def read_config(path: str | Path, island: str | None = None, scenario: str | None = None) -> dict:
@@ -104,6 +119,17 @@ def read_config(path: str | Path, island: str | None = None, scenario: str | Non
         bad = {key.split(".")[0] for key in overrides} - set(SCENARIO_SECTIONS)
         if bad:
             raise ValueError(f"Scenario {scenario!r} overrides {sorted(bad)}; allowed: {SCENARIO_SECTIONS}")
+        fixed = sorted(
+            key
+            for key in _dotted_keys(overrides)
+            for setting in SCENARIO_FIXED
+            if key == setting or key.startswith(setting + ".") or setting.startswith(key + ".")
+        )
+        if fixed:
+            raise ValueError(
+                f"Scenario {scenario!r} overrides {fixed}, but {list(SCENARIO_FIXED)} are the same for all "
+                "scenarios (bus detours are computed once per island); change them in the base config instead"
+            )
         cfg = deep_merge(cfg, overrides)
     return cfg
 

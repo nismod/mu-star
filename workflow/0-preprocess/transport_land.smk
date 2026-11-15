@@ -15,7 +15,7 @@ per island):
     roads ──> road network ──┬─> bus network ──┐                                        │
     bus stops/routes/times ──┘                 ├─> multimodal network (+ zone connectors)
     metro stations/lines ──> metro network ────┘                                        │
-                                                       road skim ─> radiation OD ─> demand by mode
+              road network ──> car base network ──> road skim ─> radiation OD ─> demand by mode
 
     Part 2 (workflow/2-losses/transport_land.smk): baseline assignment, criticality.
 
@@ -47,9 +47,6 @@ TL_SCRIPTS = "workflow/0-preprocess"
 
 TL_NATIONAL = "{data}/processed/transport/national"
 TL_ISLAND = "{data}/processed/transport/{island}"
-# The scenario whose network gives the road skim (road layers do not depend on
-# scenario settings).
-TL_BASE_SCENARIO = "central"
 
 
 def tl_input(key):
@@ -337,6 +334,32 @@ rule transport_metro_network:
         """
 
 
+rule transport_bus_detours:
+    """
+    For each road edge that buses use, failed on its own: how each bus route
+    over it detours between stops, which stops it skips, and where it is cut
+    (src/transport/detours.py). Uses the base settings for the island
+    (criticality.bus_detour, bus.speed_factor), which scenarios may not
+    change, so it runs once for all scenarios.
+
+    Test with:
+    snakemake -c1 data/processed/transport/mauritius/networks/bus/detours.parquet
+    """
+    input:
+        road_edges=rules.transport_road_network.output.edges,
+        bus_stops=rules.transport_bus_network.output.stops,
+        bus_segments=rules.transport_bus_network.output.segments,
+        script=f"{TL_SCRIPTS}/transport_bus_detours.py",
+    output:
+        detours=f"{TL_ISLAND}/networks/bus/detours.parquet",
+    shell:
+        """
+        python {input.script} --config {TL_CONFIG} --island {wildcards.island} \
+            --road-edges {input.road_edges} --bus-stops {input.bus_stops} \
+            --bus-segments {input.bus_segments} --output {output.detours}
+        """
+
+
 rule transport_multimodal_network:
     """
     Combine road, bus and metro into one directed network for transport_flow_model,
@@ -357,7 +380,9 @@ rule transport_multimodal_network:
     (road edge, metro segment, metro station), listing every network link it
     removes.
 
-    Network costs, capacities and bus detours depend on the {scenario}.
+    Network costs and capacities depend on the {scenario}. Bus detours come
+    from transport_bus_detours (the same for every scenario); the fares on
+    detoured bus links use the scenario's fares.
 
     Test with:
     snakemake -c1 data/processed/transport/mauritius/networks/multimodal/h3-r8/central/links.parquet
@@ -367,6 +392,7 @@ rule transport_multimodal_network:
         road_nodes=rules.transport_road_network.output.nodes,
         bus_stops=rules.transport_bus_network.output.stops,
         bus_segments=rules.transport_bus_network.output.segments,
+        bus_detours=rules.transport_bus_detours.output.detours,
         metro_stations=rules.transport_metro_network.output.stations,
         metro_segments=rules.transport_metro_network.output.segments,
         zones=rules.transport_zones.output.zones,
@@ -381,10 +407,39 @@ rule transport_multimodal_network:
             --island {wildcards.island} --scenario {wildcards.scenario} \
             --road-edges {input.road_edges} --road-nodes {input.road_nodes} \
             --bus-stops {input.bus_stops} --bus-segments {input.bus_segments} \
+            --bus-detours {input.bus_detours} \
             --metro-stations {input.metro_stations} --metro-segments {input.metro_segments} \
             --zones {input.zones} \
             --output-links {output.links} --output-nodes {output.nodes} \
             --output-failure-units {output.failure_units}
+        """
+
+
+rule transport_car_network:
+    """
+    The car base network for the road skim: directed road links and car
+    connectors (zone/<id>/car to the nearest road nodes), with free-flow time
+    and length. It has no scenario settings, so the demand estimation that
+    all scenarios share does not depend on any one scenario. Zones with no
+    road node within connectors.car_max_km get no connector and are listed
+    in zones-without-car-access.csv.
+
+    Test with:
+    snakemake -c1 data/processed/transport/mauritius/networks/car/h3-r8/links.parquet
+    """
+    input:
+        road_edges=rules.transport_road_network.output.edges,
+        road_nodes=rules.transport_road_network.output.nodes,
+        zones=rules.transport_zones.output.zones,
+        script=f"{TL_SCRIPTS}/transport_car_network.py",
+    output:
+        links=f"{TL_ISLAND}/networks/car/{{zoning}}/links.parquet",
+        no_access=f"{TL_ISLAND}/networks/car/{{zoning}}/zones-without-car-access.csv",
+    shell:
+        """
+        python {input.script} --config {TL_CONFIG} --island {wildcards.island} \
+            --road-edges {input.road_edges} --road-nodes {input.road_nodes} --zones {input.zones} \
+            --output-links {output.links} --output-no-access {output.no_access}
         """
 
 
@@ -394,14 +449,14 @@ rule transport_multimodal_network:
 rule transport_road_skim:
     """
     Free-flow shortest-path time and distance between every pair of zone car
-    centroids on the road network (connectors included): the impedance for
+    centroids on the car base network (connectors included): the impedance for
     the radiation model and its calibration.
 
     Test with:
     snakemake -c1 data/processed/transport/mauritius/demand/h3-r8/road-skim.parquet
     """
     input:
-        links=f"{TL_ISLAND}/networks/multimodal/{{zoning}}/{TL_BASE_SCENARIO}/links.parquet",
+        links=rules.transport_car_network.output.links,
         zones=rules.transport_zones.output.zones,
         script=f"{TL_SCRIPTS}/transport_road_skim.py",
     output:

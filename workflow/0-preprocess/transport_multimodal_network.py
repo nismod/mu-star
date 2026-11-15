@@ -17,34 +17,12 @@ import click
 import geopandas
 import numpy as np
 import pandas as pd
-from scipy.spatial import cKDTree
 
 from transport.costs import generalised_cost
-from transport.detours import bus_detours
+from transport.detours import read_detours
 from transport.land import LINK_COLUMNS, peak_capacity, read_config, zone_node
-
-INF = float("inf")
-
-
-def nearest_pairs(points_a, points_b, k, max_m):
-    """(index_a, index_b, distance_m) for up to k neighbours in b of each point in a, within max_m."""
-    if len(points_a) == 0 or len(points_b) == 0:
-        empty = np.array([], dtype=int)
-        return empty, empty, np.array([], dtype=float)
-    tree = cKDTree(np.c_[points_b.x, points_b.y])
-    k = min(k, len(points_b))
-    dist, idx = tree.query(np.c_[points_a.x, points_a.y], k=k, distance_upper_bound=max_m)
-    dist, idx = dist.reshape(len(points_a), -1), idx.reshape(len(points_a), -1)
-    a = np.repeat(np.arange(len(points_a)), dist.shape[1])
-    keep = np.isfinite(dist.ravel())
-    return a[keep], idx.ravel()[keep], dist.ravel()[keep]
-
-
-def both_ways(df, prefix):
-    """Duplicate access links in both directions (…/in towards the network, …/out back to the zone)."""
-    inbound = df.assign(edge_id=prefix + "/in")
-    outbound = df.rename(columns={"edge_from": "edge_to", "edge_to": "edge_from"}).assign(edge_id=prefix + "/out")
-    return pd.concat([inbound, outbound], ignore_index=True)
+from transport.network import INF, car_connectors, nearest_pairs
+from transport.network import road_links as directed_road_links
 
 
 @click.command()
@@ -55,6 +33,7 @@ def both_ways(df, prefix):
 @click.option("--road-nodes", required=True)
 @click.option("--bus-stops", required=True)
 @click.option("--bus-segments", required=True)
+@click.option("--bus-detours", required=True, help="detours.parquet from transport_bus_detours.py")
 @click.option("--metro-stations", required=True)
 @click.option("--metro-segments", required=True)
 @click.option("--zones", required=True)
@@ -69,6 +48,7 @@ def main(
     road_nodes,
     bus_stops,
     bus_segments,
+    bus_detours,
     metro_stations,
     metro_segments,
     zones,
@@ -92,49 +72,14 @@ def main(
 
     parts = []
 
-    # Roads: one directed link per direction of travel.
+    # Roads: one directed link per direction of travel. Car connectors:
+    # zone/<id>/car <-> k nearest road nodes (as in the car base network, which
+    # also reports the zones left without one).
     if cfg["road"]["capacity_constrained"]:
         road_cap = roads["capacity_vph"] * hours * cfg["period"]["car_occupancy"]
     else:
-        road_cap = pd.Series(INF, index=roads.index)
-    road = pd.DataFrame(
-        {
-            "edge_id": "road/" + roads["edge_id"] + "/ab",
-            "edge_from": "road/" + roads["from_node"],
-            "edge_to": "road/" + roads["to_node"],
-            "layer": "road",
-            "mode": "car",
-            "asset_id": roads["edge_id"],
-            "length_km": roads["length_km"],
-            "time_min": roads["time_min"],
-            "fare": 0.0,
-            "capacity": road_cap,
-        }
-    )
-    reverse = road[~roads["oneway"].to_numpy()].copy()
-    reverse["edge_id"] = reverse["edge_id"].str.replace(r"/ab$", "/ba", regex=True)
-    reverse[["edge_from", "edge_to"]] = reverse[["edge_to", "edge_from"]].to_numpy()
-    parts += [road, reverse]
-
-    # Car connectors: zone/<id>/car <-> k nearest road nodes.
-    za, nb, dist = nearest_pairs(zones.geometry, rnodes.geometry, conn["car_k"], conn["car_max_km"] * 1000)
-    km = dist / 1000.0
-    car_conn = pd.DataFrame(
-        {
-            "edge_from": [zone_node(z, "car") for z in zones["zone_id"].to_numpy()[za]],
-            "edge_to": "road/" + rnodes["node_id"].to_numpy()[nb],
-            "layer": "car_connector",
-            "mode": "car",
-            "asset_id": None,
-            "length_km": km,
-            "time_min": km / conn["car_speed_kph"] * 60.0,
-            "fare": 0.0,
-            "capacity": INF,
-        }
-    )
-    prefix = "connector/car/" + zones["zone_id"].to_numpy()[za] + "/" + rnodes["node_id"].to_numpy()[nb]
-    parts.append(both_ways(car_conn, prefix))
-    # TODO: report zones with no road node within car_max_km (they get no car trips).
+        road_cap = INF
+    parts += [directed_road_links(roads, road_cap), car_connectors(zones, rnodes, conn)]
 
     # Bus: in-vehicle segments, boarding and alighting.
     route_node = lambda r, d, s: f"bus/{r}/{d}/{s}"  # noqa: E731
@@ -377,20 +322,10 @@ def main(
     # Failure units: what each physical asset takes with it when it fails.
     # A road edge removes its road links. Buses over it detour, skip stops
     # that cannot be reached (their boarding / alighting links are removed),
-    # or are cut (transport.detours); detoured bus links are kept with new
-    # times and lengths (link_changes).
+    # or are cut (transport_bus_detours, the same for every scenario);
+    # detoured bus links are kept with new times, lengths and fares (link_changes).
     road_links = links[links.layer == "road"].groupby("asset_id")["edge_id"].agg(list)
-    bus_road_edges = sorted({e for ids in bus["road_edge_ids"] for e in ids})
-    detour_cfg = cfg["criticality"]["bus_detour"]
-    detours = bus_detours(
-        roads,
-        bus,
-        stops.set_index("stop_id")["road_node"].to_dict(),
-        bus_road_edges,
-        speed_factor=cfg["bus"]["speed_factor"],
-        max_skipped_stops=detour_cfg["max_skipped_stops"],
-        max_detour_factor=detour_cfg["max_detour_factor"],
-    )
+    detours = read_detours(bus_detours)
     fares_bus = cfg["cost"]["fare"]["bus"]
 
     def removed_and_changed(asset, base_links):

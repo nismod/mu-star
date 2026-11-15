@@ -339,6 +339,8 @@ transport_land:
     other_purpose_load_share: 0.3
     # Only used where a between-stop time is missing: bus in-vehicle speed as a
     # share of car free-flow speed on the same road edges, plus dwell time.
+    # Also scales bus detour times. Not varied by scenarios (bus detours are
+    # computed once per island).
     speed_factor: 0.7
     dwell_min: 0.5
   metro:
@@ -386,6 +388,8 @@ transport_land:
     # the extra road time / bus.speed_factor), and otherwise skip stops that
     # cannot be reached (no boarding or alighting there) up to max_skipped_stops
     # in a row. Beyond that, the route is cut at the failure.
+    # Not varied by scenarios: detours are computed once per island
+    # (transport_bus_detours).
     bus_detour:
       max_skipped_stops: 3
       # Ignore detours longer than this many times the original road time.
@@ -402,6 +406,8 @@ transport_land:
   # Named sets of overrides for sensitivity runs, applied from the multimodal
   # network onwards (sections: mode_split, period, cost, bus, metro,
   # criticality, school). Dotted keys are allowed. "central" is the base case.
+  # Except bus.speed_factor and criticality.bus_detour, which are shared by
+  # all scenarios.
   scenarios:
     central: {}
     commute-low:

@@ -112,3 +112,32 @@ def test_match_codes_by_name_within_district():
     districts = {"12": "Pamplemousses", "13": "Rivière du Rempart", "18": "Moka", "14": "Flacq"}
     codes = match_codes(areas, lookup, districts, {"Nowhere|Flacq": "1499"})
     assert codes.tolist() == ["1201", "1304", "1801", "2101", "1499"]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"bus.speed_factor": 0.5},
+        {"bus": {"speed_factor": 0.5}},
+        {"criticality.bus_detour.max_skipped_stops": 1},
+        {"criticality": {"bus_detour": {"max_detour_factor": 2.0}}},
+        {"criticality.bus_detour": {"max_skipped_stops": 1}},
+    ],
+)
+def test_scenarios_cannot_change_bus_detour_settings(tmp_path, overrides):
+    import yaml
+
+    from transport.land import read_config
+
+    cfg = {
+        "transport_land": {
+            "bus": {"speed_factor": 0.7, "vehicle_capacity": 70},
+            "criticality": {"bus_detour": {"max_skipped_stops": 3}, "n_batches": 4},
+            "scenarios": {"fixed": overrides, "ok": {"bus.vehicle_capacity": 60, "criticality": {"n_batches": 2}}},
+        }
+    }
+    path = tmp_path / "c.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+    assert read_config(path, scenario="ok")["bus"]["vehicle_capacity"] == 60
+    with pytest.raises(ValueError, match="same for all scenarios"):
+        read_config(path, scenario="fixed")

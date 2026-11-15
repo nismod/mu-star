@@ -1,6 +1,7 @@
 """Free-flow road skim between zone car centroids.
 
-Uses road and car_connector links only, directed. The shortest-path searches
+Runs on the car base network (transport_car_network: road and car_connector
+links, directed, no scenario settings). The shortest-path searches
 are transport_flow_model's RadiationModel.impedance_matrix (igraph Dijkstra).
 Time is the shortest free-flow time. Distance is the shortest distance, from a
 separate search, so it is not always the length of the fastest route. That is
@@ -35,8 +36,8 @@ def main(config_path, links, zones, output):
     links = links[links.layer.isin(["road", "car_connector"])]
     linked = set(links.edge_from)
     zone_ids = pd.read_parquet(zones, columns=["zone_id"])["zone_id"]
-    # Zones with no road node within connectors.car_max_km have no car centroid links.
-    # TODO: report them.
+    # Zones with no road node within connectors.car_max_km have no car centroid
+    # links and are left out (listed in zones-without-car-access.csv).
     zone_ids = zone_ids[[zone_node(z, "car") in linked for z in zone_ids]].to_numpy()
     nodes = [zone_node(z, "car") for z in zone_ids]
 

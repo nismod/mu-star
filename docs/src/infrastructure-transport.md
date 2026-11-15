@@ -58,11 +58,13 @@ WorldPop ───────────────────────�
 economic_activity_h3 (output by sector) ──(output per worker)──> jobs per H3 cell ────────────┤
 schools ──────────────────────────────────────────────────────────────────────────────────────┤
                                                                                   zones {island}
-roads ─> road network ─┬─> bus segments ─┐                                                    │
-bus stops/routes/times ┘                  ├─> multimodal network {scenario} + failure units   │
-metro stations/lines ─> metro segments ───┘          │              (bus detours)              │
-                                                     ├─> road skim ─> work OD, school OD ─> demand by mode {scenario}
-                                                     └──────────> baseline assignment <───────┘
+roads ─> road network ─┬─> bus segments ─┬─> bus detours ─┐                                   │
+bus stops/routes/times ┘                 └────────────────┤                                   │
+metro stations/lines ─> metro segments ───────────────────┴─> multimodal network {scenario}   │
+                                                              + failure units                 │
+road network ─> car base network ─> road skim ─> work OD, school OD <─────────────────────────┘
+                                                 └─> demand by mode {scenario}
+                       multimodal network + demand by mode ─> baseline assignment
                                                                         │
                                                        failure sets ─> criticality batches ─> asset criticality
 ```
@@ -77,7 +79,8 @@ metro stations/lines ─> metro segments ───┘          │              
 | Jobs layer (stub)                | `economic_activity_h3` in `workflow/0-preprocess/economy.smk`          |
 | Parameters                       | `config/transport/transport.yaml`                                      |
 | Scripts                          | next to the rule files                                                 |
-| Helpers                          | `src/transport/` (`census.py`, `costs.py`, `detours.py`, `fallback.py`, `fares.py`, `land.py`) |
+| Helpers                          | `src/transport/` (`census.py`, `costs.py`, `detours.py`, `fallback.py`, `fares.py`, `land.py`, `network.py`) |
+| Synthetic test network           | `src/transport/testing.py`, used by `src/transport/tests/test_integration.py` |
 
 ```bash
 # everything: both islands, default zoning, default scenarios
@@ -108,8 +111,10 @@ for example `mode_split.ridership.commute_fraction: {bus: 0.3, metro: 0.3}`.
 - *What they can change*: mode split, period, cost, bus, metro, school and
   criticality settings. These feed the multimodal network, the mode split,
   assignment and criticality.
-- *What they share*: zones, the OD estimates and the road skim are the same
-  for every scenario.
+- *What they share*: zones, the car base network, the OD estimates, the
+  road skim and the bus detours are the same for every scenario. So
+  `bus.speed_factor` and `criticality.bus_detour` cannot be set in a
+  scenario (`read_config` raises an error if they are).
 - *Defaults*: the scenarios run by default are listed in
   `default_scenarios`: commute fractions of 0.5 (`central`), 0.3 and 0.7.
 
@@ -261,6 +266,13 @@ is the fallback.
   car).
 - Walk and cycle trips are counted, not assigned.
 
+**Car base network.** The road skim runs on its own network: the directed
+road links and car connectors, with free-flow time and length and no
+scenario settings (`transport_car_network`). The multimodal network builds
+the same links with the same code (`transport.network`). Zones with no
+road node within `connectors.car_max_km` get no car connector, and so no car
+trips. They are listed in `zones-without-car-access.csv`.
+
 **Multimodal network.** Node and link naming is documented in
 `src/transport/land.py`.
 
@@ -291,8 +303,10 @@ capacity × (1 − other_purpose_load_share)`. Roads are unconstrained.
 - a *metro station closure* removes every boarding and alighting link at the
   station.
 
-**Bus detours** (`transport.detours`). When a road edge fails, each bus route
-over it is handled stop by stop:
+**Bus detours** (`transport.detours`, rule `transport_bus_detours`). They
+are computed once per island, for every road edge that buses use, and
+written to `detours.parquet`. When a road edge fails, each bus route over it
+is handled stop by stop:
 
 1. *Detour*: take the fastest road path avoiding the failure between the same
    two stops. The in-vehicle time becomes the scheduled time plus (detour road
@@ -304,8 +318,8 @@ over it is handled stop by stop:
 3. *Cut*: if no stop can be reached, the segment is removed and the route is
    cut there.
 
-Detoured bus links are stored on the failure unit as `link_changes` (new time,
-length and fare). Passengers on them keep their path, with the new journey
+The multimodal network turns them into `link_changes` on the failure unit
+(new time, length and fare, with the scenario's fares). Passengers on them keep their path, with the new journey
 time.
 
 **Baseline.** All purposes and modes are assigned together:
@@ -402,7 +416,10 @@ Mauritius is about 2,500 H3 resolution-8 cells.
 - *Criticality*: 64 batches per island and scenario, so `transport_land_all`
   is 436 jobs for 2 islands × 3 scenarios.
 - *Bus detours*: one Dijkstra (with a limit) per stretch per failed road edge
-  that buses use.
+  that buses use, once per island. The road graph is built once, and each
+  failure only swaps the weights of its own arcs (the next fastest parallel
+  arc takes over), so a 60 × 60 grid with 232 failed edges takes about
+  0.15 s.
 - *Still to measure*: the criticality runtime. Merging degree-2 road nodes
   would cut the number of edges.
 
@@ -421,7 +438,9 @@ Mauritius is about 2,500 H3 resolution-8 cells.
 | `transport_road_network`            | written; run on toy data                                                   |
 | `transport_bus_network`             | draft (fare stages; road mapping without map matching); run on toy data    |
 | `transport_metro_network`           | draft (lines, journey-time checks); run on toy data, including no metro    |
-| `transport_multimodal_network`      | draft, with bus detours; run on toy data                                   |
+| `transport_bus_detours`             | written; run on toy data                                                   |
+| `transport_multimodal_network`      | draft; run on toy data                                                     |
+| `transport_car_network`             | written (reports zones without car access); run on toy data                |
 | `transport_road_skim`               | written; run on toy data                                                   |
 | `transport_radiation_od`            | written, calibration; run on toy data                                      |
 | `transport_school_od`               | draft; run on toy data                                                     |
@@ -437,7 +456,9 @@ Mauritius is about 2,500 H3 resolution-8 cells.
 route, a three-station metro line, a mock CA27, three schools and an
 inter-island fixture. The DAG has been checked with `snakemake -n` for both
 islands, three scenarios and the inter-island rules. Helper modules have
-unit tests (`src/transport/tests`).
+unit tests (`src/transport/tests`), and `test_integration.py` runs every land
+transport script on the same toy network (generated by
+`src/transport/testing.py`) and checks the main results.
 
 ### Decisions so far
 
