@@ -12,20 +12,11 @@ import pandas as pd
 from snail.damages import DamageCurve
 
 from damages.config import ConfigError, CostParameters, DamageConfig
+from damages.quantity import GEOMETRY_KINDS
 
 CALCULATED = "calculated"
 NOT_VULNERABLE = "not_vulnerable"
 NOT_CONFIGURED = "not_configured"
-
-GEOMETRY_KINDS = {
-    "Point": "point",
-    "MultiPoint": "point",
-    "LineString": "line",
-    "MultiLineString": "line",
-    "LinearRing": "line",
-    "Polygon": "polygon",
-    "MultiPolygon": "polygon",
-}
 
 
 @dataclass

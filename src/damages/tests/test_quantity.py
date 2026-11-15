@@ -3,7 +3,13 @@ import numpy as np
 import pytest
 from shapely.geometry import LineString, Point, box
 
-from damages.quantity import measure_splits, parse_cost_unit, split_quantity
+from damages.quantity import (
+    asset_totals,
+    conservation_mismatches,
+    measure_splits,
+    parse_cost_unit,
+    split_quantity,
+)
 
 
 @pytest.mark.parametrize(
@@ -49,6 +55,7 @@ def test_measure_splits():
     assert splits.length_m.tolist() == pytest.approx([300, 700, 0, 0])
     assert splits.area_m2.tolist() == pytest.approx([0, 0, 200, 0])
     assert splits.share.tolist() == pytest.approx([0.3, 0.7, 1, 1])
+    assert splits.geom_kind.tolist() == ["line", "line", "polygon", "point"]
 
 
 def test_split_quantity():
@@ -64,3 +71,71 @@ def test_split_quantity():
         split_quantity(point, parse_cost_unit("mur_per_mw"))
     with pytest.raises(ValueError, match="finite"):
         split_quantity(lines, parse_cost_unit("mur_per_capacity_mw"))
+
+
+def test_split_quantity_zero_measure_slivers():
+    splits = gpd.GeoDataFrame(
+        {
+            "asset_id": ["a", "a", "b", "b"],
+            "geometry": [
+                LineString([(0, 0), (1000, 0)]),
+                LineString([(1000, 0), (1000, 0)]),
+                box(0, 0, 10, 20),
+                box(10, 0, 10, 20),
+            ],
+        },
+        crs="EPSG:32740",
+    )
+    splits = measure_splits(splits)
+    lines, areas = splits.iloc[:2], splits.iloc[2:]
+    assert lines.share.tolist() == pytest.approx([1, 0])
+    assert split_quantity(lines, parse_cost_unit("mur_per_km")) == pytest.approx([1, 0])
+    assert split_quantity(areas, parse_cost_unit("mur_per_m2")) == pytest.approx([200, 0])
+    # all-zero measure of the right kind is fine with geom_kind, wrong kind is not
+    degenerate = measure_splits(splits.iloc[[1]])
+    assert split_quantity(degenerate, parse_cost_unit("mur_per_m")) == pytest.approx([0])
+    with pytest.raises(ValueError, match="polygon"):
+        split_quantity(lines, parse_cost_unit("mur_per_m2"))
+    # without geom_kind, only an all-zero measure is rejected
+    legacy = lines.drop(columns="geom_kind")
+    assert split_quantity(legacy, parse_cost_unit("mur_per_m")) == pytest.approx([1000, 0])
+    with pytest.raises(ValueError, match="positive"):
+        split_quantity(legacy.iloc[[1]], parse_cost_unit("mur_per_m"))
+
+
+def test_conservation_mismatches():
+    features = gpd.GeoDataFrame(
+        {
+            "asset_id": ["a", "b", "c", "d", "e"],
+            "geometry": [
+                LineString([(0, 0), (1000, 0)]),
+                LineString([(0, 10), (1000, 10)]),
+                box(0, 0, 10, 20),
+                Point(0, 0),
+                LineString([(0, 20), (100, 20)]),
+            ],
+        },
+        crs="EPSG:32740",
+    )
+    expected = asset_totals(features)
+    assert expected.tolist() == pytest.approx([1000, 1000, 200, 0, 100])
+    splits = gpd.GeoDataFrame(
+        {
+            "asset_id": ["a", "a", "b", "c", "c", "d"],
+            "geometry": [
+                LineString([(0, 0), (400, 0)]),
+                LineString([(400, 0), (1000, 0)]),
+                LineString([(0, 10), (900, 10)]),  # lost 10%
+                box(0, 0, 10, 10),
+                box(0, 10, 10, 20),
+                Point(0, 0),
+            ],
+        },
+        crs="EPSG:32740",
+    )
+    result = conservation_mismatches(expected, measure_splits(splits))
+    # b lost 10%, e has no splits at all
+    assert result.index.tolist() == ["e", "b"]
+    assert result.rel_diff.tolist() == pytest.approx([1.0, 0.1])
+    assert result.actual.tolist() == pytest.approx([0, 900])
+    assert conservation_mismatches(expected, measure_splits(splits), rtol=1.0).empty

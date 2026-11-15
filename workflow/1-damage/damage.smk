@@ -24,19 +24,14 @@ Run the example with:
     snakemake -c1 example/results/damage/summary.csv --configfile example/config.yaml
 """
 
-import pandas as pd
+from damages.metadata import read_metadata_table
 
 
-def read_metadata_table(path, key_columns):
-    table = pd.read_csv(path, comment="#", dtype=str, skipinitialspace=True).dropna(how="all")
-    missing = set(key_columns) - set(table.columns)
-    if missing:
-        raise ValueError(f"{path} is missing columns {sorted(missing)}")
-    return table.set_index(key_columns, drop=False)
-
-
-DAMAGE_LAYERS = read_metadata_table(config["metadata"]["layer"], ["layer"])
-DAMAGE_HAZARDS = read_metadata_table(config["metadata"]["hazard"], ["peril", "subperil"])
+# Fail at parse time, listing every problem, if the metadata tables are invalid
+DAMAGE_LAYERS = read_metadata_table(config["metadata"]["layer"], "layer").set_index("layer", drop=False)
+DAMAGE_HAZARDS = read_metadata_table(config["metadata"]["hazard"], "hazard").set_index(
+    ["peril", "subperil"], drop=False
+)
 
 
 def layer_metadata(wildcards):

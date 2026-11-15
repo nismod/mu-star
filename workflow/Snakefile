@@ -12,8 +12,8 @@ include: "5-visualise/hazard.smk"
 
 wildcard_constraints:
     layer=r"layer-\w+",
-    peril=r"peril-(flood|cyclone)",
-    subperil=r"subperil-(wind|fluvial|pluvial|coastal)",
+    peril=r"peril-\w+",
+    subperil=r"subperil-\w+",
     ensemble=r"ensemble-\d+",
     scenario=r"[A-Za-z0-9][A-Za-z0-9_-]*",
     sector = r"transport|energy|water|building",

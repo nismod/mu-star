@@ -56,3 +56,11 @@ def test_build_datasets_and_summary():
     assert table.columns[:2].tolist() == ["layer", "peril"]
     assert {"q_05", "q_50", "q_95", "n_assets", "currency"} <= set(table.columns)
     assert table.loc[table.metric == "ead", "return_period"].isna().all()
+
+
+def test_empty_summary_table():
+    from damages.output import empty_summary_table
+
+    table = empty_summary_table()
+    assert table.empty
+    assert {"layer", "peril", "subperil", "metric", "asset_type", "return_period"} <= set(table.columns)
