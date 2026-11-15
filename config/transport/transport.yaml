@@ -185,6 +185,7 @@ transport_land:
       # Reported approximations (different periods and day types):
       # bus ~412,000-425,000/day (June 2026 parliamentary estimate);
       # metro 35,000-36,000/day (July 2026), 42,000 recorded weekday (FY2024/25).
+      # Sensitivity: bus 410,000-425,000; metro 35,000-42,000.
       boardings_per_day: {bus: 412000, metro: 36000}
       # Share of boardings that are journeys to or from work. Unknown (no
       # survey): an uncalibrated parameter for sensitivity runs. TODO.
@@ -220,7 +221,7 @@ transport_land:
     # Commuting value of time, Rs 85/hour (central; range 55-130), from 2025
     # average employee earnings (Rs 37,200/month, ~Rs 215/hour). Model
     # assumption, the same for every mode. Not an agreed appraisal value. TODO.
-    per_minute: 1.42
+    per_minute: 1.42  # sensitivity: Rs 55-130/hour (0.92-2.17 per minute)
     per_km:
       # Perceived car cost per person-km: fuel plus maintenance, ~Rs 8 per
       # vehicle-km (petrol Rs 77.70/l at 6-9 l/100 km is Rs 4.7-7.0/km), over
@@ -280,6 +281,10 @@ transport_land:
     default_headway_min: 20
     # Standard vehicle size (passengers, seated + standing). TODO: confirm.
     vehicle_capacity: 70
+    # Share of peak bus capacity taken by trips that are not journeys to work
+    # (school, other purposes), which commuters cannot use. Unknown. TODO:
+    # sensitivity; school and work trips both load the weekday peak.
+    other_purpose_load_share: 0.3
     # Only used where a between-stop time is missing: bus in-vehicle speed as a
     # share of car free-flow speed on the same road edges, plus dwell time.
     speed_factor: 0.7
@@ -289,12 +294,21 @@ transport_land:
     # incl. standing). Main line Place d'Armes (Port Louis) - Curepipe Central,
     # ~26 km, ~52 min end to end (~30 km/h).
     vehicle_capacity: 422
+    # Share of peak metro capacity taken by non-work trips. Students are about
+    # 15-18% of metro passengers (2022); other purposes unknown. TODO.
+    other_purpose_load_share: 0.25
+    # Published journey times, used to check the network's run times
+    # (station names as in metro_stations.gpkg "name"). TODO: check names.
+    journey_time_checks:
+      - {from: Place d'Armes, to: Curepipe Central, minutes: 52}
+      - {from: Place d'Armes, to: Rose Hill Central, minutes: 23}
+      - {from: Place d'Armes, to: Quatre Bornes, minutes: 29}
     default_speed_kph: 30  # used where run times are missing
     # Peak headway by line (line_id in metro_line_stations.csv). Nominal 10 min
     # on the main line; the Rose Hill - Reduit branch is a model assumption
     # (published 10-15 min Mon-Thu, 20-25 min Fri-Sun). Sensitivity 10-25 min.
     headway_min:
-      main: 10
+      main: 10  # sensitivity 10-25 for both lines
       branch: 15
     default_headway_min: 10
 

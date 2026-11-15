@@ -103,7 +103,31 @@ def main(config_path, stations, lines, line_stations, output_stations, output_se
                         "geometry": piece,
                     }
                 )
-    geopandas.GeoDataFrame(rows, columns=SEGMENT_COLUMNS, crs=crs).to_parquet(output_segments)
+    segments = geopandas.GeoDataFrame(rows, columns=SEGMENT_COLUMNS, crs=crs)
+    segments.to_parquet(output_segments)
+    check_journey_times(segments, calls, metro.get("journey_time_checks") or [])
+
+
+def check_journey_times(segments, calls, checks):
+    """Compare in-vehicle times along the network with published journey times (prints a table)."""
+    import networkx as nx
+
+    if not checks or "name" not in calls:
+        return
+    graph = nx.DiGraph()
+    for row in segments.itertuples():
+        graph.add_edge(row.from_station, row.to_station, weight=row.time_min)
+    station_of = calls.drop_duplicates("station_id").set_index("name")["station_id"]
+    for check in checks:
+        a, b = station_of.get(check["from"]), station_of.get(check["to"])
+        if a is None or b is None:
+            print(f"journey time check: station not found: {check['from']!r} or {check['to']!r}")
+            continue
+        modelled = nx.shortest_path_length(graph, a, b, weight="weight")
+        print(
+            f"journey time check: {check['from']} - {check['to']}: "
+            f"modelled {modelled:.0f} min, published {check['minutes']} min"
+        )
 
 
 if __name__ == "__main__":

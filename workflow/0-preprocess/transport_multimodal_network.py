@@ -144,7 +144,9 @@ def main(
             "time_min": bus["time_min"],
             # Stage fares approximated as boarding + per km (cost.fare.bus).
             "fare": fares["bus"]["per_km"] * bus["length_km"],
-            "capacity": peak_capacity(bus["headway_min"], bus["vehicle_capacity"], hours),
+            # Commuters only get the capacity left by other purposes (e.g. school).
+            "capacity": peak_capacity(bus["headway_min"], bus["vehicle_capacity"], hours)
+            * (1.0 - cfg["bus"]["other_purpose_load_share"]),
         }
     )
     calls = pd.concat(
@@ -205,7 +207,8 @@ def main(
             "length_km": metro["length_km"],
             "time_min": metro["time_min"],
             "fare": fares["metro"]["per_km"] * metro["length_km"],
-            "capacity": peak_capacity(metro["headway_min"], metro["capacity_per_train"], hours),
+            "capacity": peak_capacity(metro["headway_min"], metro["capacity_per_train"], hours)
+            * (1.0 - cfg["metro"]["other_purpose_load_share"]),
         }
     )
     mcalls = pd.concat(

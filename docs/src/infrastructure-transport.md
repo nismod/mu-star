@@ -252,6 +252,8 @@ published value.
 | Main line headway | 10 min | Published nominal (Metro Express). Sensitivity 10–25 |
 | Branch headway | 15 min | Assumption (published 10–15 Mon–Thu, 20–25 Fri–Sun) |
 | Vehicle capacity | 422 | Published maximum, incl. standing (CAF Urbos 100, 18 vehicles) |
+| Peak capacity used by non-work trips | 25% | Assumption: students are 15–18% of metro passengers; other purposes unknown |
+| Journey-time checks | Port Louis – Curepipe 52, – Rose Hill 23, – Quatre Bornes 29 min | Published itinerary; compared with modelled run times when the network is built |
 | Speed where no run times are given | 30 km/h | Main line ~26 km in ~52 min |
 
 **Bus service**
@@ -259,6 +261,7 @@ published value.
 | Parameter | Value | Source / status |
 | --- | --- | --- |
 | Vehicle capacity | 70 | Assumption (standard vehicle) |
+| Peak capacity used by non-work trips | 30% | Assumption (school and other purposes also load the weekday peak) |
 
 **Fares**
 
@@ -410,8 +413,11 @@ open questions).
 
 Each link's cost is `per_minute × time_min + per_km[mode] × length_km + fare`.
 Capacity is in persons per modelled period. For bus and metro it is
-`(60 / headway) × hours × vehicle capacity`, so the metro main line carries
-2,532 per hour per direction. Roads are unconstrained.
+`(60 / headway) × hours × vehicle capacity × (1 − other_purpose_load_share)`.
+The metro main line's full theoretical capacity is 2,532 per hour per
+direction. The `other_purpose_load_share` factor reserves the part used by
+school and other non-work trips, because only journeys to work are modelled.
+Roads are unconstrained.
 
 **Failure units.** Each physical asset is one failure unit, listing every link
 it removes:
@@ -555,9 +561,12 @@ the inter-island rules.
    column names (`h3_index`, `gva_<ISIC section>`) right?
 4. **Census zone table.** Which file and column headers? Is the census
    island code for Rodrigues 2?
-5. **Commute fractions.** The bus and metro commute fractions are unknown.
-   Should we run a sensitivity range (e.g. 0.3 / 0.5 / 0.7) as a scenario
-   wildcard?
+5. **Commute fractions and other purposes.** The bus and metro commute
+   fractions, and the share of peak capacity taken by school and other
+   trips, are unknown. Should we run a sensitivity range (e.g. 0.3 / 0.5 /
+   0.7), for example as a scenario wildcard, along with the value of time
+   (Rs 55–130/h) and metro headways (10–25 min)? Or model school trips as a
+   second purpose class?
 6. **Rodrigues ridership.** National boardings don't apply to Rodrigues.
    Which bus ridership figures exist for it, or should we use fixed shares
    there?
