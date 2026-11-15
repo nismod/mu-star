@@ -19,6 +19,7 @@ from transport.land import read_config
 @click.option("--failure-sets", required=True)
 @click.option("--road-edges", required=True)
 @click.option("--metro-segments", required=True)
+@click.option("--metro-stations", required=True)
 @click.option("--baseline-summary", required=True)
 @click.option("--output-table", required=True)
 @click.option("--output-spatial", required=True)
@@ -28,6 +29,7 @@ def main(
     failure_sets,
     road_edges,
     metro_segments,
+    metro_stations,
     baseline_summary,
     output_table,
     output_spatial,
@@ -57,7 +59,9 @@ def main(
     roads["asset_type"] = "road"
     metro = geopandas.read_parquet(metro_segments).query("direction == 0")[["segment_id", "geometry"]]
     metro = metro.rename(columns={"segment_id": "asset_id"}).assign(asset_type="metro")
-    shapes = pd.concat([roads, metro], ignore_index=True)
+    stations = geopandas.read_parquet(metro_stations).drop_duplicates("station_id")[["station_id", "geometry"]]
+    stations = stations.rename(columns={"station_id": "asset_id"}).assign(asset_type="metro_station")
+    shapes = pd.concat([roads, metro, stations], ignore_index=True)
     spatial = geopandas.GeoDataFrame(shapes.merge(table, on=["asset_type", "asset_id"]), crs=roads.crs)
     spatial.to_parquet(output_spatial)
 

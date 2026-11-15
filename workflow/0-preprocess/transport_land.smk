@@ -1,30 +1,33 @@
 """Land transport, part 1 of 2: zones, networks and journey-to-work demand.
 
 DRAFT. The rule structure, file locations and wildcards are settled enough to
-build on. Several scripts are stubs (marked TODO) until the input data and the
-open questions in docs/src/infrastructure-transport.md are resolved.
+build on. Several scripts are drafts (marked TODO) until the input data and
+the open questions in docs/src/infrastructure-transport.md are resolved.
 
-Flow of data:
+Flow of data (national inputs at the top; everything from zones onwards is
+per island):
 
-    census CA27 district OD ────────────────────────────────────────┐ (targets / validation)
-    census table + boundaries ──┐
-    WorldPop ───────────────────┼─> residents per H3 cell ─┐
-    H3 economic activity ───────┴─> jobs per H3 cell ──────┼─> zones
-                                                           │
-    roads ──> road network ──┬─> bus network ──┐           │
-    bus stops/routes ────────┘                 ├─> multimodal network (+ zone connectors)
-    metro stations/line ──> metro network ─────┘           │
-                                                           ├─> road skim ─> radiation OD ─> demand by mode
-                                                           │
+    census CA27 district OD ─────────────────────────────────────┐ calibration / validation
+    census zone table + Appendix II districts + boundaries ──┐   │
+    WorldPop ────────────────────────────────────────────────┼─> residents per H3 cell ─┐
+    economic_activity_h3 (output by sector) ─────────────────┴─> jobs per H3 cell ──────┼─> zones {island}
+                                                                                        │
+    roads ──> road network ──┬─> bus network ──┐                                        │
+    bus stops/routes/times ──┘                 ├─> multimodal network (+ zone connectors)
+    metro stations/lines ──> metro network ────┘                                        │
+                                                       road skim ─> radiation OD ─> demand by mode
+
     Part 2 (workflow/2-losses/transport_land.smk): baseline assignment, criticality.
 
 Wildcards:
     {data}    data root (normally "data")
+    {island}  "mauritius" or "rodrigues": separate study areas (no commuting
+              between islands; inter-island flows: transport_interisland.smk)
     {zoning}  zone system for OD and connectors: "h3-r8" (H3 resolution 8).
               Other resolutions work the same way, e.g. "h3-r7".
 
-Run all of part 1 with:
-    snakemake -c4 data/processed/transport/demand/h3-r8/demand-by-mode.parquet
+Run all of part 1 for Mauritius with:
+    snakemake -c4 data/processed/transport/mauritius/demand/h3-r8/demand-by-mode.parquet
 """
 
 from pathlib import Path
@@ -35,40 +38,101 @@ configfile: "config/transport/transport.yaml"
 
 TL = config["transport_land"]
 TL_INPUTS = TL["inputs"]
+TL_ISLANDS = TL["islands"]
 TL_CONFIG = "config/transport/transport.yaml"
 TL_SCRIPTS = "workflow/0-preprocess"
 
-TL_PROCESSED = "{data}/processed/transport"
+TL_NATIONAL = "{data}/processed/transport/national"
+TL_ISLAND = "{data}/processed/transport/{island}"
 
 
 def tl_input(key):
-    """Path of a provided input named in config, under the data root."""
+    """Path of a national input named in config, under the data root."""
     return "{data}/" + TL_INPUTS[key]
 
 
-# --- Population ---------------------------------------------------------------
+def tl_optional_input(key):
+    """Input function: a national input if configured and present, else no input."""
+
+    def resolve(wc):
+        rel = TL_INPUTS.get(key)
+        path = f"{wc.data}/{rel}" if rel else None
+        return [path] if path and Path(path).exists() else []
+
+    return resolve
+
+
+def tl_island_input(key):
+    """Input function: an island's input from config (none if null)."""
+
+    def resolve(wc):
+        rel = TL_ISLANDS[wc.island]["inputs"].get(key)
+        return [f"{wc.data}/{rel}"] if rel else []
+
+    return resolve
+
+
+def tl_flag(name):
+    """Shell fragment '--name path' for an optional single input, or nothing."""
+
+    def resolve(wc, input):
+        values = input.get(name.replace("-", "_"), [])
+        values = [values] if isinstance(values, str) else list(values)
+        return f"--{name} {values[0]}" if values else ""
+
+    return resolve
+
+
+# --- Population (national) ---------------------------------------------------------
 
 
 rule transport_census_zones:
     """
-    Join the census residential-zone table (official population and employed
-    residents) to its zone boundaries. Check that every zone has a boundary and
-    every boundary a census row.
+    Join the 2022 census residential-zone table (official population and
+    employed residents, by 4-digit census code) to its zone boundaries. Drops
+    aggregate rows, takes districts from the Appendix II lookup (or the code
+    prefix) and the island from the first digit.
 
     Test with:
-    snakemake -c1 data/processed/transport/population/census-zones.geoparquet
+    snakemake -c1 data/processed/transport/national/population/census-zones.geoparquet
     """
     input:
         table=tl_input("census_table"),
         boundaries=tl_input("census_boundaries"),
+        districts=tl_optional_input("census_zone_districts"),
         script=f"{TL_SCRIPTS}/transport_census_zones.py",
     output:
-        zones="{data}/processed/transport/population/census-zones.geoparquet",
+        zones=f"{TL_NATIONAL}/population/census-zones.geoparquet",
+    params:
+        districts=tl_flag("districts"),
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
-            --table {input.table} --boundaries {input.boundaries} \
+            --table {input.table} --boundaries {input.boundaries} {params.districts} \
             --output {output.zones}
+        """
+
+
+rule transport_census_district_od:
+    """
+    Parse census Table CA27 (2022; employed population by district of residence
+    and of workplace) into a nine-by-nine district table, the calibration and
+    validation data for the radiation model. The three non-district workplace
+    columns are kept in the summary.
+
+    Test with:
+    snakemake -c1 data/processed/transport/national/population/census-district-od.parquet
+    """
+    input:
+        table=tl_input("census_district_od"),
+        script=f"{TL_SCRIPTS}/transport_census_district_od.py",
+    output:
+        od=f"{TL_NATIONAL}/population/census-district-od.parquet",
+        summary=f"{TL_NATIONAL}/population/census-district-od-summary.json",
+    shell:
+        """
+        python {input.script} --config {TL_CONFIG} --table {input.table} \
+            --output {output.od} --output-summary {output.summary}
         """
 
 
@@ -79,15 +143,15 @@ rule transport_scale_worldpop:
     for review: large ratios point to boundary or vintage mismatches.
 
     Test with:
-    snakemake -c1 data/processed/transport/population/worldpop-scaled.tif
+    snakemake -c1 data/processed/transport/national/population/worldpop-scaled.tif
     """
     input:
         worldpop=tl_input("worldpop"),
         zones=rules.transport_census_zones.output.zones,
         script=f"{TL_SCRIPTS}/transport_scale_worldpop.py",
     output:
-        raster="{data}/processed/transport/population/worldpop-scaled.tif",
-        check="{data}/processed/transport/population/worldpop-census-check.csv",
+        raster=f"{TL_NATIONAL}/population/worldpop-scaled.tif",
+        check=f"{TL_NATIONAL}/population/worldpop-census-check.csv",
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
@@ -103,14 +167,14 @@ rule transport_residents_h3:
     each pixel falls in.
 
     Test with:
-    snakemake -c1 data/processed/transport/zones/h3-r8/residents.parquet
+    snakemake -c1 data/processed/transport/national/zones/h3-r8/residents.parquet
     """
     input:
         raster=rules.transport_scale_worldpop.output.raster,
         zones=rules.transport_census_zones.output.zones,
         script=f"{TL_SCRIPTS}/transport_residents_h3.py",
     output:
-        residents="{data}/processed/transport/zones/{zoning}/residents.parquet",
+        residents=f"{TL_NATIONAL}/zones/{{zoning}}/residents.parquet",
     shell:
         """
         python {input.script} --config {TL_CONFIG} --zoning {wildcards.zoning} \
@@ -119,48 +183,43 @@ rule transport_residents_h3:
         """
 
 
-# --- Jobs -----------------------------------------------------------------------
-
-
 rule transport_jobs_h3:
     """
     Turn the H3 economic activity layer (output by sector, wide) into jobs
     per cell: output / output-per-worker by sector where the productivity
-    table is available, then (optionally) scale to total employed residents.
+    table is available. National; scaled per island in transport_zones.
 
     Test with:
-    snakemake -c1 data/processed/transport/zones/h3-r8/jobs.parquet
+    snakemake -c1 data/processed/transport/national/zones/h3-r8/jobs.parquet
     """
     input:
         activity=rules.economic_activity_h3.output.activity,
-        residents=rules.transport_residents_h3.output.residents,
+        output_per_worker=tl_optional_input("output_per_worker"),
         script=f"{TL_SCRIPTS}/transport_jobs_h3.py",
-    params:
-        # Optional input: an empty string means "not available".
-        output_per_worker=lambda wc: (
-            f"{wc.data}/{TL_INPUTS['output_per_worker']}"
-            if TL_INPUTS.get("output_per_worker") and Path(f"{wc.data}/{TL_INPUTS['output_per_worker']}").exists()
-            else ""
-        ),
     output:
-        jobs="{data}/processed/transport/zones/{zoning}/jobs.parquet",
+        jobs=f"{TL_NATIONAL}/zones/{{zoning}}/jobs.parquet",
+    params:
+        output_per_worker=tl_flag("output-per-worker"),
     shell:
         """
         python {input.script} --config {TL_CONFIG} --zoning {wildcards.zoning} \
-            --activity {input.activity} --residents {input.residents} \
-            --output-per-worker "{params.output_per_worker}" \
+            --activity {input.activity} {params.output_per_worker} \
             --output {output.jobs}
         """
 
 
+# --- Zones (per island) --------------------------------------------------------------
+
+
 rule transport_zones:
     """
-    One table of analysis zones: H3 cells with residents, employed residents,
-    jobs, a population-weighted centroid and the census zone they mostly fall in.
-    Cells with no residents and no jobs are dropped.
+    One table of analysis zones for an island: H3 cells with residents,
+    employed residents, jobs (scaled to the island's employed residents), a
+    population-weighted centroid, and the census zone and district of the cell
+    centre. Cells with no residents and no jobs are dropped.
 
     Test with:
-    snakemake -c1 data/processed/transport/zones/h3-r8/zones.geoparquet
+    snakemake -c1 data/processed/transport/mauritius/zones/h3-r8/zones.geoparquet
     """
     input:
         residents=rules.transport_residents_h3.output.residents,
@@ -168,16 +227,17 @@ rule transport_zones:
         census_zones=rules.transport_census_zones.output.zones,
         script=f"{TL_SCRIPTS}/transport_zones.py",
     output:
-        zones="{data}/processed/transport/zones/{zoning}/zones.geoparquet",
+        zones=f"{TL_ISLAND}/zones/{{zoning}}/zones.geoparquet",
     shell:
         """
-        python {input.script} --config {TL_CONFIG} --residents {input.residents} --jobs {input.jobs} \
+        python {input.script} --config {TL_CONFIG} --island {wildcards.island} \
+            --residents {input.residents} --jobs {input.jobs} \
             --census-zones {input.census_zones} \
             --output {output.zones}
         """
 
 
-# --- Networks ---------------------------------------------------------------------
+# --- Networks (per island) -------------------------------------------------------------
 
 
 rule transport_road_network:
@@ -188,14 +248,14 @@ rule transport_road_network:
     the multimodal build expands them to directed links.
 
     Test with:
-    snakemake -c1 data/processed/transport/networks/road/edges.geoparquet
+    snakemake -c1 data/processed/transport/mauritius/networks/road/edges.geoparquet
     """
     input:
-        roads=tl_input("roads"),
+        roads=tl_island_input("roads"),
         script=f"{TL_SCRIPTS}/transport_road_network.py",
     output:
-        edges="{data}/processed/transport/networks/road/edges.geoparquet",
-        nodes="{data}/processed/transport/networks/road/nodes.geoparquet",
+        edges=f"{TL_ISLAND}/networks/road/edges.geoparquet",
+        nodes=f"{TL_ISLAND}/networks/road/nodes.geoparquet",
     shell:
         """
         python {input.script} --config {TL_CONFIG} --roads {input.roads} \
@@ -205,24 +265,25 @@ rule transport_road_network:
 
 rule transport_bus_network:
     """
-    Build bus route segments (stop to stop, per route and direction) on the road
-    network. Each segment records the road edges it runs over, so that a road
-    failure also removes the bus segments that use it. Segment capacity is
-    route frequency x vehicle capacity over the modelled period.
+    Build bus route segments (stop to stop, per route and direction) with
+    scheduled between-stop times and route frequencies. Each segment records
+    the road edges it runs over, so that a road failure also removes the bus
+    segments that use it. Segment capacity is route frequency x vehicle
+    capacity over the modelled period.
 
     Test with:
-    snakemake -c1 data/processed/transport/networks/bus/segments.geoparquet
+    snakemake -c1 data/processed/transport/mauritius/networks/bus/segments.geoparquet
     """
     input:
-        stops=tl_input("bus_stops"),
-        routes=tl_input("bus_routes"),
-        route_stops=tl_input("bus_route_stops"),
+        stops=tl_island_input("bus_stops"),
+        routes=tl_island_input("bus_routes"),
+        route_stops=tl_island_input("bus_route_stops"),
         road_edges=rules.transport_road_network.output.edges,
         road_nodes=rules.transport_road_network.output.nodes,
         script=f"{TL_SCRIPTS}/transport_bus_network.py",
     output:
-        stops="{data}/processed/transport/networks/bus/stops.geoparquet",
-        segments="{data}/processed/transport/networks/bus/segments.geoparquet",
+        stops=f"{TL_ISLAND}/networks/bus/stops.geoparquet",
+        segments=f"{TL_ISLAND}/networks/bus/segments.geoparquet",
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
@@ -234,24 +295,29 @@ rule transport_bus_network:
 
 rule transport_metro_network:
     """
-    Build metro segments (station to station, both directions) with run times
-    and capacity from headway and train capacity.
+    Build metro segments (station to station on each line, both directions)
+    with run times and capacity from line headway and vehicle capacity. Islands
+    with no metro get empty outputs.
 
     Test with:
-    snakemake -c1 data/processed/transport/networks/metro/segments.geoparquet
+    snakemake -c1 data/processed/transport/mauritius/networks/metro/segments.geoparquet
     """
     input:
-        stations=tl_input("metro_stations"),
-        line=tl_input("metro_line"),
-        line_stations=tl_input("metro_line_stations"),
+        stations=tl_island_input("metro_stations"),
+        lines=tl_island_input("metro_lines"),
+        line_stations=tl_island_input("metro_line_stations"),
         script=f"{TL_SCRIPTS}/transport_metro_network.py",
     output:
-        stations="{data}/processed/transport/networks/metro/stations.geoparquet",
-        segments="{data}/processed/transport/networks/metro/segments.geoparquet",
+        stations=f"{TL_ISLAND}/networks/metro/stations.geoparquet",
+        segments=f"{TL_ISLAND}/networks/metro/segments.geoparquet",
+    params:
+        stations=tl_flag("stations"),
+        lines=tl_flag("lines"),
+        line_stations=tl_flag("line-stations"),
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
-            --stations {input.stations} --line {input.line} --line-stations {input.line_stations} \
+            {params.stations} {params.lines} {params.line_stations} \
             --output-stations {output.stations} --output-segments {output.segments}
         """
 
@@ -277,7 +343,7 @@ rule transport_multimodal_network:
     removes.
 
     Test with:
-    snakemake -c1 data/processed/transport/networks/multimodal/h3-r8/links.parquet
+    snakemake -c1 data/processed/transport/mauritius/networks/multimodal/h3-r8/links.parquet
     """
     input:
         road_edges=rules.transport_road_network.output.edges,
@@ -289,9 +355,9 @@ rule transport_multimodal_network:
         zones=rules.transport_zones.output.zones,
         script=f"{TL_SCRIPTS}/transport_multimodal_network.py",
     output:
-        links="{data}/processed/transport/networks/multimodal/{zoning}/links.parquet",
-        nodes="{data}/processed/transport/networks/multimodal/{zoning}/nodes.geoparquet",
-        failure_units="{data}/processed/transport/networks/multimodal/{zoning}/failure-units.parquet",
+        links=f"{TL_ISLAND}/networks/multimodal/{{zoning}}/links.parquet",
+        nodes=f"{TL_ISLAND}/networks/multimodal/{{zoning}}/nodes.geoparquet",
+        failure_units=f"{TL_ISLAND}/networks/multimodal/{{zoning}}/failure-units.parquet",
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
@@ -304,24 +370,24 @@ rule transport_multimodal_network:
         """
 
 
-# --- Demand -----------------------------------------------------------------------
+# --- Demand (per island) -----------------------------------------------------------------
 
 
 rule transport_road_skim:
     """
     Free-flow shortest-path time and distance between every pair of zone car
-    centroids on the road network (connectors included). This is the impedance
-    for the radiation model (and distance for reporting).
+    centroids on the road network (connectors included): the impedance for
+    the radiation model and its calibration.
 
     Test with:
-    snakemake -c1 data/processed/transport/demand/h3-r8/road-skim.parquet
+    snakemake -c1 data/processed/transport/mauritius/demand/h3-r8/road-skim.parquet
     """
     input:
         links=rules.transport_multimodal_network.output.links,
         zones=rules.transport_zones.output.zones,
         script=f"{TL_SCRIPTS}/transport_road_skim.py",
     output:
-        skim="{data}/processed/transport/demand/{zoning}/road-skim.parquet",
+        skim=f"{TL_ISLAND}/demand/{{zoning}}/road-skim.parquet",
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
@@ -329,81 +395,68 @@ rule transport_road_skim:
         """
 
 
-rule transport_census_district_od:
-    """
-    Parse census Table CA27 (employed population by district of residence and
-    district of work) into a long district-to-district table, the targets and
-    validation data for the radiation model.
-
-    Test with:
-    snakemake -c1 data/processed/transport/population/census-district-od.parquet
-    """
-    input:
-        table=tl_input("census_district_od"),
-        zones=rules.transport_census_zones.output.zones,
-        script=f"{TL_SCRIPTS}/transport_census_district_od.py",
-    output:
-        od="{data}/processed/transport/population/census-district-od.parquet",
-        summary="{data}/processed/transport/population/census-district-od-summary.json",
-    shell:
-        """
-        python {input.script} --config {TL_CONFIG} \
-            --table {input.table} --zones {input.zones} \
-            --output {output.od} --output-summary {output.summary}
-        """
+def tl_district_od(wc):
+    """CA27 district OD for islands that use it (Mauritius), else no input."""
+    if TL_ISLANDS[wc.island].get("district_od"):
+        return [rules.transport_census_district_od.output.od.format(data=wc.data)]
+    return []
 
 
 rule transport_radiation_od:
     """
     Journey-to-work trips between zones (persons per day, one way, home to
     work) from the radiation model: employed residents produce trips and jobs
-    attract them.
+    attract them. Trips may stay within a cell; the model decides how many.
 
-    The unconstrained result is always compared with census Table CA27,
-    aggregated to districts (district-od-comparison.csv, and fit metrics in the
-    summary). With radiation.district_od = "constrain", the cell OD is then
-    scaled to match the CA27 district-to-district totals.
+    For Mauritius, the radiation settings are calibrated against census Table
+    CA27 (calibration.csv) and the result compared with it
+    (district-od-comparison.csv, fit in the summary). Scaling to the CA27
+    totals (radiation.district_od = "constrain") is the fallback.
 
     Test with:
-    snakemake -c1 data/processed/transport/demand/h3-r8/commute-od.parquet
+    snakemake -c1 data/processed/transport/mauritius/demand/h3-r8/commute-od.parquet
     """
     input:
         zones=rules.transport_zones.output.zones,
         skim=rules.transport_road_skim.output.skim,
-        district_od=rules.transport_census_district_od.output.od,
+        district_od=tl_district_od,
         script=f"{TL_SCRIPTS}/transport_radiation_od.py",
     output:
-        od="{data}/processed/transport/demand/{zoning}/commute-od.parquet",
-        summary="{data}/processed/transport/demand/{zoning}/commute-od-summary.json",
-        comparison="{data}/processed/transport/demand/{zoning}/district-od-comparison.csv",
+        od=f"{TL_ISLAND}/demand/{{zoning}}/commute-od.parquet",
+        summary=f"{TL_ISLAND}/demand/{{zoning}}/commute-od-summary.json",
+        comparison=f"{TL_ISLAND}/demand/{{zoning}}/district-od-comparison.csv",
+        calibration=f"{TL_ISLAND}/demand/{{zoning}}/radiation-calibration.csv",
+    params:
+        district_od=tl_flag("district-od"),
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
-            --zones {input.zones} --skim {input.skim} --district-od {input.district_od} \
+            --island {wildcards.island} --zoning {wildcards.zoning} \
+            --zones {input.zones} --skim {input.skim} {params.district_od} \
             --output {output.od} --output-summary {output.summary} \
-            --output-comparison {output.comparison}
+            --output-comparison {output.comparison} --output-calibration {output.calibration}
         """
 
 
 rule transport_mode_split:
     """
-    Split zone-to-zone commuting trips into car, bus, metro and walk using
-    single national shares, scale to the peak period, and write the demand
-    table for assignment with origin and destination as network node ids
-    (zone/<id>/car, zone/<id>/bus or zone/<id>/metro). Metro applies only
-    where both ends can walk to a station. Walk-only trips are dropped and
-    counted in the summary.
+    Split between-cell commuting trips into car, bus, metro and walk using
+    national shares (bus and metro derived from reported daily boardings),
+    scale to the peak period, and write the demand table for assignment with
+    origin and destination as network node ids (zone/<id>/car, zone/<id>/bus
+    or zone/<id>/metro). Metro applies only where both ends can walk to a
+    station. Walk-only trips are dropped and counted in the summary.
 
     Test with:
-    snakemake -c1 data/processed/transport/demand/h3-r8/demand-by-mode.parquet
+    snakemake -c1 data/processed/transport/mauritius/demand/h3-r8/demand-by-mode.parquet
     """
     input:
         od=rules.transport_radiation_od.output.od,
         nodes=rules.transport_multimodal_network.output.nodes,
         script=f"{TL_SCRIPTS}/transport_mode_split.py",
     output:
-        demand="{data}/processed/transport/demand/{zoning}/demand-by-mode.parquet",
-        summary="{data}/processed/transport/demand/{zoning}/demand-by-mode-summary.json",
+        demand=f"{TL_ISLAND}/demand/{{zoning}}/demand-by-mode.parquet",
+        summary=f"{TL_ISLAND}/demand/{{zoning}}/demand-by-mode-summary.json",
     shell:
         """
         python {input.script} --config {TL_CONFIG} \

@@ -4,6 +4,7 @@ include: "0-preprocess/preprocess.smk"
 include: "0-preprocess/catalogue-open-data.smk"
 include: "0-preprocess/transport.smk"
 include: "0-preprocess/transport_land.smk"
+include: "0-preprocess/transport_interisland.smk"
 include: "0-preprocess/energy.smk"
 include: "0-preprocess/water.smk"
 include: "0-preprocess/building.smk"
@@ -22,4 +23,5 @@ wildcard_constraints:
     sector = r"transport|energy|water|building",
     geom_type = r"node|edge|area",
     zoning=r"h3-r\d+",
+    island=r"mauritius|rodrigues",
     batch=r"batch-\d{4}",

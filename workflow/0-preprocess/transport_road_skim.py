@@ -6,7 +6,8 @@ Time is the shortest free-flow time. Distance is the shortest distance, from a
 separate search, so it is not always the length of the fastest route. That is
 close enough for distance-banded mode shares.
 
-Output (long, pairs reachable within radiation.max_impedance):
+Output (long, every reachable pair, so that radiation calibration can try
+any cut-off):
     origin_zone, destination_zone, time_min, length_km
 """
 
@@ -29,7 +30,7 @@ def skim(links, nodes, weight):
 @click.option("--zones", required=True)
 @click.option("--output", required=True)
 def main(config_path, links, zones, output):
-    cfg = read_config(config_path)["radiation"]
+    read_config(config_path)  # validates the config; no settings used here
     links = pd.read_parquet(links, columns=["edge_id", "edge_from", "edge_to", "layer", "time_min", "length_km"])
     links = links[links.layer.isin(["road", "car_connector"])]
     linked = set(links.edge_from)
@@ -41,8 +42,7 @@ def main(config_path, links, zones, output):
 
     time = skim(links, nodes, "time_min")
     length = skim(links, nodes, "length_km")
-    impedance = {"time_min": time, "length_km": length}[cfg["impedance"]]
-    o, d = np.nonzero(np.isfinite(impedance) & (impedance <= cfg["max_impedance"]))
+    o, d = np.nonzero(np.isfinite(time) & np.isfinite(length))
     keep = o != d
     o, d = o[keep], d[keep]
     pd.DataFrame(

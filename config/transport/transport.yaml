@@ -1,51 +1,93 @@
-# Settings for the land transport (journey-to-work) analysis.
+# Settings for the land transport (journey-to-work) analysis, and the
+# inter-island (air and sea) flow estimation.
 #
-# Rules: workflow/0-preprocess/transport_land.smk (zones, networks, OD) and
-#        workflow/2-losses/transport_land.smk (baseline assignment, criticality).
+# Rules: workflow/0-preprocess/transport_land.smk (zones, networks, OD),
+#        workflow/2-losses/transport_land.smk (baseline assignment, criticality),
+#        workflow/0-preprocess/transport_interisland.smk (air and ferry links).
 # Docs:  docs/src/infrastructure-transport.md
 #
 # File paths are relative to the data root (the {data} wildcard, normally `data/`).
 #
 # DRAFT: values marked TODO are placeholders to be agreed or sourced.
+# Sources for the transport parameters are summarised in the docs.
 
 transport_land:
-  # Only the main island for now: Rodrigues has no commuting link to Mauritius
-  # and would form a disconnected sub-network. TODO: decide whether to run it
-  # as a separate study area.
-  study_area: mauritius-main-island
-
   # Metric CRS for lengths, buffers and nearest-neighbour searches.
-  # EPSG:32740 is WGS 84 / UTM zone 40S. EPSG:3337 (Le Pouce 1934 / Mauritius
-  # Grid) would also work.
+  # EPSG:32740 is WGS 84 / UTM zone 40S (covers Mauritius and Rodrigues).
   crs_metric: "EPSG:32740"
 
-  # --- Provided inputs (schemas: docs/src/infrastructure-transport.md) --------
+  # --- Islands (the {island} wildcard) -------------------------------------------
+  # Each island is a separate study area. There are no land commutes between
+  # islands (inter-island air and sea flows are estimated separately).
+  islands:
+    mauritius:
+      # First digit of the 2022 census geographical code (Methodology Report s3.4).
+      census_island_code: "1"
+      # Validate / calibrate against census Table CA27 (district to district).
+      district_od: true
+      inputs:
+        roads: incoming/Infrastructure/Transport/mauritius/road/roads.gpkg
+        bus_stops: incoming/Infrastructure/Transport/mauritius/bus/bus_stops.gpkg
+        bus_routes: incoming/Infrastructure/Transport/mauritius/bus/bus_routes.gpkg
+        bus_route_stops: incoming/Infrastructure/Transport/mauritius/bus/bus_route_stops.csv
+        metro_stations: incoming/Infrastructure/Transport/mauritius/metro/metro_stations.gpkg
+        metro_lines: incoming/Infrastructure/Transport/mauritius/metro/metro_lines.gpkg
+        metro_line_stations: incoming/Infrastructure/Transport/mauritius/metro/metro_line_stations.csv
+    rodrigues:
+      census_island_code: "2"  # TODO: confirm the census island code for Rodrigues
+      # CA27 has Rodrigues only as a workplace column for Mauritius residents,
+      # so there is nothing to validate against here.
+      district_od: false
+      inputs:
+        roads: incoming/Infrastructure/Transport/rodrigues/road/roads.gpkg
+        bus_stops: incoming/Infrastructure/Transport/rodrigues/bus/bus_stops.gpkg
+        bus_routes: incoming/Infrastructure/Transport/rodrigues/bus/bus_routes.gpkg
+        bus_route_stops: incoming/Infrastructure/Transport/rodrigues/bus/bus_route_stops.csv
+        # No metro on Rodrigues.
+        metro_stations: null
+        metro_lines: null
+        metro_line_stations: null
+
+  # --- National inputs (schemas: docs/src/infrastructure-transport.md) ----------
   inputs:
-    census_table: incoming/Socio-economic/Census/census-residential-zones.xlsx  # TODO: actual file name
+    # 2022 Housing and Population Census (reference date 3 July 2022).
+    # Zone table: one row per municipal ward / village council area.
+    census_table: incoming/Socio-economic/Census/2022/census-residential-zones.xlsx  # TODO: actual file
     census_sheet: null  # null = first sheet
     census_columns:     # map census spreadsheet headers to our names
-      zone_id: TODO_zone_code
+      zone_id: TODO_zone_code          # 4-digit census code, e.g. 1112 = Port Louis Ward 2
       population: TODO_total_population
-      employed_residents: TODO_employed_population
-      district: TODO_district_name  # the district each census zone is in
-    census_boundaries: incoming/Socio-economic/Census/census-residential-zones.gpkg  # TODO
+      employed_residents: TODO_employed_population  # aged 16+, includes informal work
+    # Optional: keep only one sex breakdown (null if the table has none).
+    census_sex_column: null
+    census_sex_value: Both sexes
+    # Census codes have this many digits at the zone level. Rows with other
+    # code lengths (island, district, urban/rural aggregates) are dropped.
+    census_zone_code_digits: 4
+    # Zone -> district lookup, transcribed from the 2022 census Volume VII,
+    # Appendix II (pp. 474-476). Columns: zone_id, zone_name, district_code.
+    # If missing, the district code is the first two digits of the zone code.
+    census_zone_districts: incoming/Socio-economic/Census/2022/appendix-ii-zone-districts.csv
+    census_boundaries: incoming/Socio-economic/Census/2022/census-residential-zones.gpkg  # TODO
     census_boundaries_zone_id: TODO_zone_code
-    worldpop: incoming/Population/WorldPop/mus_ppp_2020_constrained.tif  # TODO: year / product
-    # Census Table CA27: employed population by district of residence (rows)
-    # and district of work (columns). TODO: check the layout against the file.
-    census_district_od: incoming/Socio-economic/Census/CA27-travel-to-work-district.xlsx
+    worldpop: incoming/Population/WorldPop/mus_ppp_2022_constrained.tif  # TODO: product / year
+
+    # Census Table CA27 (Volume VII, p. 347 onwards; district breakdown from
+    # p. 349): employed population by district of residence (rows) and district
+    # of workplace (columns), with sex and age breakdowns. Transcribed from the
+    # PDF to a CSV with one row per residence district x sex x age group.
+    census_district_od: incoming/Socio-economic/Census/2022/CA27-residence-by-workplace-district.csv
     census_district_od_layout:
-      sheet: null          # null = first sheet
-      header_row: 0        # row (0-based) holding the workplace district names
-      index_column: 0      # column holding the residence district names
-      # Rows / columns to drop (totals).
-      drop: [Total, TOTAL]
-      # Workplace columns that are not districts (e.g. abroad, at home, no
-      # fixed place). Reported in the summary, not used as OD targets.
-      other_workplaces: []
-      # Map CA27 district names to the names in the census zone table, where
-      # they differ (e.g. "Port Louis": "Port-Louis").
-      rename: {}
+      residence_column: residence_district
+      sex_column: sex
+      sex_value: Both sexes
+      age_column: age_group    # null if the transcription has all ages only
+      age_value: All ages      # TODO: the label used for the all-ages rows
+      # Workplace columns that are not Mauritius districts. They are kept in
+      # the summary (auditable), not used as OD targets.
+      other_workplaces: [Not stated, Rodrigues and Outer Islands, Outside Mauritius]
+      drop: [Total]  # total columns / rows
+
     # The H3 economic activity layer is produced by a mu-star rule
     # (economic_activity_h3, currently a stub), not given as a path here. It is
     # wide: one row per cell, one column of output per sector.
@@ -60,13 +102,19 @@ transport_land:
     # and employment by industry. If the file is missing, output is used as
     # relative attractiveness only.
     output_per_worker: incoming/Socio-economic/GDP/output-per-worker-by-sector.csv
-    roads: incoming/Infrastructure/Transport/road/roads.gpkg
-    bus_stops: incoming/Infrastructure/Transport/bus/bus_stops.gpkg
-    bus_routes: incoming/Infrastructure/Transport/bus/bus_routes.gpkg
-    bus_route_stops: incoming/Infrastructure/Transport/bus/bus_route_stops.csv
-    metro_stations: incoming/Infrastructure/Transport/metro/metro_stations.gpkg
-    metro_line: incoming/Infrastructure/Transport/metro/metro_line.gpkg
-    metro_line_stations: incoming/Infrastructure/Transport/metro/metro_line_stations.csv
+
+  # 2022 census district codes (second digit of the geographical code) and the
+  # names used in CA27.
+  districts:
+    "11": Port Louis
+    "12": Pamplemousses
+    "13": Rivière du Rempart
+    "14": Flacq
+    "15": Grand Port
+    "16": Savanne
+    "17": Plaines Wilhems
+    "18": Moka
+    "19": Black River
 
   # --- Population ------------------------------------------------------------
   population:
@@ -88,43 +136,66 @@ transport_land:
 
   # --- OD estimation: radiation model -----------------------------------------
   radiation:
-    # The impedance used to rank destinations: free-flow road time ("time_min")
-    # or distance ("length_km").
-    impedance: time_min
-    # Destinations further than this are not considered (in impedance units).
-    max_impedance: 120
-    # Mass at the origin (m_i). The radiation formula is stated in "opportunity"
-    # units. With m_i = jobs, cells with no jobs send nobody anywhere useful
-    # (all trips go to the nearest job cell). "employed_residents" with jobs
-    # scaled to the same total avoids that. See the docs.
-    origin_mass: employed_residents
-    # "finite": Simini's 1/(1 - m_i/M) correction. "row": renormalise each
-    # origin's probabilities to sum to 1 over reachable destinations, so that
-    # every employed resident makes exactly one trip.
+    # Settings used when there is no calibration (e.g. Rodrigues), and the
+    # fallback if calibration is off.
+    impedance: time_min       # rank destinations by free-flow road time, or "length_km"
+    max_impedance: 120        # no destinations beyond this (impedance units)
+    origin_mass: employed_residents  # or "jobs"; see the docs
+    # Trips may stay within their own cell (the model decides how many), at
+    # the mean travel time within a cell: 0.83 x the H3 cell circumradius, at
+    # connectors.car_speed_kph (or in km for length_km).
+    include_self: true
+    # "row": every employed resident makes exactly one trip (incl. within-cell).
     normalisation: row
-    # Share of employed residents who work in their own cell and do not use
-    # the network. TODO: unknown, so 0 for now. Could depend on cell jobs/workers.
-    intrazonal_share: 0.0
     # Drop OD pairs below this many trips. The dropped trips are spread back
     # over each origin's remaining pairs.
     min_trips: 0.5
-    # District-to-district totals from census Table CA27.
-    #   "constrain": scale the cell OD to match the CA27 totals (always also validated)
-    #   "validate": only compare the cell OD with CA27, aggregated to districts
-    district_od: constrain
-    # "ipf" matches the district totals and keeps each cell's trip production;
-    # "block" matches the district totals exactly, but changes cell production.
+
+    # Calibration against CA27 (islands with district_od: true): every
+    # combination below is scored by fit to the district-to-district table, and
+    # the best is used. Note the radiation model only depends on the ranking of
+    # destinations, so the choices are limited: the impedance, the cut-off,
+    # the origin mass and whether trips can stay within a cell.
+    calibration:
+      enabled: true
+      impedance: [time_min, length_km]
+      max_impedance:
+        time_min: [30, 45, 60, 90, 120]
+        length_km: [10, 20, 30, 50, 80]
+      origin_mass: [employed_residents, jobs]
+      include_self: [true, false]
+      # "cpc_shares": common part of commuters after scaling CA27 to the
+      # modelled total (fits the pattern, not the total); or "cpc", "r2".
+      metric: cpc_shares
+    # After calibration: "validate" (compare with CA27 only) or "constrain"
+    # (scale the cell OD to the CA27 district totals; heavier-handed fallback).
+    district_od: validate
+    # For "constrain": "ipf" keeps each cell's trip production; "block"
+    # matches the district totals exactly.
     district_od_method: ipf
 
-  # --- Mode split (no mode-choice data; fixed shares) --------------------------
+  # --- Mode split (no mode-choice data; fixed national shares) ------------------
   mode_split:
-    # Single national shares, applied to every OD pair. Must sum to 1. Walk
-    # trips are removed from network assignment. Bus and metro are separate
-    # modes with their own centroids: bus trips use only the bus network, and
-    # metro trips only the metro line (walking to and from stations).
-    # TODO: research. Could be derived from ridership statistics (metro daily
-    # boardings, bus passengers) and the share of trips that are commutes.
+    # "ridership": bus and metro shares are derived from daily boardings (below);
+    #   walk share as given; car takes the rest.
+    # "shares": use `shares` as given.
+    method: ridership
     shares: {walk: 0.10, car: 0.50, bus: 0.35, metro: 0.05}
+    ridership:
+      # Reported approximations (different periods and day types):
+      # bus ~412,000-425,000/day (June 2026 parliamentary estimate);
+      # metro 35,000-36,000/day (July 2026), 42,000 recorded weekday (FY2024/25).
+      boardings_per_day: {bus: 412000, metro: 36000}
+      # Share of boardings that are journeys to or from work. Unknown (no
+      # survey): an uncalibrated parameter for sensitivity runs. TODO.
+      commute_fraction: {bus: 0.5, metro: 0.5}
+      # Boardings per one-way journey (transfers count twice). TODO.
+      boardings_per_journey: {bus: 1.2, metro: 1.1}
+      # One-way commuting journeys per commuter per day (out and back).
+      journeys_per_commuter: 2
+    # Walk share of commuting trips between cells (within-cell trips are not
+    # assigned to the network in any case). TODO.
+    walk_share: 0.05
     # The metro share applies only where both ends have a station within
     # connectors.metro_walk_max_km. Elsewhere it goes to this mode.
     metro_fallback: bus
@@ -140,21 +211,36 @@ transport_land:
     peak_period_hours: 2.0
     car_occupancy: 1.3  # persons per vehicle, to compare with road capacity
 
-  # --- Generalised cost ---------------------------------------------------------
+  # --- Generalised cost (perceived, MUR per person-trip) -------------------------
   # cost = per_minute * time_min + per_km[mode] * length_km + fare
-  # Units: MUR per person-trip.
+  # time_min is perceived time: in-vehicle + weighted waiting and walking.
   cost:
     currency: MUR
-    per_minute: 3.0  # value of travel time, MUR per person-minute. TODO
+    price_year: 2026
+    # Commuting value of time, Rs 85/hour (central; range 55-130), from 2025
+    # average employee earnings (Rs 37,200/month, ~Rs 215/hour). Model
+    # assumption, the same for every mode. Not an agreed appraisal value. TODO.
+    per_minute: 1.42
     per_km:
-      car: 8.0       # vehicle operating cost per vehicle-km / occupancy. TODO
-      bus: 0.0       # fares on boarding links instead
+      # Perceived car cost per person-km: fuel plus maintenance, ~Rs 8 per
+      # vehicle-km (petrol Rs 77.70/l at 6-9 l/100 km is Rs 4.7-7.0/km), over
+      # car_occupancy 1.3. Full operating cost (~Rs 12/vehicle-km) is a
+      # resource cost, not used for routing.
+      car: 6.2
+      bus: 0.0       # travellers pay fares; bus operating cost is the operator's
       metro: 0.0
       walk: 0.0
+    # Stage-based fares approximated as a boarding charge plus a charge per km
+    # in the vehicle (fares are not link-additive; TODO: exact stage fares).
+    #   Bus (Road Traffic (Bus Fares) (Amendment) Regulations 2022): Rs 17-47 by
+    #   number of stages, e.g. Port Louis-Rose Hill Rs 39, -Curepipe Rs 44,
+    #   -Mahebourg Rs 47.
+    #   Metro (MECard, 2023 conditions of travel): Rs 32 / 38 / 43 / 47 / 52 for
+    #   stages 1-5; the full line (~26 km) is ~Rs 52.
     fare:
-      bus: 0.0       # Bus travel is free for many users in Mauritius. TODO: confirm
-      metro: 0.0     # TODO: Metro Express fares (stage-based, higher than bus)
-    # Multipliers on time spent waiting, walking and transferring (perceived time).
+      bus: {board: 30.0, per_km: 0.5}
+      metro: {board: 32.0, per_km: 0.8}
+    # Multipliers on time spent waiting and walking, and a penalty per boarding.
     weight:
       wait: 1.5
       walk: 1.5
@@ -175,7 +261,7 @@ transport_land:
       unclassified: {speed_kph: 30, capacity_vph: 600}
       residential:  {speed_kph: 25, capacity_vph: 600}
       service:      {speed_kph: 15, capacity_vph: 300}
-    # Bus and metro are capacity constrained. Roads are not, by default.
+    # Bus and metro are capacity constrained. Roads are not.
     capacity_constrained: false
   connectors:
     # Each zone centroid joins its k nearest road nodes / PT stops within the radius.
@@ -186,8 +272,8 @@ transport_land:
     metro_walk_max_km: 2.0  # zone metro centroid to metro stations
     walk_speed_kph: 4.5
     walk_detour_factor: 1.3
-    # No bus <-> metro transfers for now: bus and metro trips stay on their
-    # own networks. TODO: feeder bus to metro stations.
+    # No bus <-> metro transfers or park and ride: bus and metro trips stay on
+    # their own networks.
   bus:
     # Frequencies and between-stop timings are provided per route. These
     # defaults are used only where they are missing.
@@ -199,9 +285,18 @@ transport_land:
     speed_factor: 0.7
     dwell_min: 0.5
   metro:
-    default_headway_min: 6
-    train_capacity: 1500  # TODO: confirm for Metro Express rolling stock
-    default_speed_kph: 35  # used if no run times are provided
+    # Metro Express: 18 CAF Urbos 100 vehicles, ~422 passengers each (max,
+    # incl. standing). Main line Place d'Armes (Port Louis) - Curepipe Central,
+    # ~26 km, ~52 min end to end (~30 km/h).
+    vehicle_capacity: 422
+    default_speed_kph: 30  # used where run times are missing
+    # Peak headway by line (line_id in metro_line_stations.csv). Nominal 10 min
+    # on the main line; the Rose Hill - Reduit branch is a model assumption
+    # (published 10-15 min Mon-Thu, 20-25 min Fri-Sun). Sensitivity 10-25 min.
+    headway_min:
+      main: 10
+      branch: 15
+    default_headway_min: 10
 
   # --- Criticality --------------------------------------------------------------
   criticality:
@@ -226,3 +321,23 @@ transport_land:
     mode_shift_floor: true
     # Failure scenarios are split into this many batches (snakemake jobs).
     n_batches: 64
+
+
+# --- Inter-island air and sea links ----------------------------------------------
+# A separate estimate of passenger and freight flows between Mauritius,
+# Rodrigues and the outer islands (Agalega), and of what is lost if a link,
+# port or airport fails. DRAFT: rules and schemas only.
+transport_interisland:
+  inputs:
+    # One row per service: link_id, mode (air|sea), from_node, to_node
+    # (airport or port ids), operator, services_per_week, passenger_capacity,
+    # freight_capacity_t (per service).
+    links: incoming/Infrastructure/Transport/interisland/links.csv
+    # Airports and ports: node_id, name, island, kind (airport|port), geometry.
+    nodes: incoming/Infrastructure/Transport/interisland/nodes.gpkg
+    # Observed traffic by link and direction: link_id, from_node, to_node, year,
+    # passengers, freight_t (annual). TODO: source (Statistics Mauritius
+    # Digest of Transport Statistics, airport and port authority reports).
+    traffic: incoming/Infrastructure/Transport/interisland/traffic.csv
+  # Days per year, to report daily flows.
+  days_per_year: 365

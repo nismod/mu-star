@@ -16,15 +16,16 @@ DRAFT. Needs the outputs of workflow/0-preprocess/transport_land.smk.
 
 Wildcards:
     {data}    data root
+    {island}  "mauritius" or "rodrigues"
     {zoning}  zone system, e.g. "h3-r8"
     {batch}   "batch-0000" ... one per criticality job (count: criticality.n_batches)
 
 Run everything with:
-    snakemake -c8 data/out/transport/land/h3-r8/criticality/asset-criticality.geoparquet
+    snakemake -c8 data/out/transport/land/mauritius/h3-r8/criticality/asset-criticality.geoparquet
 """
 
 TL_LOSS_SCRIPTS = "workflow/2-losses"
-TL_OUT = "{data}/out/transport/land/{zoning}"
+TL_OUT = "{data}/out/transport/land/{island}/{zoning}"
 TL_N_BATCHES = int(config["transport_land"]["criticality"]["n_batches"])
 TL_BATCHES = [f"batch-{index:04d}" for index in range(TL_N_BATCHES)]
 
@@ -39,11 +40,11 @@ rule transport_baseline_assignment:
     car centroids and assigned in a second pass.
 
     Test with:
-    snakemake -c1 data/out/transport/land/h3-r8/baseline/link-flows.parquet
+    snakemake -c1 data/out/transport/land/mauritius/h3-r8/baseline/link-flows.parquet
     """
     input:
-        links="{data}/processed/transport/networks/multimodal/{zoning}/links.parquet",
-        demand="{data}/processed/transport/demand/{zoning}/demand-by-mode.parquet",
+        links="{data}/processed/transport/{island}/networks/multimodal/{zoning}/links.parquet",
+        demand="{data}/processed/transport/{island}/demand/{zoning}/demand-by-mode.parquet",
         script=f"{TL_LOSS_SCRIPTS}/transport_baseline_assignment.py",
     output:
         link_flows=f"{TL_OUT}/baseline/link-flows.parquet",
@@ -68,10 +69,10 @@ rule transport_failure_sets:
     road class from config, each given a batch number.
 
     Test with:
-    snakemake -c1 data/out/transport/land/h3-r8/criticality/failure-sets.parquet
+    snakemake -c1 data/out/transport/land/mauritius/h3-r8/criticality/failure-sets.parquet
     """
     input:
-        failure_units="{data}/processed/transport/networks/multimodal/{zoning}/failure-units.parquet",
+        failure_units="{data}/processed/transport/{island}/networks/multimodal/{zoning}/failure-units.parquet",
         link_flows=rules.transport_baseline_assignment.output.link_flows,
         script=f"{TL_LOSS_SCRIPTS}/transport_failure_sets.py",
     output:
@@ -94,10 +95,10 @@ rule transport_criticality_batch:
     be large).
 
     Test with:
-    snakemake -c1 data/out/transport/land/h3-r8/criticality/batches/batch-0000/scenario-impacts.parquet
+    snakemake -c1 data/out/transport/land/mauritius/h3-r8/criticality/batches/batch-0000/scenario-impacts.parquet
     """
     input:
-        links="{data}/processed/transport/networks/multimodal/{zoning}/links.parquet",
+        links="{data}/processed/transport/{island}/networks/multimodal/{zoning}/links.parquet",
         paths=rules.transport_baseline_assignment.output.paths,
         link_flows=rules.transport_baseline_assignment.output.link_flows,
         failure_sets=rules.transport_failure_sets.output.failure_sets,
@@ -120,7 +121,7 @@ rule transport_criticality_summary:
     asset geometry (road edge or metro segment) for mapping and the viewer.
 
     Test with:
-    snakemake -c1 data/out/transport/land/h3-r8/criticality/asset-criticality.geoparquet
+    snakemake -c1 data/out/transport/land/mauritius/h3-r8/criticality/asset-criticality.geoparquet
     """
     input:
         scenario_impacts=expand(
@@ -129,8 +130,9 @@ rule transport_criticality_summary:
             allow_missing=True,
         ),
         failure_sets=rules.transport_failure_sets.output.failure_sets,
-        road_edges="{data}/processed/transport/networks/road/edges.geoparquet",
-        metro_segments="{data}/processed/transport/networks/metro/segments.geoparquet",
+        road_edges="{data}/processed/transport/{island}/networks/road/edges.geoparquet",
+        metro_segments="{data}/processed/transport/{island}/networks/metro/segments.geoparquet",
+        metro_stations="{data}/processed/transport/{island}/networks/metro/stations.geoparquet",
         baseline_summary=rules.transport_baseline_assignment.output.summary,
         script=f"{TL_LOSS_SCRIPTS}/transport_criticality_summary.py",
     output:
@@ -141,6 +143,7 @@ rule transport_criticality_summary:
         python {input.script} --config {TL_CONFIG} \
             --failure-sets {input.failure_sets} \
             --road-edges {input.road_edges} --metro-segments {input.metro_segments} \
+            --metro-stations {input.metro_stations} \
             --baseline-summary {input.baseline_summary} \
             --output-table {output.table} --output-spatial {output.spatial} \
             {input.scenario_impacts}
@@ -149,13 +152,14 @@ rule transport_criticality_summary:
 
 rule transport_land_all:
     """
-    Run the whole land transport analysis for the default zoning.
+    Run the whole land transport analysis for both islands, default zoning.
 
     snakemake -c8 transport_land_all
     """
     input:
         expand(
-            "{data}/out/transport/land/{zoning}/criticality/asset-criticality.geoparquet",
+            "{data}/out/transport/land/{island}/{zoning}/criticality/asset-criticality.geoparquet",
             data=config.get("data_root", "data"),
+            island=list(config["transport_land"]["islands"]),
             zoning="h3-r8",
         ),

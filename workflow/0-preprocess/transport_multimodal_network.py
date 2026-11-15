@@ -25,6 +25,9 @@ INF = float("inf")
 
 def nearest_pairs(points_a, points_b, k, max_m):
     """(index_a, index_b, distance_m) for up to k neighbours in b of each point in a, within max_m."""
+    if len(points_a) == 0 or len(points_b) == 0:
+        empty = np.array([], dtype=int)
+        return empty, empty, np.array([], dtype=float)
     tree = cKDTree(np.c_[points_b.x, points_b.y])
     k = min(k, len(points_b))
     dist, idx = tree.query(np.c_[points_a.x, points_a.y], k=k, distance_upper_bound=max_m)
@@ -139,7 +142,8 @@ def main(
             "road_edge_ids": bus["road_edge_ids"],
             "length_km": bus["length_km"],
             "time_min": bus["time_min"],
-            "fare": 0.0,
+            # Stage fares approximated as boarding + per km (cost.fare.bus).
+            "fare": fares["bus"]["per_km"] * bus["length_km"],
             "capacity": peak_capacity(bus["headway_min"], bus["vehicle_capacity"], hours),
         }
     )
@@ -163,7 +167,7 @@ def main(
             "asset_id": None,
             "length_km": 0.0,
             "time_min": weight["wait"] * calls["headway_min"] / 2 + weight["transfer_penalty_min"],
-            "fare": fares["bus"],
+            "fare": fares["bus"]["board"],
             "capacity": INF,
         }
     )
@@ -183,29 +187,37 @@ def main(
     )
     parts += [bus_links, board, alight]
 
-    # Metro: same pattern; one line, two directions.
+    # Metro: same pattern, per line (main line and branch), two directions.
+    # Line call nodes: metro/<line>/<direction>/<station>.
     metro_links = pd.DataFrame(
         {
             "edge_id": "metro/" + metro["direction"].astype(str) + "/" + metro["segment_id"],
-            "edge_from": "metro/" + metro["direction"].astype(str) + "/" + metro["from_station"],
-            "edge_to": "metro/" + metro["direction"].astype(str) + "/" + metro["to_station"],
+            "edge_from": "metro/"
+            + metro["line_id"]
+            + "/"
+            + metro["direction"].astype(str)
+            + "/"
+            + metro["from_station"],
+            "edge_to": "metro/" + metro["line_id"] + "/" + metro["direction"].astype(str) + "/" + metro["to_station"],
             "layer": "metro",
             "mode": "metro",
             "asset_id": metro["segment_id"],
             "length_km": metro["length_km"],
             "time_min": metro["time_min"],
-            "fare": 0.0,
+            "fare": fares["metro"]["per_km"] * metro["length_km"],
             "capacity": peak_capacity(metro["headway_min"], metro["capacity_per_train"], hours),
         }
     )
     mcalls = pd.concat(
         [
-            metro[["direction", "from_station", "headway_min"]].rename(columns={"from_station": "station_id"}),
-            metro[["direction", "to_station", "headway_min"]].rename(columns={"to_station": "station_id"}),
+            metro[["line_id", "direction", "from_station", "headway_min"]].rename(
+                columns={"from_station": "station_id"}
+            ),
+            metro[["line_id", "direction", "to_station", "headway_min"]].rename(columns={"to_station": "station_id"}),
         ]
-    ).drop_duplicates(["direction", "station_id"])
+    ).drop_duplicates(["line_id", "direction", "station_id"])
     parts.append(metro_links)
-    mnode = "metro/" + mcalls["direction"].astype(str) + "/" + mcalls["station_id"]
+    mnode = "metro/" + mcalls["line_id"] + "/" + mcalls["direction"].astype(str) + "/" + mcalls["station_id"]
     parts += [
         pd.DataFrame(
             {
@@ -217,7 +229,7 @@ def main(
                 "asset_id": None,
                 "length_km": 0.0,
                 "time_min": weight["wait"] * mcalls["headway_min"] / 2 + weight["transfer_penalty_min"],
-                "fare": fares["metro"],
+                "fare": fares["metro"]["board"],
                 "capacity": INF,
             }
         ),
