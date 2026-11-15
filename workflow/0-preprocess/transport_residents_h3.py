@@ -1,5 +1,9 @@
 """Aggregate (scaled) population pixels to H3 cells.
 
+"population" is the scaled raster summed over the cell: persons where the
+census gives population, else employed residents (see transport_census_zones,
+scale_target); it is the weight for the centroid either way.
+
 Output columns: h3_index, population, employed_residents, census_zone_id
 (the census zone holding most of the cell's population), centroid_x,
 centroid_y (population-weighted, in crs_metric).

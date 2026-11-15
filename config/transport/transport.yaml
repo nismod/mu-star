@@ -33,11 +33,27 @@ transport_land:
         metro_stations: incoming/Infrastructure/Transport/mauritius/metro/metro_stations.gpkg
         metro_lines: incoming/Infrastructure/Transport/mauritius/metro/metro_lines.gpkg
         metro_line_stations: incoming/Infrastructure/Transport/mauritius/metro/metro_line_stations.csv
+        # Station-to-station fare stage matrix (operator's conditions of
+        # travel): from_station, to_station, stage. Optional (reporting only).
+        metro_fare_stages: incoming/Infrastructure/Transport/mauritius/metro/metro_fare_stages.csv
+        # Schools: see `school` below.
+        schools: incoming/Education/mauritius/schools.gpkg
     rodrigues:
-      census_island_code: "2"  # TODO: confirm the census island code for Rodrigues
+      # Census island codes: 1 Mauritius, 2 Rodrigues, 3 Agalega.
+      census_island_code: "2"
       # CA27 has Rodrigues only as a workplace column for Mauritius residents,
       # so there is nothing to validate against here.
       district_od: false
+      # Settings that differ from the national ones. No ridership figures for
+      # Rodrigues: fixed shares by distance, with much walking and cycling on
+      # short trips (bus routes and fares exist). TODO: values.
+      overrides:
+        mode_split:
+          method: bands
+          bands:
+            - {max_km: 2,    walk: 0.45, cycle: 0.15, car: 0.20, bus: 0.20, metro: 0.0}
+            - {max_km: 5,    walk: 0.10, cycle: 0.15, car: 0.35, bus: 0.40, metro: 0.0}
+            - {max_km: 1000, walk: 0.00, cycle: 0.05, car: 0.45, bus: 0.50, metro: 0.0}
       inputs:
         roads: incoming/Infrastructure/Transport/rodrigues/road/roads.gpkg
         bus_stops: incoming/Infrastructure/Transport/rodrigues/bus/bus_stops.gpkg
@@ -47,29 +63,42 @@ transport_land:
         metro_stations: null
         metro_lines: null
         metro_line_stations: null
+        metro_fare_stages: null
+        schools: incoming/Education/rodrigues/schools.gpkg
 
   # --- National inputs (schemas: docs/src/infrastructure-transport.md) ----------
   inputs:
-    # 2022 Housing and Population Census (reference date 3 July 2022).
-    # Zone table: one row per municipal ward / village council area.
-    census_table: incoming/Socio-economic/Census/2022/census-residential-zones.xlsx  # TODO: actual file
-    census_sheet: null  # null = first sheet
-    census_columns:     # map census spreadsheet headers to our names
-      zone_id: TODO_zone_code          # 4-digit census code, e.g. 1112 = Port Louis Ward 2
-      population: TODO_total_population
-      employed_residents: TODO_employed_population  # aged 16+, includes informal work
-    # Optional: keep only one sex breakdown (null if the table has none).
-    census_sex_column: null
-    census_sex_value: Both sexes
-    # Census codes have this many digits at the zone level. Rows with other
-    # code lengths (island, district, urban/rural aggregates) are dropped.
-    census_zone_code_digits: 4
-    # Zone -> district lookup, transcribed from the 2022 census Volume VII,
-    # Appendix II (pp. 474-476). Columns: zone_id, zone_name, district_code.
-    # If missing, the district code is the first two digits of the zone code.
-    census_zone_districts: incoming/Socio-economic/Census/2022/appendix-ii-zone-districts.csv
-    census_boundaries: incoming/Socio-economic/Census/2022/census-residential-zones.gpkg  # TODO
-    census_boundaries_zone_id: TODO_zone_code
+    # 2022 Housing and Population Census (reference date 3 July 2022),
+    # Volume VII: Economic Characteristics. Census areas ("zones" here) are
+    # Municipal Wards and Village Council Areas on Mauritius, and the six
+    # census regions of Rodrigues.
+    #
+    # Table CA1 (printed pp. 1-30): employment and activity status by area.
+    # Area names are printed in the rows (no codes); the first page has the
+    # national and district aggregates. Transcribed to a CSV with columns:
+    #   district (the section heading the row is printed under, or blank),
+    #   area_name, row_type (aggregate | area), employed (Currently active ->
+    #   Employed), and optionally population_16_plus.
+    census_table: incoming/Socio-economic/Census/2022/CA1-employment-by-area.csv
+    census_columns:     # map transcription headers to our names
+      area_name: area_name
+      district_name: district
+      row_type: row_type
+      employed_residents: employed  # aged 16+, includes informal work
+      # Optional: total population. Without it, employed residents are spread
+      # over each area by the WorldPop pattern (no scaling of WorldPop needed).
+      population: null
+    # Official 4-digit codes and names, by district: Appendix II (pp. 474-476)
+    # for Mauritius, Appendices III-IV (pp. 477-478) for the Rodrigues regions
+    # and their localities. Columns: zone_id (code), zone_name, district_code.
+    # Areas are matched to codes by name within their district (accents,
+    # case and punctuation ignored); name_overrides fixes the rest.
+    census_zone_codes: incoming/Socio-economic/Census/2022/appendix-ii-iv-area-codes.csv
+    census_name_overrides: {}  # "printed name|district": "code"
+    # Boundaries of the Municipal Wards / Village Council Areas and Rodrigues
+    # regions, with the 4-digit code. TODO: source.
+    census_boundaries: incoming/Socio-economic/Census/2022/census-areas.gpkg
+    census_boundaries_zone_id: TODO_code
     worldpop: incoming/Population/WorldPop/mus_ppp_2022_constrained.tif  # TODO: product / year
 
     # Census Table CA27 (Volume VII, p. 347 onwards; district breakdown from
@@ -174,13 +203,17 @@ transport_land:
     # matches the district totals exactly.
     district_od_method: ipf
 
-  # --- Mode split (no mode-choice data; fixed national shares) ------------------
+  # --- Mode split (no mode-choice data; fixed shares) -------------------------
+  # Modes: car, bus, metro are assigned to the network; walk and cycle are
+  # active modes, counted but not assigned.
   mode_split:
     # "ridership": bus and metro shares are derived from daily boardings (below);
-    #   walk share as given; car takes the rest.
-    # "shares": use `shares` as given.
+    #   walk share as given; car takes the rest. (Mauritius)
+    # "shares": use `shares` as given, for every OD pair.
+    # "bands": shares by road distance band (`bands`). (Rodrigues)
     method: ridership
-    shares: {walk: 0.10, car: 0.50, bus: 0.35, metro: 0.05}
+    shares: {walk: 0.10, cycle: 0.0, car: 0.50, bus: 0.35, metro: 0.05}
+    bands: []
     ridership:
       # Reported approximations (different periods and day types):
       # bus ~412,000-425,000/day (June 2026 parliamentary estimate);
@@ -238,9 +271,28 @@ transport_land:
     #   -Mahebourg Rs 47.
     #   Metro (MECard, 2023 conditions of travel): Rs 32 / 38 / 43 / 47 / 52 for
     #   stages 1-5; the full line (~26 km) is ~Rs 52.
+    # Used for routing, and for reporting where stage data are missing.
     fare:
       bus: {board: 30.0, per_km: 0.5}
       metro: {board: 32.0, per_km: 0.8}
+    # Exact stage fares for reporting, computed on the assigned paths where
+    # stage data exist (fare_stage per stop in bus_route_stops.csv; the metro
+    # station-to-station stage matrix). Adult fares.
+    stage_fares:
+      # Number of stages travelled (from, to inclusive) -> fare. Road Traffic
+      # (Bus Fares) (Amendment) Regulations 2022. Routes 38, 38A, 79, 215 and
+      # air-conditioned express services have special schedules (TODO).
+      bus:
+        - {max_stages: 1,  fare: 17}
+        - {max_stages: 2,  fare: 24}
+        - {max_stages: 4,  fare: 30}
+        - {max_stages: 6,  fare: 35}
+        - {max_stages: 8,  fare: 39}
+        - {max_stages: 12, fare: 41}
+        - {max_stages: 30, fare: 44}
+        - {max_stages: 39, fare: 47}
+      # Metro stage (from the station-to-station matrix) -> MECard fare (2023).
+      metro: {1: 32, 2: 38, 3: 43, 4: 47, 5: 52}
     # Multipliers on time spent waiting and walking, and a penalty per boarding.
     weight:
       wait: 1.5
@@ -329,12 +381,66 @@ transport_land:
     # Isolated trips are counted, not costed.
     fallback:
       metro: [bus, car]
-    # With fixed mode shares, a mode switch can look like an improvement (e.g.
-    # car cheaper than metro in generalised cost). If true, the deltas of OD
-    # pairs that switch mode are floored at zero (the baseline mode was preferred).
-    mode_shift_floor: true
+    # Bus trips cut off by a road failure do not switch mode: buses detour
+    # around the failed road between stops if they can (scheduled time plus
+    # the extra road time / bus.speed_factor), and otherwise skip stops that
+    # cannot be reached (no boarding or alighting there) up to max_skipped_stops
+    # in a row. Beyond that, the route is cut at the failure.
+    bus_detour:
+      max_skipped_stops: 3
+      # Ignore detours longer than this many times the original road time.
+      max_detour_factor: 4.0
+    # Raw changes are reported for trips that switch mode (they can be
+    # negative, e.g. car cheaper than metro in generalised cost). Set true to
+    # floor them at zero here; otherwise floor in later analysis.
+    mode_shift_floor: false
     # Failure scenarios are split into this many batches (snakemake jobs).
     n_batches: 64
+
+
+  # --- Scenarios (the {scenario} wildcard) -----------------------------------------
+  # Named sets of overrides for sensitivity runs, applied from the multimodal
+  # network onwards (sections: mode_split, period, cost, bus, metro,
+  # criticality, school). Dotted keys are allowed. "central" is the base case.
+  scenarios:
+    central: {}
+    commute-low:
+      mode_split.ridership.commute_fraction: {bus: 0.3, metro: 0.3}
+    commute-high:
+      mode_split.ridership.commute_fraction: {bus: 0.7, metro: 0.7}
+  # Scenarios run by default (transport_land_all).
+  default_scenarios: [central, commute-low, commute-high]
+
+  # --- School trips (second trip purpose) ---------------------------------------
+  # Journeys to school, with their own origins (school-age children by
+  # residence) and destinations (schools), assigned together with journeys to
+  # work so they share bus and metro capacity. DRAFT.
+  school:
+    enabled: true
+    # School-age children by census area and age band: TODO source (2022
+    # census population volume, children by single year of age or 5-year band
+    # per Municipal Ward / Village Council Area). Transcribed CSV columns:
+    # area_name, district, row_type, age_band, children.
+    children_table: incoming/Socio-economic/Census/2022/children-by-area-age.csv
+    # Levels: which age bands go to which school level (enrolment rates are
+    # applied on top).
+    levels:
+      primary:   {age_bands: ["5-9", "10-11"], enrolment_rate: 0.98}
+      secondary: {age_bands: ["12-14", "15-19"], enrolment_rate: 0.85}
+    # Schools (per island, inputs.schools): school_id, name, level
+    # (primary|secondary), enrolment (pupils; capacity if missing), geometry.
+    # Distribution: radiation model per level, children -> school places
+    # (enrolment), same impedance as journeys to work.
+    radiation: {max_impedance: 60, include_self: true}
+    # Mode shares per level (school buses and car drop-off count as bus /
+    # car). TODO: values.
+    mode_split:
+      primary:   {walk: 0.40, cycle: 0.0, car: 0.30, bus: 0.30, metro: 0.0}
+      secondary: {walk: 0.15, cycle: 0.02, car: 0.20, bus: 0.55, metro: 0.08}
+    # Share of daily school trips in the modelled peak period.
+    peak_period_share: 0.9
+  # With school trips modelled, bus / metro other_purpose_load_share should
+  # cover only the remaining purposes (TODO: lower them when school is enabled).
 
 
 # --- Inter-island air and sea links ----------------------------------------------
@@ -342,16 +448,38 @@ transport_land:
 # Rodrigues and the outer islands (Agalega), and of what is lost if a link,
 # port or airport fails. DRAFT: rules and schemas only.
 transport_interisland:
+  # Islands: Mauritius, Rodrigues, Agalega (census island codes 1-3) and St
+  # Brandon (Cargados Carajos; outer islands).
   inputs:
     # One row per service: link_id, mode (air|sea), from_node, to_node
     # (airport or port ids), operator, services_per_week, passenger_capacity,
-    # freight_capacity_t (per service).
+    # freight_capacity_t (per service, one direction), and service_type
+    # (scheduled|charter|irregular).
+    # Sources: Mauritius Shipping Corporation sailing schedules; airline
+    # schedules (Mauritius - Rodrigues).
     links: incoming/Infrastructure/Transport/interisland/links.csv
     # Airports and ports: node_id, name, island, kind (airport|port), geometry.
     nodes: incoming/Infrastructure/Transport/interisland/nodes.gpkg
     # Observed traffic by link and direction: link_id, from_node, to_node, year,
-    # passengers, freight_t (annual). TODO: source (Statistics Mauritius
-    # Digest of Transport Statistics, airport and port authority reports).
+    # passengers, freight_t (annual), commodity (freight rows; "all" if not
+    # split), source. Optional: links without observed traffic use
+    # baseline_passengers below.
+    # Sources: 2025 Rodrigues Airport development presentation; Blue Economy
+    # annual report 2025/26; airport arrivals series.
     traffic: incoming/Infrastructure/Transport/interisland/traffic.csv
   # Days per year, to report daily flows.
   days_per_year: 365
+  # Baseline annual passenger trips (two-way) by island pair and mode, where
+  # there is no traffic table. null = unknown (reported, not estimated).
+  baseline_passengers:
+    - {pair: [mauritius, rodrigues], mode: air, low: 280000, high: 315000, note: "airport statistics and arrivals series"}
+    - {pair: [mauritius, rodrigues], mode: sea, low: null, high: null, note: "likely small; capacity-constrained scheduled link"}
+    - {pair: [mauritius, agalega], mode: sea, low: null, high: null, note: "irregular charter service"}
+    - {pair: [mauritius, agalega], mode: air, low: 0, high: 0, note: "no scheduled commercial demand; exceptional movements"}
+    - {pair: [mauritius, st-brandon], mode: sea, low: null, high: null, note: "irregular"}
+  # Freight is limited to specific modes and does not switch (e.g. bulk and
+  # fuel by sea). Passengers may switch between air and sea within spare
+  # capacity of scheduled services.
+  switchable:
+    passengers: true
+    freight: false

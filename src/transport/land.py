@@ -48,15 +48,64 @@ LINK_COLUMNS = (
     "fare",
     "cost",
     "capacity",  # persons per modelled period; inf = unconstrained
+    # For exact stage fares (transport.fares), null elsewhere:
+    "route_key",  # bus links: <route_id>/<direction>
+    "stage_from",  # bus links: fare stage at the segment's first stop
+    "stage_to",  # bus links: fare stage at the segment's last stop
+    "station_from",  # metro links
+    "station_to",  # metro links
 )
 
 MODES = ("car", "bus", "metro", "walk")
+#: Modes assigned to the network; walk and cycle trips are counted only.
+ASSIGNED_MODES = ("car", "bus", "metro")
+ACTIVE_MODES = ("walk", "cycle")
 
 
-def read_config(path: str | Path) -> dict:
-    """Return the ``transport_land`` section of config/transport/transport.yaml."""
+#: Top-level config sections a scenario may override. Scenarios apply from
+#: the multimodal network onwards; zones, demand estimation and road
+#: networks are shared by all scenarios.
+SCENARIO_SECTIONS = ("mode_split", "period", "cost", "bus", "metro", "criticality", "school")
+
+
+def deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge ``override`` into a copy of ``base``.
+
+    Keys may be dotted paths (``"cost.per_minute": 2.0``).
+    """
+    out = dict(base)
+    for key, value in override.items():
+        if "." in key:
+            head, rest = key.split(".", 1)
+            value, key = {rest: value}, head
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def read_config(path: str | Path, island: str | None = None, scenario: str | None = None) -> dict:
+    """Return the ``transport_land`` section of config/transport/transport.yaml.
+
+    With ``island``, that island's ``overrides`` are merged in (e.g. Rodrigues
+    mode shares). With ``scenario``, the overrides in ``scenarios.<name>`` are
+    merged in last (sensitivity runs; only SCENARIO_SECTIONS may change).
+    """
     with open(path) as fh:
-        return yaml.safe_load(fh)["transport_land"]
+        cfg = yaml.safe_load(fh)["transport_land"]
+    if island:
+        cfg = deep_merge(cfg, cfg["islands"][island].get("overrides") or {})
+    if scenario:
+        scenarios = cfg.get("scenarios") or {}
+        if scenario not in scenarios:
+            raise ValueError(f"Unknown scenario {scenario!r}; defined: {sorted(scenarios)}")
+        overrides = scenarios[scenario] or {}
+        bad = {key.split(".")[0] for key in overrides} - set(SCENARIO_SECTIONS)
+        if bad:
+            raise ValueError(f"Scenario {scenario!r} overrides {sorted(bad)}; allowed: {SCENARIO_SECTIONS}")
+        cfg = deep_merge(cfg, overrides)
+    return cfg
 
 
 def h3_resolution(zoning: str) -> int:
@@ -68,7 +117,7 @@ def h3_resolution(zoning: str) -> int:
 
 
 def zone_node(zone_id: str, kind: str) -> str:
-    if kind not in ("car", "bus", "metro"):
+    if kind not in ("car", "bus", "metro", "school_bus"):
         raise ValueError(kind)
     return f"zone/{zone_id}/{kind}"
 

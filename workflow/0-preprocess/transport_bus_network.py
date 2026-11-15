@@ -7,7 +7,9 @@ Provided schema:
                           (LineString, optional, for QA)
     bus_route_stops.csv   route_id, direction (0/1), stop_sequence (int), stop_id,
                           time_to_next_min (scheduled time to the next stop,
-                          including dwell; blank on the last stop)
+                          including dwell; blank on the last stop), and
+                          optionally fare_stage (the stop's fare stage number
+                          on the route, for exact fares)
 
 All routes use the standard vehicle size bus.vehicle_capacity. In-vehicle
 time is the scheduled time between stops; where missing it falls back to road
@@ -22,7 +24,8 @@ since the fastest path is not always the route the bus takes.
 
 Output segments: segment_id, route_id, direction, seq, from_stop, to_stop,
 road_edge_ids (list), length_km, time_min (in-vehicle), time_source
-(timetable|road), headway_min, vehicle_capacity, geometry.
+(timetable|road), headway_min, vehicle_capacity, stage_from, stage_to
+(fare stages, NaN if not given), geometry.
 """
 
 import click
@@ -115,6 +118,8 @@ def main(config_path, stops, routes, route_stops, road_edges, road_nodes, output
 
     sequence = sequence.sort_values(["route_id", "direction", "stop_sequence"])
     sequence["next_stop"] = sequence.groupby(["route_id", "direction"])["stop_id"].shift(-1)
+    if "fare_stage" in sequence:
+        sequence["next_stage"] = sequence.groupby(["route_id", "direction"])["fare_stage"].shift(-1)
     pairs = sequence.dropna(subset=["next_stop"])
 
     records = []
@@ -146,6 +151,8 @@ def main(config_path, stops, routes, route_stops, road_edges, road_nodes, output
                 "time_source": "timetable" if timetabled else "road",
                 "headway_min": headway[row.route_id],
                 "vehicle_capacity": bus["vehicle_capacity"],
+                "stage_from": getattr(row, "fare_stage", float("nan")),
+                "stage_to": getattr(row, "next_stage", float("nan")),
                 "geometry": linemerge(list(info.geometry)) if road_ids else None,
             }
         )

@@ -1,10 +1,15 @@
 """Scale WorldPop to the census zone totals, and report the comparison.
 
-Each pixel is multiplied by census_population / worldpop_sum for the census
+Each pixel is multiplied by census_target / worldpop_sum for the census
 zone its centre falls in. Pixels outside every census zone are set to zero
 (and their total reported in the check table).
 
-Check table columns: zone_id, census_population, worldpop_population, ratio, flagged.
+The target is the census zone's scale_target: total population where the
+census table gives it, else employed residents (then the scaled raster is in
+employed residents and only WorldPop's spatial pattern is used; the ratio
+check is then not meaningful).
+
+Check table columns: zone_id, census_target, worldpop_population, ratio, flagged.
 """
 
 import click
@@ -45,15 +50,15 @@ def main(config_path, worldpop, zones, output_raster, output_check):
     check = pd.DataFrame(
         {
             "zone_id": zones["zone_id"],
-            "census_population": zones["population"].to_numpy(dtype=float),
+            "census_target": zones["scale_target"].to_numpy(dtype=float),
             "worldpop_population": sums[1:],
         }
     )
-    check["ratio"] = check["census_population"] / check["worldpop_population"]
+    check["ratio"] = check["census_target"] / check["worldpop_population"]
     tol = float(cfg["check_ratio_tolerance"])
     check["flagged"] = (check["ratio"] > tol) | (check["ratio"] < 1 / tol) | ~np.isfinite(check["ratio"])
     outside = pd.DataFrame(
-        [{"zone_id": "(outside census zones)", "census_population": 0.0, "worldpop_population": sums[0]}]
+        [{"zone_id": "(outside census zones)", "census_target": 0.0, "worldpop_population": sums[0]}]
     )
     pd.concat([check, outside]).to_csv(output_check, index=False)
 

@@ -25,7 +25,12 @@ def main(config_path, failure_units, link_flows, output):
     units = units[units.asset_type.isin(cfg["fail"])]
     if cfg["road_classes"]:
         units = units[(units.asset_type != "road") | units.road_class.isin(cfg["road_classes"])]
-    exploded = units[["asset_id", "link_ids"]].explode("link_ids")
+    # Flow on the links a failure removes or changes (bus detours).
+    touched = [
+        list(ids) + [c["edge_id"] for c in (changes if changes is not None else [])]
+        for ids, changes in zip(units["link_ids"], units.get("link_changes", [None] * len(units)))
+    ]
+    exploded = pd.DataFrame({"asset_id": units["asset_id"].to_numpy(), "link_ids": touched}).explode("link_ids")
     exploded["flow"] = exploded["link_ids"].map(flows).fillna(0.0)
     units = units.merge(
         exploded.groupby("asset_id", as_index=False)["flow"].max().rename(columns={"flow": "baseline_flow"}),
@@ -38,7 +43,16 @@ def main(config_path, failure_units, link_flows, output):
     units = units.sort_values("baseline_flow", ascending=False).reset_index(drop=True)
     units["batch"] = [f"batch-{i:04d}" for i in np.arange(len(units)) % int(cfg["n_batches"])]
     units["scenario_id"] = units["asset_type"] + "/" + units["asset_id"].astype(str)
-    columns = ["scenario_id", "asset_type", "asset_id", "road_class", "link_ids", "baseline_flow", "batch"]
+    columns = [
+        "scenario_id",
+        "asset_type",
+        "asset_id",
+        "road_class",
+        "link_ids",
+        "link_changes",
+        "baseline_flow",
+        "batch",
+    ]
     units[columns].to_parquet(output, index=False)
 
 

@@ -93,7 +93,7 @@ def disruption_deltas(
     affected_baseline_paths: pd.DataFrame,
     rerouted_paths: pd.DataFrame,
     isolated: pd.DataFrame,
-    metrics: tuple[str, ...] = ("time_min", "length_km", "cost"),
+    metrics: tuple[str, ...] = ("time_min", "length_km", "cost", "fare"),
 ) -> pd.DataFrame:
     """Per-OD change in journey metrics for one disruption scenario.
 
@@ -108,6 +108,8 @@ def disruption_deltas(
     is reported separately and is not included in the deltas.
     """
     keys = ["origin_id", "destination_id"]
+    # Only the metrics both tables have (e.g. no fare in older path tables).
+    metrics = tuple(m for m in metrics if m in affected_baseline_paths and m in rerouted_paths)
     base = od_metrics(affected_baseline_paths, metrics).rename(columns={"flow": "affected_flow"})
     new = od_metrics(rerouted_paths, metrics).rename(columns={"flow": "rerouted_flow"})
     iso = isolated.rename(columns={"value": "isolated_flow", "flow": "isolated_flow"})[[*keys, "isolated_flow"]]
@@ -121,4 +123,46 @@ def disruption_deltas(
         # Baseline metric for the flow that was actually rerouted (mean per trip x rerouted flow).
         out[f"delta_{metric}_total"] = rerouted_total - out[metric] * out["rerouted_flow"]
         out = out.drop(columns=[f"{metric}_total"]).rename(columns={metric: f"baseline_{metric}"})
+    return out
+
+
+def apply_link_changes(links: pd.DataFrame, changes, cost_cfg: Mapping) -> pd.DataFrame:
+    """Links with some rows' time_min / length_km / fare replaced, and cost recomputed.
+
+    ``changes`` is a list of {edge_id, time_min, length_km, fare} (e.g. bus
+    links on a detour) or a DataFrame with those columns.
+    """
+    changes = pd.DataFrame(list(changes)) if not isinstance(changes, pd.DataFrame) else changes
+    if changes.empty:
+        return links
+    out = links.copy()
+    position = out.reset_index(drop=True).index.to_series(index=out["edge_id"].to_numpy())
+    rows = position.reindex(changes["edge_id"]).dropna().astype(int).to_numpy()
+    changes = changes[changes["edge_id"].isin(out["edge_id"])]
+    for column in ("time_min", "length_km", "fare"):
+        if column in changes:
+            out.iloc[rows, out.columns.get_loc(column)] = changes[column].to_numpy()
+    out.iloc[rows, out.columns.get_loc("cost")] = generalised_cost(
+        out["time_min"].iloc[rows],
+        out["length_km"].iloc[rows],
+        out["mode"].iloc[rows],
+        per_minute=cost_cfg["per_minute"],
+        per_km=cost_cfg["per_km"],
+        fare=out["fare"].iloc[rows],
+    )
+    return out
+
+
+def journey_metrics(paths: pd.DataFrame, links: pd.DataFrame, fare_fn=None) -> pd.DataFrame:
+    """Per-path time_min, length_km, fare and cost.
+
+    ``fare_fn(paths, links) -> Series`` gives exact fares (transport.fares);
+    without it, the link-additive fares are used. With exact fares the
+    generalised cost uses them in place of the approximate ones.
+    """
+    out = path_metrics(paths, links, ("time_min", "length_km", "cost", "fare"))
+    if fare_fn is not None and len(paths):
+        exact = fare_fn(paths, links).reindex(out.index).fillna(out["fare"])
+        out["cost"] = out["cost"] - out["fare"] + exact
+        out["fare"] = exact
     return out

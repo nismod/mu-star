@@ -25,9 +25,12 @@ Wildcards:
               between islands; inter-island flows: transport_interisland.smk)
     {zoning}  zone system for OD and connectors: "h3-r8" (H3 resolution 8).
               Other resolutions work the same way, e.g. "h3-r7".
+    {scenario} sensitivity scenario (transport_land.scenarios, e.g. "central",
+              "commute-low"), from the multimodal network onwards. Zones, OD
+              estimation and the road skim are shared by all scenarios.
 
 Run all of part 1 for Mauritius with:
-    snakemake -c4 data/processed/transport/mauritius/demand/h3-r8/demand-by-mode.parquet
+    snakemake -c4 data/processed/transport/mauritius/demand/h3-r8/central/demand-by-mode.parquet
 """
 
 from pathlib import Path
@@ -44,6 +47,9 @@ TL_SCRIPTS = "workflow/0-preprocess"
 
 TL_NATIONAL = "{data}/processed/transport/national"
 TL_ISLAND = "{data}/processed/transport/{island}"
+# The scenario whose network gives the road skim (road layers do not depend on
+# scenario settings).
+TL_BASE_SCENARIO = "central"
 
 
 def tl_input(key):
@@ -72,6 +78,17 @@ def tl_island_input(key):
     return resolve
 
 
+def tl_island_optional(key):
+    """Input function: an island's optional input, if configured and present."""
+
+    def resolve(wc):
+        rel = TL_ISLANDS[wc.island]["inputs"].get(key)
+        path = f"{wc.data}/{rel}" if rel else None
+        return [path] if path and Path(path).exists() else []
+
+    return resolve
+
+
 def tl_flag(name):
     """Shell fragment '--name path' for an optional single input, or nothing."""
 
@@ -88,27 +105,25 @@ def tl_flag(name):
 
 rule transport_census_zones:
     """
-    Join the 2022 census residential-zone table (official population and
-    employed residents, by 4-digit census code) to its zone boundaries. Drops
-    aggregate rows, takes districts from the Appendix II lookup (or the code
-    prefix) and the island from the first digit.
+    Employed residents by census area (2022 census Table CA1: Municipal Wards,
+    Village Council Areas, Rodrigues regions), matched by name to the official
+    codes (Appendices II-IV), with district and island from the code, joined
+    to the area boundaries. Aggregate rows are dropped.
 
     Test with:
     snakemake -c1 data/processed/transport/national/population/census-zones.geoparquet
     """
     input:
         table=tl_input("census_table"),
+        codes=tl_input("census_zone_codes"),
         boundaries=tl_input("census_boundaries"),
-        districts=tl_optional_input("census_zone_districts"),
         script=f"{TL_SCRIPTS}/transport_census_zones.py",
     output:
         zones=f"{TL_NATIONAL}/population/census-zones.geoparquet",
-    params:
-        districts=tl_flag("districts"),
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
-            --table {input.table} --boundaries {input.boundaries} {params.districts} \
+            --table {input.table} --codes {input.codes} --boundaries {input.boundaries} \
             --output {output.zones}
         """
 
@@ -342,8 +357,10 @@ rule transport_multimodal_network:
     (road edge, metro segment, metro station), listing every network link it
     removes.
 
+    Network costs, capacities and bus detours depend on the {scenario}.
+
     Test with:
-    snakemake -c1 data/processed/transport/mauritius/networks/multimodal/h3-r8/links.parquet
+    snakemake -c1 data/processed/transport/mauritius/networks/multimodal/h3-r8/central/links.parquet
     """
     input:
         road_edges=rules.transport_road_network.output.edges,
@@ -355,12 +372,13 @@ rule transport_multimodal_network:
         zones=rules.transport_zones.output.zones,
         script=f"{TL_SCRIPTS}/transport_multimodal_network.py",
     output:
-        links=f"{TL_ISLAND}/networks/multimodal/{{zoning}}/links.parquet",
-        nodes=f"{TL_ISLAND}/networks/multimodal/{{zoning}}/nodes.geoparquet",
-        failure_units=f"{TL_ISLAND}/networks/multimodal/{{zoning}}/failure-units.parquet",
+        links=f"{TL_ISLAND}/networks/multimodal/{{zoning}}/{{scenario}}/links.parquet",
+        nodes=f"{TL_ISLAND}/networks/multimodal/{{zoning}}/{{scenario}}/nodes.geoparquet",
+        failure_units=f"{TL_ISLAND}/networks/multimodal/{{zoning}}/{{scenario}}/failure-units.parquet",
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
+            --island {wildcards.island} --scenario {wildcards.scenario} \
             --road-edges {input.road_edges} --road-nodes {input.road_nodes} \
             --bus-stops {input.bus_stops} --bus-segments {input.bus_segments} \
             --metro-stations {input.metro_stations} --metro-segments {input.metro_segments} \
@@ -383,7 +401,7 @@ rule transport_road_skim:
     snakemake -c1 data/processed/transport/mauritius/demand/h3-r8/road-skim.parquet
     """
     input:
-        links=rules.transport_multimodal_network.output.links,
+        links=f"{TL_ISLAND}/networks/multimodal/{{zoning}}/{TL_BASE_SCENARIO}/links.parquet",
         zones=rules.transport_zones.output.zones,
         script=f"{TL_SCRIPTS}/transport_road_skim.py",
     output:
@@ -438,28 +456,91 @@ rule transport_radiation_od:
         """
 
 
-rule transport_mode_split:
+def tl_school_od(wc):
+    """School OD if school trips are enabled, else no input."""
+    if (TL.get("school") or {}).get("enabled"):
+        return [rules.transport_school_od.output.od.format(**wc)]
+    return []
+
+
+rule transport_school_children:
     """
-    Split between-cell commuting trips into car, bus, metro and walk using
-    national shares (bus and metro derived from reported daily boardings),
-    scale to the peak period, and write the demand table for assignment with
-    origin and destination as network node ids (zone/<id>/car, zone/<id>/bus
-    or zone/<id>/metro). Metro applies only where both ends can walk to a
-    station. Walk-only trips are dropped and counted in the summary.
+    Enrolled school-age children by residence, per H3 cell and school level:
+    children by census area and age band (2022 census, source TBC), matched to
+    census codes, spread by the scaled WorldPop pattern.
 
     Test with:
-    snakemake -c1 data/processed/transport/mauritius/demand/h3-r8/demand-by-mode.parquet
+    snakemake -c1 data/processed/transport/national/zones/h3-r8/children.parquet
     """
     input:
-        od=rules.transport_radiation_od.output.od,
-        nodes=rules.transport_multimodal_network.output.nodes,
-        script=f"{TL_SCRIPTS}/transport_mode_split.py",
+        children=lambda wc: f"{wc.data}/{TL['school']['children_table']}",
+        codes=tl_input("census_zone_codes"),
+        zones=rules.transport_census_zones.output.zones,
+        raster=rules.transport_scale_worldpop.output.raster,
+        script=f"{TL_SCRIPTS}/transport_school_children.py",
     output:
-        demand=f"{TL_ISLAND}/demand/{{zoning}}/demand-by-mode.parquet",
-        summary=f"{TL_ISLAND}/demand/{{zoning}}/demand-by-mode-summary.json",
+        children=f"{TL_NATIONAL}/zones/{{zoning}}/children.parquet",
+    shell:
+        """
+        python {input.script} --config {TL_CONFIG} --zoning {wildcards.zoning} \
+            --children {input.children} --codes {input.codes} --zones {input.zones} \
+            --raster {input.raster} --output {output.children}
+        """
+
+
+rule transport_school_od:
+    """
+    Journeys to school per level (primary, secondary): children by residence
+    to school places, with the radiation model on the road skim.
+
+    Test with:
+    snakemake -c1 data/processed/transport/mauritius/demand/h3-r8/school-od.parquet
+    """
+    input:
+        zones=rules.transport_zones.output.zones,
+        children=rules.transport_school_children.output.children,
+        schools=tl_island_input("schools"),
+        skim=rules.transport_road_skim.output.skim,
+        script=f"{TL_SCRIPTS}/transport_school_od.py",
+    output:
+        od=f"{TL_ISLAND}/demand/{{zoning}}/school-od.parquet",
+        summary=f"{TL_ISLAND}/demand/{{zoning}}/school-od-summary.json",
     shell:
         """
         python {input.script} --config {TL_CONFIG} \
-            --od {input.od} --nodes {input.nodes} \
+            --island {wildcards.island} --zoning {wildcards.zoning} \
+            --zones {input.zones} --children {input.children} --schools {input.schools} \
+            --skim {input.skim} --output {output.od} --output-summary {output.summary}
+        """
+
+
+rule transport_mode_split:
+    """
+    Split trips into walk, cycle, car, bus and metro, by purpose (work, and
+    school per level if enabled), scale to the peak period, and write the
+    demand table for assignment with origin and destination as network node
+    ids (zone/<id>/car, zone/<id>/bus or zone/<id>/metro). Mauritius: national
+    shares with bus and metro from reported boardings. Rodrigues: shares by
+    distance band. Walk and cycle trips are counted, not assigned.
+
+    Test with:
+    snakemake -c1 data/processed/transport/mauritius/demand/h3-r8/central/demand-by-mode.parquet
+    """
+    input:
+        od=rules.transport_radiation_od.output.od,
+        school_od=tl_school_od,
+        skim=rules.transport_road_skim.output.skim,
+        nodes=rules.transport_multimodal_network.output.nodes,
+        script=f"{TL_SCRIPTS}/transport_mode_split.py",
+    output:
+        demand=f"{TL_ISLAND}/demand/{{zoning}}/{{scenario}}/demand-by-mode.parquet",
+        summary=f"{TL_ISLAND}/demand/{{zoning}}/{{scenario}}/demand-by-mode-summary.json",
+    params:
+        school_od=tl_flag("school-od"),
+    shell:
+        """
+        python {input.script} --config {TL_CONFIG} \
+            --island {wildcards.island} --scenario {wildcards.scenario} \
+            --od {input.od} {params.school_od} --skim {input.skim} --nodes {input.nodes} \
             --output {output.demand} --output-summary {output.summary}
         """

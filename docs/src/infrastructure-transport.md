@@ -1,6 +1,6 @@
 # Transport
 
-## Land transport: journey-to-work criticality (draft)
+## Land transport: journey-to-work and school criticality (draft)
 
 > **Status: draft.** The rules, file locations, wildcards and schemas below
 > are the agreed starting point. The scripts are written and run end to end
@@ -8,70 +8,82 @@
 > [open questions](#open-questions) list the decisions still to make.
 
 The analysis asks: **if one piece of the land transport network fails, how much
-longer, further and costlier do people's journeys to work become, and how many
-can no longer make the trip at all?**
+longer, further and costlier do journeys to work and school become, and how
+many can no longer be made at all?**
 
 Mauritius and Rodrigues are separate study areas (the `{island}` wildcard),
 with no commuting between them. Air and sea links between the islands are
 estimated separately (see [Inter-island links](#inter-island-links-draft)).
+Sensitivity runs, such as different commute fractions, are named scenarios
+(the `{scenario}` wildcard).
 
 For each island there are four stages:
 
-1. **Demand.** Estimate a journey-to-work origin–destination (OD) matrix
-   between H3 cells:
-   - employed residents come from the 2022 census, distributed using WorldPop;
-   - jobs come from mu-star's H3 economic activity layer, converted with
-     sectoral productivity;
-   - a radiation model from
-     [transport_flow_model](https://github.com/nismod/transport_flow_model)
-     (tfm) links the two.
+1. **Demand.** Estimate OD matrices between H3 cells for two purposes:
+   - *journeys to work*: employed residents (2022 census, distributed using
+     WorldPop) to jobs (mu-star's H3 economic activity layer, converted with
+     sectoral productivity);
+   - *journeys to school*, per level: school-age children by residence to
+     school places.
 
-   On Mauritius the radiation settings are calibrated against the census
-   district-to-district travel-to-work table (CA27).
+   Both use the radiation model from
+   [transport_flow_model](https://github.com/nismod/transport_flow_model)
+   (tfm). On Mauritius, the journey-to-work settings are calibrated against
+   the census district-to-district table (CA27).
 2. **Network.** Build one directed multimodal network of roads, bus routes and
    the metro, with zone connectors. Each link carries a generalised cost in MUR
    per trip.
-3. **Baseline.** Split trips into walk, car, bus and metro with national
-   shares (bus and metro derived from reported daily boardings). Then assign
-   peak-period demand with tfm. The assignment is sequential and capacity
-   constrained: bus and metro capacity binds, and roads are unconstrained.
+3. **Baseline.** Split trips into walk, cycle, car, bus and metro:
+   - Mauritius uses national shares, with bus and metro derived from
+     reported daily boardings;
+   - Rodrigues uses shares by distance band;
+   - school trips use shares per level.
+
+   Car, bus and metro trips are assigned together with tfm, so work and
+   school trips share bus and metro capacity. The assignment is sequential
+   and capacity constrained, with roads unconstrained.
 4. **Criticality.** Fail each road edge, metro segment and metro station on
-   its own and reroute the affected trips. Metro trips with no metro path left
-   fall back to bus, then car. Report the increases in journey time, distance
-   and cost, and count the trips that are isolated.
+   its own:
+   - car trips reroute;
+   - buses detour around the failure, or skip stops they cannot reach;
+   - metro trips with no metro path left fall back to bus, then car.
+
+   We report the changes in journey time, distance, fare and cost by mode
+   and purpose, and count the trips that are isolated.
 
 ```text
-census CA27 (district OD) ───────────────────────────────────────────────────────┐ calibration + validation
-census zones + Appendix II districts + boundaries ─┬─> WorldPop scaled ─> residents per H3 cell ─┐
-WorldPop ──────────────────────────────────────────┘                                            │
-economic_activity_h3 (output by sector) ──(output per worker)──> jobs per H3 cell ──────────────┤
-                                                                                     zones {island}
-roads ─> road network ─┬─> bus segments ─┐                                                      │
-bus stops/routes/times ┘                  ├─> multimodal network + failure units <──────────────┘
-metro stations/lines ─> metro segments ───┘          │
-                                                     ├─> road skim ─> radiation OD ─> demand by mode
-                                                     └──────────> baseline assignment <────┘
+census CA27 (district OD) ───────────────────────────────────────────────────────────┐ calibration + validation
+census CA1 + Appendix II-IV codes + boundaries ─┬─> WorldPop scaled ─> residents per H3 cell ─┐
+WorldPop ───────────────────────────────────────┘           └─> children per H3 cell ─────────┤
+economic_activity_h3 (output by sector) ──(output per worker)──> jobs per H3 cell ────────────┤
+schools ──────────────────────────────────────────────────────────────────────────────────────┤
+                                                                                  zones {island}
+roads ─> road network ─┬─> bus segments ─┐                                                    │
+bus stops/routes/times ┘                  ├─> multimodal network {scenario} + failure units   │
+metro stations/lines ─> metro segments ───┘          │              (bus detours)              │
+                                                     ├─> road skim ─> work OD, school OD ─> demand by mode {scenario}
+                                                     └──────────> baseline assignment <───────┘
                                                                         │
                                                        failure sets ─> criticality batches ─> asset criticality
 ```
 
 ### Running
 
-| What                                  | Where                                                  |
-| ------------------------------------- | ------------------------------------------------------ |
-| Demand and network rules              | `workflow/0-preprocess/transport_land.smk`             |
-| Assignment and criticality rules      | `workflow/2-losses/transport_land.smk`                 |
-| Inter-island rules                    | `workflow/0-preprocess/transport_interisland.smk`      |
-| Jobs layer (stub)                     | `economic_activity_h3` in `workflow/0-preprocess/economy.smk` |
-| Parameters                            | `config/transport/transport.yaml`                      |
-| Scripts                               | next to the rule files                                 |
-| Helpers                               | `src/transport/` (`costs.py`, `fallback.py`, `land.py`) |
+| What                             | Where                                                                  |
+| -------------------------------- | ---------------------------------------------------------------------- |
+| Demand and network rules         | `workflow/0-preprocess/transport_land.smk`                             |
+| Assignment and criticality rules | `workflow/2-losses/transport_land.smk`                                 |
+| Inter-island rules               | `workflow/0-preprocess/transport_interisland.smk`                      |
+| Jobs layer (stub)                | `economic_activity_h3` in `workflow/0-preprocess/economy.smk`          |
+| Parameters                       | `config/transport/transport.yaml`                                      |
+| Scripts                          | next to the rule files                                                 |
+| Helpers                          | `src/transport/` (`census.py`, `costs.py`, `detours.py`, `fallback.py`, `fares.py`, `land.py`) |
 
 ```bash
-# everything: both islands, default zoning
+# everything: both islands, default zoning, default scenarios
 snakemake -c8 transport_land_all
-# one island
-snakemake -c8 data/out/transport/land/mauritius/h3-r8/criticality/asset-criticality.geoparquet
+# one island and scenario
+snakemake -c8 data/out/transport/land/mauritius/h3-r8/central/criticality/asset-criticality.geoparquet
 # inter-island
 snakemake -c1 data/out/transport/interisland/criticality.csv
 ```
@@ -82,25 +94,44 @@ installed from a pinned git commit, which builds its Rust extension, so
 
 ### Wildcards
 
-| Wildcard   | Values                         | Meaning                                                                    |
-| ---------- | ------------------------------ | -------------------------------------------------------------------------- |
-| `{data}`   | `data`                         | data root                                                                  |
-| `{island}` | `mauritius`, `rodrigues`       | separate study areas, with no commuting between them                       |
-| `{zoning}` | `h3-r8` (`h3-r\d+`)            | zone system for the economic layer, OD, connectors and results. H3 resolution 8 is about 0.7 km² |
-| `{batch}`  | `batch-0000` … (`batch-\d{4}`) | one criticality job. The count is `criticality.n_batches` (default 64)     |
+| Wildcard     | Values                                        | Meaning                                                                    |
+| ------------ | --------------------------------------------- | -------------------------------------------------------------------------- |
+| `{data}`     | `data`                                        | data root                                                                  |
+| `{island}`   | `mauritius`, `rodrigues`                      | separate study areas, with no commuting between them                       |
+| `{zoning}`   | `h3-r8` (`h3-r\d+`)                           | zone system for the economic layer, OD, connectors and results             |
+| `{scenario}` | `central`, `commute-low`, `commute-high`, …   | named overrides (`transport_land.scenarios`), from the multimodal network onwards |
+| `{batch}`    | `batch-0000` … (`batch-\d{4}`)                | one criticality job (count: `criticality.n_batches`)                       |
+
+**Scenarios** are named sets of config overrides, with dotted keys allowed,
+for example `mode_split.ridership.commute_fraction: {bus: 0.3, metro: 0.3}`.
+
+- *What they can change*: mode split, period, cost, bus, metro, school and
+  criticality settings. These feed the multimodal network, the mode split,
+  assignment and criticality.
+- *What they share*: zones, the OD estimates and the road skim are the same
+  for every scenario.
+- *Defaults*: the scenarios run by default are listed in
+  `default_scenarios`: commute fractions of 0.5 (`central`), 0.3 and 0.7.
+
+**Per-island settings** go in `islands.<island>.overrides`. For example,
+Rodrigues uses distance-band mode shares.
 
 ### File layout
 
 ```text
 {data}/incoming/                                   provided (schemas below)
-  Socio-economic/Census/2022/census-residential-zones.xlsx, .gpkg
-  Socio-economic/Census/2022/appendix-ii-zone-districts.csv
+  Socio-economic/Census/2022/CA1-employment-by-area.csv
+  Socio-economic/Census/2022/appendix-ii-iv-area-codes.csv
+  Socio-economic/Census/2022/census-areas.gpkg
   Socio-economic/Census/2022/CA27-residence-by-workplace-district.csv
+  Socio-economic/Census/2022/children-by-area-age.csv
   Socio-economic/GDP/output-per-worker-by-sector.csv
   Population/WorldPop/mus_ppp_2022_constrained.tif
+  Education/{island}/schools.gpkg
   Infrastructure/Transport/{island}/road/roads.gpkg
   Infrastructure/Transport/{island}/bus/bus_stops.gpkg, bus_routes.gpkg, bus_route_stops.csv
-  Infrastructure/Transport/mauritius/metro/metro_stations.gpkg, metro_lines.gpkg, metro_line_stations.csv
+  Infrastructure/Transport/mauritius/metro/metro_stations.gpkg, metro_lines.gpkg,
+      metro_line_stations.csv, metro_fare_stages.csv
   Infrastructure/Transport/interisland/links.csv, nodes.gpkg, traffic.csv
 
 {data}/processed/economy/{zoning}/economic-activity.parquet   rule economic_activity_h3 (stub)
@@ -109,21 +140,21 @@ installed from a pinned git commit, which builds its Rust extension, so
   population/census-zones.geoparquet
   population/census-district-od.parquet, census-district-od-summary.json
   population/worldpop-scaled.tif, worldpop-census-check.csv
-  zones/{zoning}/residents.parquet, jobs.parquet
+  zones/{zoning}/residents.parquet, jobs.parquet, children.parquet
 
 {data}/processed/transport/{island}/
   zones/{zoning}/zones.geoparquet
-  networks/road/edges.geoparquet, nodes.geoparquet
-  networks/bus/stops.geoparquet, segments.geoparquet
-  networks/metro/stations.geoparquet, segments.geoparquet      (empty on Rodrigues)
-  networks/multimodal/{zoning}/links.parquet, nodes.geoparquet, failure-units.parquet
+  networks/road/, networks/bus/, networks/metro/ (empty on Rodrigues)
+  networks/multimodal/{zoning}/{scenario}/links.parquet, nodes.geoparquet, failure-units.parquet
   demand/{zoning}/road-skim.parquet
-  demand/{zoning}/commute-od.parquet, commute-od-summary.json
-  demand/{zoning}/radiation-calibration.csv, district-od-comparison.csv
-  demand/{zoning}/demand-by-mode.parquet, demand-by-mode-summary.json
+  demand/{zoning}/commute-od.parquet, commute-od-summary.json,
+      radiation-calibration.csv, district-od-comparison.csv
+  demand/{zoning}/school-od.parquet, school-od-summary.json
+  demand/{zoning}/{scenario}/demand-by-mode.parquet, demand-by-mode-summary.json
 
-{data}/out/transport/land/{island}/{zoning}/
-  baseline/link-flows.parquet, paths.parquet, od-journeys.parquet, unassigned.parquet, summary.json
+{data}/out/transport/land/{island}/{zoning}/{scenario}/
+  baseline/link-flows.parquet, paths.parquet, od-journeys.parquet,
+      purpose-shares.parquet, unassigned.parquet, summary.json
   criticality/failure-sets.parquet
   criticality/batches/{batch}/scenario-impacts.parquet, od-impacts.parquet
   criticality/asset-criticality.csv, asset-criticality.geoparquet
@@ -135,30 +166,44 @@ installed from a pinned git commit, which builds its Rust extension, so
 ### Data inputs
 
 All input paths are set in the config: national inputs under
-`transport_land.inputs`, and network inputs per island under
-`transport_land.islands.<island>.inputs`. Where we provide the data ourselves
-(roads, bus, metro), the schema below is what we have chosen. Any CRS is
-accepted, because everything is reprojected to `crs_metric` (EPSG:32740).
+`transport_land.inputs`, and network and school inputs per island under
+`transport_land.islands.<island>.inputs`. Where we provide the data
+ourselves (roads, bus, metro), the schema below is what we have chosen. Any
+CRS is accepted, because everything is reprojected to `crs_metric`
+(EPSG:32740).
 
-**2022 Housing and Population Census.** The reference date is 3 July 2022,
-and the employment reference period 27 June – 3 July 2022. The economic
-tables are in Volume VII: Economic Characteristics (December 2024).
-Employment covers anyone aged 16+ who worked at least one hour for pay,
-profit or family gain. That includes informal work, though it may be
-under-reported.
+**2022 Housing and Population Census.** The reference date is 3 July 2022.
+Our source is Volume VII: Economic Characteristics. Employment covers
+anyone aged 16+ who worked at least one hour for pay, profit or family gain.
+That includes informal work, though it may be under-reported.
 
-- *Census geography* (Methodology Report §3.4) uses hierarchical codes:
-  island (1 digit; 1 = Mauritius), district (+1; 11 = Port Louis), municipal
-  ward or village council area (+2; 1112 = Port Louis Ward 2), and
-  enumeration area (+2). Codes are kept as strings, so leading zeros survive.
-- *Zone table* (`census_table`, columns mapped in config): `zone_id`
-  (4-digit code), `population`, and `employed_residents`. Aggregate rows
-  (Republic, island, district, urban/rural) are dropped by code length.
-  Optionally, only the `Both sexes` rows are kept.
-- *Zone → district lookup* (`census_zone_districts`): transcribed from
-  Volume VII Appendix II (pp. 474–476), with columns `zone_id`, `zone_name`
-  and `district_code`. Without it, the district is the first two digits of
-  the zone code.
+- *Census geography* (Methodology Report §3.4, p. 17) uses hierarchical
+  codes:
+  - island (1 digit): 1 Mauritius, 2 Rodrigues, 3 Agaléga;
+  - district (+1): for example 11 Port Louis;
+  - area (+2): a Municipal Ward or Village Council Area on Mauritius, for
+    example 1201 Arsenal (Pamplemousses), or one of Rodrigues' six census
+    regions.
+
+  Codes are kept as strings.
+- *Table CA1* (pp. 1–30) gives employment and activity status by area. Area
+  names are printed in the rows, under district headings, and the first page
+  holds the national and district aggregates.
+  - It is transcribed to a CSV with `area_name`, `district` (the heading the
+    row is printed under), `row_type` (`aggregate` or `area`), `employed`
+    (*Currently active → Employed*), and optionally total population.
+  - Only `area` rows are used, so aggregates are never double counted.
+- *Appendix II* (pp. 474–476) gives the official codes and names of the
+  Municipal Wards and Village Council Areas by district. *Appendices III–IV*
+  (pp. 477–478) give the Rodrigues regions and their localities.
+  - They are transcribed to one CSV with `zone_id`, `zone_name` and
+    `district_code`.
+  - CA1 areas are matched to codes by name within their district, ignoring
+    accents, case and punctuation (`transport.census.match_codes`).
+  - A name that is unique across the lookup is matched even without a
+    district. `census_name_overrides` fixes anything left, and unmatched
+    rows are an error.
+  - No spatial join is needed for districts.
 
   | Code | District           | Code | District         |
   | ---- | ------------------ | ---- | ---------------- |
@@ -168,32 +213,33 @@ under-reported.
   | 14   | Flacq              | 19   | Black River      |
   | 15   | Grand Port         |      |                  |
 
-- *Boundaries*: polygons of the census zones, with the same code.
-- *Table CA27* (Volume VII, p. 347; district breakdown from p. 349) gives
-  the employed population by residence district (rows) and workplace
-  district (columns), with sex and age breakdowns.
+- *Boundaries* of the areas, with the same codes, are still needed to spread
+  totals over WorldPop pixels (source TBC).
+- *Table CA27* (p. 347; district breakdown from p. 349) gives the employed
+  population by residence district (rows) and workplace district (columns),
+  with sex and age breakdowns.
   - The workplace columns are the nine districts plus *Not stated*,
-    *Rodrigues and Outer Islands*, and *Outside Mauritius* (which includes
-    work abroad).
-  - It is transcribed from the PDF to a CSV with one row per residence
-    district × sex × age group: `residence_district`, `sex`, `age_group`, one
-    column per workplace, and `Total`.
-  - We use only the *Both sexes*, all-ages rows for the nine residence
-    districts, and the nine workplace districts.
-  - The three other workplace columns are kept in the summary so that the
-    excluded counts stay auditable, and each row is checked against its
-    published total.
+    *Rodrigues and Outer Islands*, and *Outside Mauritius*.
+  - It is transcribed to a CSV with one row per residence district × sex ×
+    age group.
+  - Only the *Both sexes*, all-ages rows and the nine × nine districts are
+    used. The three other workplace columns are kept for audit, and each row
+    is checked against its published total.
+- *Children by area and age band* (source TBC: the census population
+  volume) give the origins of school trips.
 
-**WorldPop** is a gridded population raster (about 100 m) in persons per
-pixel. We use it only for the spatial pattern within each census zone, after
-scaling it to the census totals. Ideally the 2022 product would be used.
+**WorldPop** is a gridded population raster (about 100 m). We use only its
+spatial pattern within each census area. If CA1 has no total population,
+WorldPop is scaled to employed residents instead.
 
 **H3 economic activity** is the output of the rule `economic_activity_h3`
-(a stub). It is wide: one row per H3 cell (`h3_index`, at the `{zoning}`
-resolution or finer), and one output column per sector named `gva_<sector>`.
-**Sectoral productivity**, `output-per-worker-by-sector.csv`, has the columns
-`sector` and `output_per_worker`. It is to be built from Statistics Mauritius
-national accounts and employment by industry.
+(a stub). It is wide: one row per H3 cell (`h3_index`), and one output
+column per sector (`gva_<sector>`). The path and columns need checking.
+**Sectoral productivity** (`sector`, `output_per_worker`) is to be built
+from Statistics Mauritius data.
+
+**Schools** (`schools.gpkg` per island): `school_id`, `name`, `level`
+(`primary` or `secondary`), `enrolment` (or `capacity`), Point geometry.
 
 **Roads**, `roads.gpkg`, layer `edges`, LineStrings noded at junctions:
 
@@ -207,16 +253,14 @@ national accounts and employment by industry.
 | `capacity_vph`            | num  | no       | vehicles per hour per direction. Defaults by class                 |
 | `name`, `lanes`, `bridge` |      | no       | carried through                                                    |
 
-**Bus**, with route frequencies and between-stop timings:
+**Bus**, with route frequencies, between-stop timings and fare stages:
 
 - `bus_stops.gpkg`: `stop_id`, `name`, Point geometry
-- `bus_routes.gpkg`: `route_id`, `name`, `operator`, and the peak
-  `frequency_per_hour` (or `headway_min`). Geometry is optional and used
-  later for map matching.
+- `bus_routes.gpkg`: `route_id`, `name`, `operator`, and peak
+  `frequency_per_hour` (or `headway_min`)
 - `bus_route_stops.csv`: `route_id`, `direction` (0/1), `stop_sequence`,
-  `stop_id`, and `time_to_next_min` (scheduled minutes to the next stop)
-
-Every route uses the standard vehicle size `bus.vehicle_capacity`.
+  `stop_id`, `time_to_next_min`, and optionally `fare_stage` (the stop's
+  stage number on the route, for exact fares)
 
 **Metro** (Mauritius only):
 
@@ -225,8 +269,8 @@ Every route uses the standard vehicle size `bus.vehicle_capacity`.
   for Rose Hill – Réduit) and the line's geometry
 - `metro_line_stations.csv`: `line_id`, `station_id`, `seq`, and optionally
   `run_time_min_to_next`
-
-A station on both lines is an interchange.
+- `metro_fare_stages.csv`: `from_station`, `to_station`, `stage`. This is
+  the operator's station-to-station stage matrix, used for reporting.
 
 ### Parameters and their sources
 
@@ -238,348 +282,344 @@ published value.
 
 | Parameter | Value | Source / status |
 | --- | --- | --- |
-| Bus boardings per day | 412,000 | Reported: ~412,000–425,000 (June 2026 parliamentary estimate) |
-| Metro boardings per day | 36,000 | Reported: 35,000–36,000 (July 2026); 42,000 on a recorded weekday (FY 2024/25) |
-| Commute fraction of boardings | 0.5 bus, 0.5 metro | **Unknown**: no survey. An uncalibrated parameter for sensitivity |
-| Boardings per one-way journey | 1.2 bus, 1.1 metro | Assumption (transfers count twice) |
-| Journeys per commuter per day | 2 | Out and back |
-| Walk share (between cells) | 0.05 | Assumption |
+| Bus boardings per day | 412,000 | Reported, 410,000–425,000 (June 2026 parliamentary estimate) |
+| Metro boardings per day | 36,000 | Reported, 35,000–36,000 (July 2026); 42,000 on a recorded weekday (FY 2024/25) |
+| Commute fraction of boardings | 0.5 (scenarios 0.3, 0.7) | **Unknown**: no survey. Sensitivity scenarios |
+| Boardings per journey; journeys per commuter | 1.2 bus / 1.1 metro; 2 | Assumption |
+| Walk share, Mauritius | 0.05 | Assumption |
+| Rodrigues shares by distance band | walk / cycle / car / bus | Assumption (no ridership figures; much walking and cycling on short trips) |
+| School shares per level | e.g. secondary: walk 0.15, bus 0.55, metro 0.08 | Assumption |
 
 **Metro service**
 
 | Parameter | Value | Source / status |
 | --- | --- | --- |
-| Main line headway | 10 min | Published nominal (Metro Express). Sensitivity 10–25 |
-| Branch headway | 15 min | Assumption (published 10–15 Mon–Thu, 20–25 Fri–Sun) |
-| Vehicle capacity | 422 | Published maximum, incl. standing (CAF Urbos 100, 18 vehicles) |
-| Peak capacity used by non-work trips | 25% | Assumption: students are 15–18% of metro passengers; other purposes unknown |
-| Journey-time checks | Port Louis – Curepipe 52, – Rose Hill 23, – Quatre Bornes 29 min | Published itinerary; compared with modelled run times when the network is built |
-| Speed where no run times are given | 30 km/h | Main line ~26 km in ~52 min |
+| Main line headway | 10 min | Published nominal. Sensitivity 10–25 |
+| Branch headway | 15 min | Assumption |
+| Vehicle capacity | 422 | Published maximum (CAF Urbos 100) |
+| Journey-time checks | Port Louis – Curepipe 52, – Rose Hill 23, – Quatre Bornes 29 min | Published itinerary |
 
 **Bus service**
 
 | Parameter | Value | Source / status |
 | --- | --- | --- |
-| Vehicle capacity | 70 | Assumption (standard vehicle) |
-| Peak capacity used by non-work trips | 30% | Assumption (school and other purposes also load the weekday peak) |
+| Vehicle capacity | 70 | Assumption |
+| Peak capacity used by other purposes | bus 30%, metro 25% | Assumption. Should be lowered now that school trips are modelled |
 
-**Fares**
-
-Fares are approximated as a boarding charge plus a charge per km.
+**Fares and costs**
 
 | Parameter | Value | Source / status |
 | --- | --- | --- |
-| Bus | Rs 30 + Rs 0.5/km | Approximates the statutory stage fares (Rs 17–47; Port Louis – Rose Hill Rs 39, – Curepipe Rs 44, – Mahébourg Rs 47) |
-| Metro | Rs 32 + Rs 0.8/km | Approximates MECard stage fares (Rs 32–52 for stages 1–5; full line ~Rs 52) |
+| Bus fares, routing | Rs 30 + Rs 0.5/km | Approximation |
+| Bus fares, reporting | Rs 17 / 24 / 30 / 35 / 39 / 41 / 44 / 47 by number of stages | Road Traffic (Bus Fares) (Amendment) Regulations 2022 |
+| Metro fares, routing | Rs 32 + Rs 0.8/km | Approximation |
+| Metro fares, reporting | Rs 32 / 38 / 43 / 47 / 52 for stages 1–5 | MECard, 2023 conditions of travel |
+| Value of time | Rs 85/h, all modes | Assumption (range Rs 55–130/h, from 2025 earnings) |
+| Car cost | Rs 6.2 per person-km | Fuel + maintenance ~Rs 8/vehicle-km ÷ 1.3 occupancy |
 
-**Costs**
-
-| Parameter | Value | Source / status |
-| --- | --- | --- |
-| Value of time | Rs 85/h (Rs 1.42/min), all modes | Assumption: commuting, range Rs 55–130/h, based on 2025 mean employee earnings (Rs 37,200/month, ~Rs 215/h) |
-| Car cost | Rs 6.2 per person-km | Perceived fuel + maintenance ~Rs 8/vehicle-km (petrol Rs 77.70/l at 6–9 l/100 km), ÷ occupancy 1.3 |
-| Wait and walk time weight, boarding penalty | 1.5, 1.5, 5 min | Assumption |
-
-**Model settings**
+**Network and disruption settings**
 
 | Parameter | Value | Source / status |
 | --- | --- | --- |
-| Peak period | 60% of daily commuting, 2 h | Assumption |
-| Radiation settings | calibrated against CA27 | See the method |
-
-Further notes on these sources:
-
-- *Ridership*: these are boardings from different periods and day types, not
-  door-to-door journeys. The commute fractions are the weakest numbers. A
-  2021 operator survey said most metro respondents travelled to work, but
-  gave no share. Students are 15–18% of metro passengers.
-- *Value of time*: World Bank Mauritius road appraisals (2008 prices: Rs 50/h
-  for working passengers, Rs 20–25/h otherwise) are the local precedent, but
-  are out of date.
-- *Car costs*: the full car operating cost (~Rs 12/vehicle-km) is a resource
-  cost, and is not used for routing. Bus operating costs (~Rs 35–70/km) fall
-  on the operator.
+| Wait and walk weights; boarding penalty | 1.5, 1.5; 5 min | Assumption |
+| Peak period (work) | 60% of daily trips, 2 h | Assumption |
+| Bus detours: max skipped stops, max detour factor | 3; 4× | Assumption |
 
 ### Method
 
-**Population.** For each census zone, WorldPop is scaled by
-`census_population / worldpop_sum`, so that zone totals match the official
-figures exactly. `worldpop-census-check.csv` lists the ratio for each zone
-and flags zones outside `check_ratio_tolerance`. Pixels are aggregated to H3
-cells by their pixel centre. Employed residents per pixel use the
-employed/population ratio of the pixel's census zone. Every cell keeps a
-population-weighted centroid, where its connectors attach.
-
-**Zones.** Each H3 cell gets the census zone that contains its centre, which
-gives it a district and an island. Only one island's cells are kept. Its jobs
-are scaled to its employed residents, so the island is closed and jobs and
-workers are in the same units.
+**Population.** For each census area, WorldPop is scaled to the area total.
+That is total population where CA1 gives it, otherwise employed residents.
+Pixels are aggregated to H3 cells by their centre. Each cell gets the census
+area containing its centre, which gives it a district and an island. Only
+one island's cells are kept, and its jobs are scaled to its employed
+residents.
 
 **Jobs.** For each cell, jobs = Σ over sectors of output / output per worker.
-Without the productivity table, total output is used as relative
-attractiveness.
 
-**OD: the radiation model.** We use tfm's `radiation_flows`, which was
-extended for this work (see [Changes to
-transport_flow_model](#changes-to-transport_flow_model)):
+**Journeys to work: the radiation model.**
 
 $$ T_{ij} = T_i \cdot \frac{m_i\, n_j}{(m_i + s_{ij})(m_i + n_j + s_{ij})} $$
 
 - $T_i$ is the employed residents at $i$.
 - $n_j$ is the jobs at $j$.
 - $s_{ij}$ is the jobs in every other zone at least as close to $i$ as $j$ is.
-- $m_i$ is the origin mass: employed residents or jobs.
+- $m_i$ is the origin mass.
 
-Rows are normalised, so every employed resident makes one trip within
-`max_impedance`.
+Rows are normalised. With `include_self`, a cell competes as its own
+destination, at the mean travel time within a cell (about 1.3 min at
+resolution 8), so the model decides how many trips stay local. If no other
+cell is closer than that, the share that stays is $n_i/(m_i+n_i)$, which may
+be too many. Calibration compares this with not allowing trips within a
+cell. Trips within a cell are not assigned.
 
-*Trips within a cell.* With `include_self`, a cell also competes as its own
-destination, at the mean travel time within the cell (0.83 × the H3 cell
-circumradius at the connector speed: about 1.3 min, or 0.44 km, at
-resolution 8). The model decides how many trips stay in the cell. If no
-other cell is closer than that, the share that stays is $n_i / (m_i + n_i)$,
-whatever the cell size. That is about half where jobs and workers balance,
-which may be too many at resolution 8. Calibration compares this with not
-allowing trips within a cell, using CA27's within-district share. Trips
-within a cell are not assigned to the network.
-
-**Calibration (Mauritius).** The radiation model has no free parameter, and
-it depends only on the ranking of destinations by impedance. The choices
-that remain are:
-
-- the impedance: free-flow road time or distance;
-- the cut-off (`max_impedance`);
+**Calibration (Mauritius).** tfm's `calibrate_radiation` tries every
+combination of:
+- the impedance (free-flow road time or distance);
+- the cut-off;
 - the origin mass;
 - whether trips can stay within a cell.
 
-tfm's `calibrate_radiation` runs every combination in
-`radiation.calibration`. Each run is aggregated to districts, trips within a
-cell included, and scored against CA27. The best run is used. The default
-score is `cpc_shares`: the common part of commuters after scaling CA27 to the
-modelled total, so it rates the pattern rather than the total. Every
-candidate's score is in `radiation-calibration.csv`, and the settings used
-are in the summary.
+Each run is scored against CA27 by district (by default `cpc_shares`: the
+common part of commuters after scaling CA27 to the modelled total). The best
+run is used, and every candidate's score is in `radiation-calibration.csv`.
+The model only depends on the ranking of destinations, so calibration has
+little to adjust. If it fits poorly, a parameterised model, such as the
+extended radiation model with a scale parameter (Yang et al. 2014), is the
+next step. Scaling the OD to the CA27 totals (`district_od: constrain`, IPF)
+is the fallback.
 
-Calibration has little to work with. If it fits poorly, the next step is a
-parameterised model, such as the extended radiation model of Yang et al.
-(2014) with a scale parameter α. That would need checking against the
-original paper before implementing.
+**Journeys to school.**
+1. Children by census area and age band are matched to codes and spread by
+   the WorldPop pattern. Age bands are grouped into levels (primary,
+   secondary), and enrolment rates applied.
+2. Per level, the radiation model sends children to school places
+   (enrolment), on the same road skim, with a cut-off and trips within a cell
+   allowed. Schools outside the island's zone cells are moved to the nearest
+   zone.
 
-**Validation and constraint.** The chosen run is compared with CA27 by
-district pair. We report CPC, R², RMSE and the share of trips within each
-district (`district-od-comparison.csv` and the summary). Scaling the cell OD
-to the CA27 totals is kept as a heavier-handed fallback
-(`radiation.district_od: constrain`). It uses IPF in tfm's
-`scale_to_aggregate`, which also keeps each cell's production.
-
-Rodrigues has no district table. It uses the configured settings and is not
-validated.
-
-**Mode split.** There is no mode-choice data, so every OD pair between cells
-takes the same national shares:
-
-- with `method: ridership`, bus (or metro) commuters = boardings × commute
-  fraction ÷ boardings per journey ÷ journeys per commuter, divided by the
-  island's between-cell commuters;
-- walk is `walk_share`, and car takes the rest;
-- the metro share applies only where both ends can walk to a station
-  (otherwise it goes to bus), and bus only where both ends reach a stop
-  (otherwise car).
-
-On Rodrigues there is no metro, so its metro share becomes bus. Applying
-national boardings there is wrong: Rodrigues needs its own figures (see the
-open questions).
+**Mode split.** For each purpose and OD pair:
+- Mauritius journeys to work (`ridership`): bus (or metro) commuters =
+  boardings × commute fraction ÷ boardings per journey ÷ journeys per
+  commuter, divided by the island's between-cell commuters. Walk is
+  `walk_share`, and car takes the rest.
+- Rodrigues (`bands`): shares by road distance band, including walking and
+  cycling.
+- School trips: shares per level.
+- Metro applies only where both ends can walk to a station (otherwise it
+  goes to bus). Bus applies only where both ends reach a stop (otherwise
+  car).
+- Walk and cycle trips are counted, not assigned.
 
 **Multimodal network.** Node and link naming is documented in
 `src/transport/land.py`.
 
 - *Road*: one directed link per direction of travel.
-- *Car connectors*: each `zone/<id>/car` centroid is linked to its `car_k`
-  nearest road nodes.
+- *Car connectors*: each `zone/<id>/car` centroid is linked to its nearest
+  road nodes.
 - *Bus*: one link per route, direction and consecutive stop pair, using the
   scheduled time. Each bus link stores the `road_edge_ids` it runs over (the
-  fastest road path between snapped stops, for now), so that a road failure
-  removes it.
+  fastest road path between snapped stops, for now) and its fare stages.
 - *Metro*: station-to-station links per line and direction.
 - *Boarding*: boarding links carry the weighted half-headway wait, the
   boarding penalty and the boarding fare. In-vehicle links carry the per-km
   fare.
 - *Stops and stations* are split into a departure side and an arrival side,
-  joined arrival → departure for interchange. A trip therefore cannot walk
-  through a stop without riding.
-- *Walking*: `zone/<id>/bus` centroids walk to bus stops, and
-  `zone/<id>/metro` centroids walk to stations. Bus and metro are not
-  connected.
+  joined arrival → departure for interchange.
+- *Walking*: bus centroids walk to stops, and metro centroids walk to
+  stations. Bus and metro are not connected.
 
 Each link's cost is `per_minute × time_min + per_km[mode] × length_km + fare`.
-Capacity is in persons per modelled period. For bus and metro it is
-`(60 / headway) × hours × vehicle capacity × (1 − other_purpose_load_share)`.
-The metro main line's full theoretical capacity is 2,532 per hour per
-direction. The `other_purpose_load_share` factor reserves the part used by
-school and other non-work trips, because only journeys to work are modelled.
-Roads are unconstrained.
+Bus and metro capacity per period is `(60 / headway) × hours × vehicle
+capacity × (1 − other_purpose_load_share)`. Roads are unconstrained.
 
-**Failure units.** Each physical asset is one failure unit, listing every link
-it removes:
+**Failure units.** Each physical asset is one failure unit:
 
-- a road edge removes both of its directions, plus every bus link that runs
-  over it;
-- a metro segment removes both of its directions;
-- a metro station closure removes every boarding and alighting link at the
+- a *road edge* removes both of its directions. Buses over it detour, skip
+  stops or are cut (below).
+- a *metro segment* removes both of its directions.
+- a *metro station closure* removes every boarding and alighting link at the
   station.
 
-Road junctions are not failed.
+**Bus detours** (`transport.detours`). When a road edge fails, each bus route
+over it is handled stop by stop:
 
-**Baseline.** We run `tfm.assign(..., "sequential", capacity_constrained=True,
-directed=True, include_paths=True)`. Unroutable demand is recorded in
-`unassigned.parquet`. `od-journeys.parquet` holds the trips and the mean
-time, distance and cost per trip for each OD pair.
+1. *Detour*: take the fastest road path avoiding the failure between the same
+   two stops. The in-vehicle time becomes the scheduled time plus (detour road
+   time − original road time) ÷ `speed_factor`.
+2. *Skip*: if the next stop can't be reached within `max_detour_factor` × the
+   original road time, skip it and try the following stop, up to
+   `max_skipped_stops` in a row. Skipped stops lose their boarding and
+   alighting links for that route. Passengers riding through stay on the bus.
+3. *Cut*: if no stop can be reached, the segment is removed and the route is
+   cut there.
 
-**Criticality.** Failure units with at least `min_baseline_flow` are dealt
-into batches. In each batch, `tfm.disrupt` reroutes only the baseline paths
-that use a removed link, on top of all other flows. Time, distance and cost
-are recomputed from the edges along each path
-(`transport.costs.disruption_deltas`).
+Detoured bus links are stored on the failure unit as `link_changes` (new time,
+length and fare). Passengers on them keep their path, with the new journey
+time.
 
-**Mode fallback.** Trips left with no path on their own mode switch to the
-modes in `criticality.fallback`, in order, on the disrupted network
-(`transport.fallback.mode_fallback`). By default, metro falls back to bus,
-then car, and bus capacity still binds. What is left is isolated.
+**Baseline.** All purposes and modes are assigned together:
+`tfm.assign(..., "sequential", capacity_constrained=True, directed=True,
+include_paths=True)`. Paths are per node pair, so the purpose split of each
+pair is kept separately in `purpose-shares.parquet`. `od-journeys.parquet`
+holds time, distance, fare and cost per trip.
 
-With fixed mode shares, switching mode can look like an improvement,
-because car is often cheaper in generalised cost. So by default
-(`mode_shift_floor`), the deltas of OD pairs that switch mode are floored at
-zero: the baseline mode is taken as preferred. Metro failures therefore
-show up mainly as `shifted_to_bus` / `shifted_to_car`.
+**Fares for reporting** (`transport.fares`). Routing uses the linear fare
+approximation, because stage fares are not link-additive. Reported fares are
+recomputed on the assigned paths:
+- each *bus leg* (board, ride one route, alight) is priced by stages
+  travelled, `|stage at alighting − stage at boarding| + 1`, using the
+  statutory schedule;
+- each *metro journey* (first boarding to last alighting, including a change
+  between lines) is priced from the station-to-station stage matrix.
+
+Where stage data are missing, the approximation is used. Each new boarding
+pays a new fare, because there is no integrated ticketing. The generalised
+cost is reported with the exact fares.
+
+**Criticality.** For each failure unit with baseline flow, in batches:
+1. `tfm.disrupt` reroutes the baseline paths that use a removed link, on top
+   of all other flows.
+2. Bus detours (`link_changes`) are applied to the paths that use them.
+3. Trips left with no path on their own mode switch to the modes in
+   `criticality.fallback`: metro to bus, then car. Bus trips do not switch
+   mode: buses detour or skip stops instead. What is left is isolated.
+4. Time, distance, fare and cost are compared per OD pair, then split by
+   purpose with the baseline shares.
+
+Changes for trips that switch mode are reported **raw**. They can be
+negative, for example when car is cheaper than metro. A `shifted` flag lets
+later analysis floor them. Setting `criticality.mode_shift_floor: true`
+floors them in the outputs instead.
 
 The outputs for each asset are:
-
-- `affected_flow`, `rerouted_flow` and `isolated_flow` (trips in the period).
-  Isolated trips are counted, not costed.
-- `delta_time_min_total` (extra person-minutes);
-- `delta_length_km_total` (extra person-km);
-- `delta_cost_total` (MUR);
+- `affected_flow`, `rerouted_flow`, `isolated_flow` (counted, not costed);
+- `delta_time_min_total` (person-minutes), `delta_length_km_total`
+  (person-km), `delta_fare_total` and `delta_cost_total` (MUR);
 - `shifted_to_bus`, `shifted_to_car`;
-- the same quantities split by original mode;
-- ranks, and shares of the baseline totals.
+- the same quantities split by original mode and by purpose (`_work`,
+  `_school-primary`, `_school-secondary`).
 
 The output is joined to the road edge, metro segment or station geometry.
-Rerouted car traffic is not capacity constrained.
 
 ### Inter-island links (draft)
 
 This is a separate estimate of passengers and freight between Mauritius,
-Rodrigues and the outer islands, by air and sea.
+Rodrigues, Agaléga and St Brandon, by air and sea.
 
-- *Inputs*:
-  - `links.csv`: one row per service, with mode, from/to node,
-    services per week, and passenger and freight capacity per service;
-  - `nodes.gpkg`: airports and ports, with their island;
-  - `traffic.csv`: annual passengers and freight per link and direction.
-- *Flows* (`link-flows.csv`): annual and daily traffic, capacity and
-  utilisation per link and direction.
-- *Criticality* (`criticality.csv`): fail each link, airport and port in
-  turn. For each island pair we report the affected traffic, the part the
-  other links can absorb in their spare capacity (e.g. sea instead of air),
-  and what is stranded. Freight cannot always switch to air, which still
-  needs a switchability factor.
+**Baseline passengers** (annual, two-way):
+
+| Connection                | Passengers                        | Treatment                                         |
+| ------------------------- | --------------------------------- | ------------------------------------------------- |
+| Mauritius – Rodrigues air | ~280,000–315,000                  | Airport statistics and arrivals series            |
+| Mauritius – Rodrigues sea | unknown, likely small             | Capacity-constrained scheduled maritime link      |
+| Mauritius – Agaléga sea   | unknown                           | Irregular charter service                         |
+| Mauritius – Agaléga air   | no scheduled commercial demand    | Exceptional movements                             |
+| Mauritius – St Brandon    | unknown                           | Irregular                                         |
+
+Sources: the 2025 Rodrigues Airport development presentation, Mauritius
+Shipping Corporation sailing schedules, and the Blue Economy annual report
+2025/26.
+
+**Inputs**:
+- `links.csv`: per service, with mode, from/to node, services per week,
+  passenger and freight capacity, and `service_type` (scheduled, charter or
+  irregular);
+- `nodes.gpkg`: airports and ports, with their island;
+- `traffic.csv` (optional): observed passengers and freight by link,
+  direction, year and commodity.
+
+Links without observed traffic use the baseline table: the midpoint, split
+over the pair's links of that mode and both directions. Unknown values stay
+empty, not zero.
+
+**Flows** (`link-flows.csv`): traffic, capacity and utilisation per link and
+direction.
+
+**Criticality** (`criticality.csv`): each link, airport and port fails in
+turn. Per direction of travel between two islands, we report the affected
+passengers and freight, the part that other *scheduled* services in the same
+direction can absorb within spare capacity, and what is stranded. Freight is
+limited to specific modes and does not switch (`switchable.freight: false`).
 
 ### Scale and performance
 
-Mauritius is about 1,860 km², or about 2,500 H3 resolution-8 cells.
+Mauritius is about 2,500 H3 resolution-8 cells.
 
-- *Road skim*: tfm `impedance_matrix` takes about 40 s on a synthetic
-  network with 90,000 nodes. It runs twice, for time and for distance.
-- *Radiation*: about 1 s per run for 2,500 zones. The default calibration
-  grid has 40 runs.
-- *Paths*: the path table (`edge_path` lists) is the main memory cost.
-- *Criticality*: tens of thousands of road edges carry flow. Runtime is
-  still to be measured. Merging degree-2 road nodes would cut the number of
-  edges without dropping any roads.
+- *Road skim*: about 40 s on a synthetic network with 90,000 nodes, run
+  twice.
+- *Radiation*: about 1 s per run, with 40 calibration runs.
+- *Criticality*: 64 batches per island and scenario, so `transport_land_all`
+  is 436 jobs for 2 islands × 3 scenarios.
+- *Bus detours*: one Dijkstra (with a limit) per stretch per failed road edge
+  that buses use.
+- *Still to measure*: the criticality runtime. Merging degree-2 road nodes
+  would cut the number of edges.
 
 ### Status of each rule
 
-| Rule                                | Status                                                                                |
-| ----------------------------------- | ------------------------------------------------------------------------------------- |
-| `economic_activity_h3`              | **stub**: to be wired to the economics workflow                                       |
-| `transport_census_zones`            | written (codes, Appendix II lookup, aggregate rows dropped); not yet run              |
-| `transport_census_district_od`      | written for the CA27 transcription layout; run on a mock CA27 CSV                     |
-| `transport_scale_worldpop`          | written; not yet run                                                                  |
-| `transport_residents_h3`            | written; not yet run                                                                  |
-| `transport_jobs_h3`                 | written; not yet run                                                                  |
-| `transport_zones`                   | written (island filter, job scaling); study-area clip not needed (island codes)       |
-| `transport_road_network`            | written; connected-component cleaning TODO; run on toy data                           |
-| `transport_bus_network`             | draft; road mapping uses the fastest path, not map matching; run on toy data          |
-| `transport_metro_network`           | draft (lines, branch); run on toy data, including the no-metro case                   |
-| `transport_multimodal_network`      | draft; run on toy data                                                                |
-| `transport_road_skim`               | written (tfm); run on toy data                                                        |
-| `transport_radiation_od`            | written (tfm), calibration + validation; run on toy data, with and without CA27       |
-| `transport_mode_split`              | written (ridership-derived shares); run on toy data                                   |
-| `transport_baseline_assignment`     | written; run on toy data                                                              |
-| `transport_failure_sets`            | written; run on toy data                                                              |
-| `transport_criticality_batch`       | written, with mode fallback; run on toy data                                          |
-| `transport_criticality_summary`     | written (road, metro and station geometry); run on toy data                           |
-| `transport_interisland_flows`       | draft; not yet run                                                                    |
-| `transport_interisland_criticality` | draft; not yet run                                                                    |
+| Rule                                | Status                                                                     |
+| ----------------------------------- | -------------------------------------------------------------------------- |
+| `economic_activity_h3`              | **stub**: path and columns need checking                                   |
+| `transport_census_zones`            | written (CA1 by name to Appendix II–IV codes); not run                     |
+| `transport_census_district_od`      | written; run on a mock CA27                                                |
+| `transport_scale_worldpop`          | written; not run                                                           |
+| `transport_residents_h3`            | written; not run                                                           |
+| `transport_jobs_h3`                 | written; not run                                                           |
+| `transport_school_children`         | draft (children table source TBC); not run                                 |
+| `transport_zones`                   | written; not run                                                           |
+| `transport_road_network`            | written; run on toy data                                                   |
+| `transport_bus_network`             | draft (fare stages; road mapping without map matching); run on toy data    |
+| `transport_metro_network`           | draft (lines, journey-time checks); run on toy data, including no metro    |
+| `transport_multimodal_network`      | draft, with bus detours; run on toy data                                   |
+| `transport_road_skim`               | written; run on toy data                                                   |
+| `transport_radiation_od`            | written, calibration; run on toy data                                      |
+| `transport_school_od`               | draft; run on toy data                                                     |
+| `transport_mode_split`              | written (ridership, bands, school); run on toy data                        |
+| `transport_baseline_assignment`     | written (purposes, exact fares); run on toy data                           |
+| `transport_failure_sets`            | written; run on toy data                                                   |
+| `transport_criticality_batch`       | written (detours, fallback, raw changes, purposes); run on toy data        |
+| `transport_criticality_summary`     | written; run on toy data                                                   |
+| `transport_interisland_flows`       | draft; run on toy data                                                     |
+| `transport_interisland_criticality` | draft; run on toy data                                                     |
 
 "Run on toy data" means the script ran on a synthetic 5×5 grid with one bus
-route and a three-station metro line, with a mock CA27. The DAG has been
-checked with `snakemake -n` against placeholder inputs for both islands and
-the inter-island rules.
+route, a three-station metro line, a mock CA27, three schools and an
+inter-island fixture. The DAG has been checked with `snakemake -n` for both
+islands, three scenarios and the inter-island rules. Helper modules have
+unit tests (`src/transport/tests`).
 
 ### Decisions so far
 
-- **OD estimation**: tfm's radiation model, extended for separate masses,
-  correct intervening opportunities and trips within a cell. Calibrated
-  against CA27; scaling to CA27 is only a fallback.
-- **Zones**: H3 resolution 8. Districts come from census codes and the
-  Appendix II lookup.
-- **Islands**: Mauritius and Rodrigues are separate study areas with no
-  commuting between them. Inter-island air and sea flows are estimated
-  separately.
-- **Modes**: car, bus and metro are separate modes, each with its own
-  centroid, in one multimodal network. National shares, with bus and metro
-  derived from ridership.
-- **Metro**: main line and branch. Walking access only.
-- **Disruption**: roads unconstrained. Metro trips fall back to bus, then
-  car, with mode-switch deltas floored at zero.
+- **OD estimation**: tfm's radiation model, calibrated against CA27, with
+  scaling to CA27 as the fallback. Same-cell trips are decided by the model
+  (wait and see whether they are over-predicted).
+- **Purposes**: work, and school as a second purpose (primary, secondary)
+  with its own origins and destinations, sharing bus and metro capacity.
+- **Zones**: H3 resolution 8, from census areas (Wards / VCAs, Rodrigues
+  regions) via CA1 and Appendix II–IV codes.
+- **Islands**: Mauritius and Rodrigues are separate, with no land commuting
+  between them. Inter-island air and sea flows are estimated separately, and
+  freight does not switch mode.
+- **Mode shares**: on Mauritius, national shares with bus and metro from
+  ridership, and the commute fraction as sensitivity scenarios. On
+  Rodrigues, shares by distance band, with walking and cycling.
+- **Disruption**:
+  - roads are unconstrained;
+  - buses detour or skip stops, and bus trips don't switch to car;
+  - metro trips fall back to bus, then car;
+  - mode-switch changes are reported raw.
 - **Failures**: road edges (all classes), metro segments and metro stations.
+- **Fares**: exact stage fares for reporting where stage data exist,
+  otherwise per km.
 - **Isolated trips**: counted, not costed.
-- **Costs**: provisional values from the sources above, to be confirmed.
+- **Costs**: provisional values, to be confirmed.
 - **tfm**: git install for now. A proper release is planned (merging and
   tagging done by the maintainer).
 
 ### Open questions
 
-1. **Bus fallback.** Should bus trips cut off by a road failure fall back to
-   car (`fallback: {bus: [car]}`), or stay isolated?
-2. **Mode-shift floor.** Is flooring the deltas of mode-switching trips at
-   zero acceptable, or should the raw (possibly negative) deltas be reported
-   alongside?
-3. **Economic layer.** Who wires up `economic_activity_h3`? Is the path
-   `processed/economy/{zoning}/economic-activity.parquet` right, and are the
-   column names (`h3_index`, `gva_<ISIC section>`) right?
-4. **Census zone table.** Which file and column headers? Is the census
-   island code for Rodrigues 2?
-5. **Commute fractions and other purposes.** The bus and metro commute
-   fractions, and the share of peak capacity taken by school and other
-   trips, are unknown. Should we run a sensitivity range (e.g. 0.3 / 0.5 /
-   0.7), for example as a scenario wildcard, along with the value of time
-   (Rs 55–130/h) and metro headways (10–25 min)? Or model school trips as a
-   second purpose class?
-6. **Rodrigues ridership.** National boardings don't apply to Rodrigues.
-   Which bus ridership figures exist for it, or should we use fixed shares
-   there?
-7. **Same-cell trips.** If calibration prefers allowing trips within a cell
-   but over-predicts them, should we weight the cell's own destination mass?
-   Or move to the extended radiation model? arxiv.org would need to be
-   reachable to check the Yang et al. (2014) formula.
-8. **Exact fares.** Should we compute stage-based fares on the assigned paths
-   for reporting (this needs fare stages per stop and the metro stage
-   matrix), keeping the linear approximation for routing?
-9. **Inter-island data.** Which sources for services, capacities and traffic
-   (airport and port statistics, the Mauritius Shipping Corporation)? Do we
-   need freight by commodity, to tell whether freight can switch mode?
+1. **Economic layer.** Who wires up `economic_activity_h3`? Are its path and
+   columns right?
+2. **Census areas.** Where do the area boundaries (Wards / VCAs, Rodrigues
+   regions) come from? Does CA1 include Rodrigues, or is there a separate
+   table? Which table gives total population and children by age band per
+   area?
+3. **Schools.** Is there a school list with level, enrolment and location
+   (e.g. from the Ministry of Education)? Are primary catchments or
+   secondary admission rules worth representing, rather than a radiation
+   model? Should tertiary or vocational trips be included?
+4. **Other-purpose capacity.** Now that school trips are modelled, what
+   should the bus and metro `other_purpose_load_share` be?
+5. **Bus fare stages.** Can `fare_stage` per stop be extracted from the
+   timetable and fare data? If not, per-km fares are used. Do the special
+   schedules (routes 38, 38A, 79, 215, air-conditioned express) matter?
+6. **Inter-island data.** We need service schedules and capacities (Air
+   Mauritius, MSC), and freight by commodity and mode (port and airport
+   statistics).
+7. **Same-cell trips** (wait and see). If the calibrated model over-predicts
+   them, the options are to down-weight a cell's own destination mass, or to
+   use the extended radiation model. The second needs the formula checked
+   (arxiv.org is not reachable from this session).
 
 ### Changes to transport_flow_model
 
@@ -587,35 +627,23 @@ These are on the tfm branch `claude/land-transport-workflow-draft-j0njkf`,
 which mu-star pins in `environment.yaml`.
 
 - *Packaging*: the build backend is now maturin, so installs contain the
-  package and the Rust extension. The version comes from `Cargo.toml`
-  (`0.2.0-rc.2`).
-- *Radiation inputs*: `RadiationModel.generate(...,
-  destination_relevance_column=...)` takes separate origin and destination
-  masses. There is a `normalisation` option (`finite`, `row` or `none`).
-- *Intervening opportunities*: these are now the zones at least as close to
-  the origin as the destination (Simini et al.). This changes `generate`
-  results.
-- *Trips within a zone*: `include_self` makes a zone its own destination, at
-  the impedance on the diagonal.
+  Rust extension. The version is `0.2.0-rc.2`.
+- *Radiation*: separate origin and destination masses; intervening
+  opportunities as in Simini et al. (this changes `generate` results);
+  `include_self`; a `normalisation` option.
 - *New functions*:
-  - `RadiationModel.flows` returns Demand-ready flows;
-  - `RadiationModel.impedance_matrix` runs igraph Dijkstra;
-  - `radiation_probabilities` and `radiation_flows` are vectorised matrix
-    functions;
-  - `aggregate_od`, `scale_to_aggregate` (block or IPF),
-    `common_part_of_commuters` and `od_fit` constrain and validate an OD
-    against aggregate data;
-  - `calibrate_radiation` grid-searches the radiation settings against
-    aggregate data.
+  - `RadiationModel.flows` and `RadiationModel.impedance_matrix`;
+  - `radiation_probabilities` and `radiation_flows` (vectorised);
+  - `aggregate_od`, `scale_to_aggregate`, `common_part_of_commuters` and
+    `od_fit` (OD constraints and validation);
+  - `calibrate_radiation`.
 
 Possible further tfm work:
 
-- *Release*: publishing needs per-platform wheels, for example via
-  maturin-action. The current workflow would produce a plain `linux_x86_64`
-  wheel, which PyPI rejects.
-- *Path attributes*: `assign` and `disrupt` could report several path
-  attributes, not only cost.
-- *Congestion*: the `congestion` method is GB-specific and only available in
-  `assign`.
+- *Release*: per-platform wheels, for example via maturin-action.
+- *Disruption*: `disrupt` could support link cost changes, not only removals,
+  for the bus detours that mu-star now applies itself. It could also report
+  several path attributes, not only cost.
+- *Congestion*: the `congestion` method is GB-specific and only in `assign`.
 - *Capacity*: capacity has to be finite; we use 1e15 for unconstrained
   links.

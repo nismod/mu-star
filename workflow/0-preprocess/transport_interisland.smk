@@ -9,8 +9,11 @@ covers passengers and freight.
    with service capacity and utilisation.
 2. Criticality: fail each link, airport and port in turn. For each island
    pair, report the passengers and freight that lose their link, how much
-   could move to the other mode (air <-> sea) within its spare capacity, and
-   what is left stranded.
+   could move to other scheduled services (passengers only: freight is
+   limited to specific modes) within spare capacity, and what is stranded.
+
+Baseline passengers (two-way, annual): Mauritius - Rodrigues air ~280k-315k;
+sea, Agalega and St Brandon unknown (see config).
 
 Run with:
     snakemake -c1 data/out/transport/interisland/criticality.csv
@@ -35,14 +38,16 @@ rule transport_interisland_flows:
     input:
         links=ti_input("links"),
         nodes=ti_input("nodes"),
-        traffic=ti_input("traffic"),
+        traffic=lambda wc: [p] if Path(p := f"{wc.data}/{TI['inputs']['traffic']}").exists() else [],
         script=TI_SCRIPT,
     output:
         flows="{data}/out/transport/interisland/link-flows.csv",
+    params:
+        traffic=lambda wc, input: f"--traffic {input.traffic}" if input.traffic else "",
     shell:
         """
         python {input.script} flows --config {TL_CONFIG} \
-            --links {input.links} --nodes {input.nodes} --traffic {input.traffic} \
+            --links {input.links} --nodes {input.nodes} {params.traffic} \
             --output {output.flows}
         """
 
@@ -63,5 +68,5 @@ rule transport_interisland_criticality:
         criticality="{data}/out/transport/interisland/criticality.csv",
     shell:
         """
-        python {input.script} criticality --flows {input.flows} --output {output.criticality}
+        python {input.script} criticality --config {TL_CONFIG} --flows {input.flows} --output {output.criticality}
         """

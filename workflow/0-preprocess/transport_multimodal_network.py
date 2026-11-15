@@ -8,7 +8,9 @@ Outputs
                             (edge_from / edge_to / edge_id / cost / capacity)
     nodes.geoparquet        node_id, kind, zone_id, has_access, geometry
     failure-units.parquet   asset_type (road|metro|metro_station), asset_id, road_class,
-                            link_ids (list)
+                            link_ids (list: links removed), link_changes (list of
+                            {edge_id, time_min, length_km, fare}: bus links that
+                            stay with a detour)
 """
 
 import click
@@ -18,6 +20,7 @@ import pandas as pd
 from scipy.spatial import cKDTree
 
 from transport.costs import generalised_cost
+from transport.detours import bus_detours
 from transport.land import LINK_COLUMNS, peak_capacity, read_config, zone_node
 
 INF = float("inf")
@@ -46,6 +49,8 @@ def both_ways(df, prefix):
 
 @click.command()
 @click.option("--config", "config_path", required=True)
+@click.option("--island", default=None)
+@click.option("--scenario", default=None)
 @click.option("--road-edges", required=True)
 @click.option("--road-nodes", required=True)
 @click.option("--bus-stops", required=True)
@@ -58,6 +63,8 @@ def both_ways(df, prefix):
 @click.option("--output-failure-units", required=True)
 def main(
     config_path,
+    island,
+    scenario,
     road_edges,
     road_nodes,
     bus_stops,
@@ -69,7 +76,7 @@ def main(
     output_nodes,
     output_failure_units,
 ):
-    cfg = read_config(config_path)
+    cfg = read_config(config_path, island=island, scenario=scenario)
     hours = cfg["period"]["peak_period_hours"]
     conn = cfg["connectors"]
     weight = cfg["cost"]["weight"]
@@ -140,6 +147,9 @@ def main(
             "mode": "bus",
             "asset_id": None,
             "road_edge_ids": bus["road_edge_ids"],
+            "route_key": bus["route_id"].astype(str) + "/" + bus["direction"].astype(str),
+            "stage_from": bus["stage_from"] if "stage_from" in bus else np.nan,
+            "stage_to": bus["stage_to"] if "stage_to" in bus else np.nan,
             "length_km": bus["length_km"],
             "time_min": bus["time_min"],
             # Stage fares approximated as boarding + per km (cost.fare.bus).
@@ -204,6 +214,8 @@ def main(
             "layer": "metro",
             "mode": "metro",
             "asset_id": metro["segment_id"],
+            "station_from": metro["from_station"],
+            "station_to": metro["to_station"],
             "length_km": metro["length_km"],
             "time_min": metro["time_min"],
             "fare": fares["metro"]["per_km"] * metro["length_km"],
@@ -325,7 +337,7 @@ def main(
         per_km=cfg["cost"]["per_km"],
         fare=links["fare"],
     )
-    links = links[list(LINK_COLUMNS)]
+    links = links.reindex(columns=list(LINK_COLUMNS))
     if links["edge_id"].duplicated().any():
         raise ValueError(f"Duplicate link ids, e.g. {links.loc[links.edge_id.duplicated(), 'edge_id'].head().tolist()}")
     links.to_parquet(output_links, index=False)
@@ -363,18 +375,47 @@ def main(
     geopandas.GeoDataFrame(nodes, crs=zones.crs).to_parquet(output_nodes)
 
     # Failure units: what each physical asset takes with it when it fails.
+    # A road edge removes its road links. Buses over it detour, skip stops
+    # that cannot be reached (their boarding / alighting links are removed),
+    # or are cut (transport.detours); detoured bus links are kept with new
+    # times and lengths (link_changes).
     road_links = links[links.layer == "road"].groupby("asset_id")["edge_id"].agg(list)
-    bus_over = (
-        links.loc[links.layer == "bus", ["edge_id", "road_edge_ids"]]
-        .explode("road_edge_ids")
-        .dropna()
-        .groupby("road_edge_ids")["edge_id"]
-        .agg(list)
+    bus_road_edges = sorted({e for ids in bus["road_edge_ids"] for e in ids})
+    detour_cfg = cfg["criticality"]["bus_detour"]
+    detours = bus_detours(
+        roads,
+        bus,
+        stops.set_index("stop_id")["road_node"].to_dict(),
+        bus_road_edges,
+        speed_factor=cfg["bus"]["speed_factor"],
+        max_skipped_stops=detour_cfg["max_skipped_stops"],
+        max_detour_factor=detour_cfg["max_detour_factor"],
     )
+    fares_bus = cfg["cost"]["fare"]["bus"]
+
+    def removed_and_changed(asset, base_links):
+        detour = detours.get(asset)
+        if detour is None:
+            return base_links, []
+        removed = list(base_links) + ["bus/" + s for s in detour.cut_segments]
+        for route, direction, stop in detour.skipped_stops:
+            tail = f"{route}/{direction}/{stop}"
+            removed += [f"board/bus/{tail}", f"alight/bus/{tail}"]
+        changes = [
+            {
+                "edge_id": "bus/" + c["segment_id"],
+                "time_min": c["time_min"],
+                "length_km": c["length_km"],
+                "fare": fares_bus["per_km"] * c["length_km"],
+            }
+            for c in detour.changes
+        ]
+        return removed, changes
+
     road_units = pd.DataFrame({"asset_id": road_links.index, "link_ids": road_links.to_numpy()})
-    road_units["link_ids"] = [
-        links_ + bus_over.get(asset, []) for asset, links_ in zip(road_units.asset_id, road_units.link_ids)
-    ]
+    pairs = [removed_and_changed(a, ls) for a, ls in zip(road_units.asset_id, road_units.link_ids)]
+    road_units["link_ids"] = [p[0] for p in pairs]
+    road_units["link_changes"] = [p[1] for p in pairs]
     road_units["asset_type"] = "road"
     road_units = road_units.merge(roads[["edge_id", "road_class"]].rename(columns={"edge_id": "asset_id"}), how="left")
     metro_units = links[links.layer == "metro"].groupby("asset_id")["edge_id"].agg(list).reset_index()
@@ -406,9 +447,9 @@ def main(
         .rename(columns={"link": "link_ids"})
         .assign(asset_type="metro_station", road_class=None)
     )
-    units = pd.concat([road_units, metro_units, station_units], ignore_index=True)[
-        ["asset_type", "asset_id", "road_class", "link_ids"]
-    ]
+    units = pd.concat([road_units, metro_units, station_units], ignore_index=True)
+    units["link_changes"] = [c if isinstance(c, list) else [] for c in units.get("link_changes", [None] * len(units))]
+    units = units[["asset_type", "asset_id", "road_class", "link_ids", "link_changes"]]
     units.to_parquet(output_failure_units, index=False)
 
 

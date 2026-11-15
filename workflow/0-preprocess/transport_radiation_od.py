@@ -70,7 +70,7 @@ def main(
     output_comparison,
     output_calibration,
 ):
-    full_cfg = read_config(config_path)
+    full_cfg = read_config(config_path, island=island)
     cfg = full_cfg["radiation"]
     zones = pd.read_parquet(zones, columns=["zone_id", "district", "employed_residents", "jobs"])
     skim = pd.read_parquet(skim)
