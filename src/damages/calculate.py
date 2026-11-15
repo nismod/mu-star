@@ -135,6 +135,7 @@ def sample_direct_damages(
     cost: CostParameters,
     *,
     n_assets: int | None = None,
+    missing_case: np.ndarray | None = None,
     n_samples: int = 1000,
     quantiles: Sequence[float] = (0.05, 0.5, 0.95),
     seed: int | None = None,
@@ -155,6 +156,9 @@ def sample_direct_damages(
     return_periods : sequence of float
         Return period, in years, of each position along the last axis of
         ``intensity``.
+    missing_case : numpy.ndarray, optional
+        Boolean ``(case,)`` array flagging cases with no hazard data, whose
+        damages are NaN. By default, cases where no split has a finite value.
     curves, curve_weights
         Damage curves and their relative weights, keyed by curve identifier.
     cost : CostParameters
@@ -167,7 +171,8 @@ def sample_direct_damages(
         intensity in every return period of a case are zero (if all curves
         have zero damage at zero intensity) or sampled.
     """
-    intensity, missing_case = clean_intensity(intensity)
+    intensity, inferred_missing = clean_intensity(intensity)
+    missing_case = inferred_missing if missing_case is None else np.asarray(missing_case, dtype=bool)
     n_split, n_case, n_rp = intensity.shape
     asset_index = np.asarray(asset_index, dtype=int)
     quantity = np.asarray(quantity, dtype=float)

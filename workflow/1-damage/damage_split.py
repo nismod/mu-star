@@ -9,7 +9,7 @@ GeoParquet. Each split keeps its parent asset's attributes and gains:
 - ``index_i``, ``index_j``: grid column and row (-1 if outside the grid)
 - ``geom_kind``: "point", "line", "polygon" or "other"
 - ``length_m``, ``area_m2``: measured in a projected CRS (zero for slivers)
-- ``share``: fraction of the parent asset's length/area (1 for points)
+- ``share``: fraction of the unsplit parent asset's length/area (1 for points)
 
 Example:
 
@@ -55,10 +55,9 @@ def main(layer_path, hazard_path, output_path, measure_crs):
     splits = split_features(features, grid)
     if measure_crs is None:
         measure_crs = default_measure_crs(features)
-    splits = measure_splits(splits, asset_id="asset_id", measure_crs=measure_crs)
-    mismatches = conservation_mismatches(
-        asset_totals(features, "asset_id", measure_crs), splits, "asset_id", CONSERVATION_RTOL
-    )
+    totals = asset_totals(features, "asset_id", measure_crs)
+    splits = measure_splits(splits, asset_id="asset_id", measure_crs=measure_crs, totals=totals)
+    mismatches = conservation_mismatches(totals, splits, "asset_id", CONSERVATION_RTOL)
     if len(mismatches):
         worst = ", ".join(f"{i} ({r:.1%} off)" for i, r in mismatches.rel_diff.head(N_WORST).items())
         logging.warning(

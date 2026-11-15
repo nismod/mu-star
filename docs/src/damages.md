@@ -169,9 +169,14 @@ For each layer and hazard, under
 
 - `split.gpq`: split geometries (GeoParquet), stored once, with parent asset
   attributes, `split_id`, grid indices `index_i`/`index_j`, `geom_kind`
-  (`point`, `line`, `polygon` or `other`), `length_m`, `area_m2` and `share`
+  (`point`, `line`, `polygon` or `other`), `length_m`, `area_m2` and `share`.
+  `share` is the split's fraction of the whole, unsplit asset. Polygons are
+  clipped to the hazard grid, so the shares of a polygon partly outside the
+  grid add up to less than one, and only the part inside can be damaged.
 - `intensity.zarr`: `intensity` with dimensions `(split, ...hazard dims)`,
-  aligned with the rows of `split.gpq`
+  aligned with the rows of `split.gpq`, and `has_data`, with the hazard
+  dimensions only, which records whether the hazard has any data on its grid
+  for each combination
 - `damage.zarr`, with groups:
   - `split`: `damage_fraction`, `damage_cost` and `ead`, with dimensions
     `(split, ...scenario dims, return_period, quantile)` (no `return_period`
@@ -190,8 +195,10 @@ if any differ by more than 0.1%.
 Asset types not vulnerable to a hazard have zero damage. Asset types missing
 from the workbook, or vulnerable but missing curves or costs, have NaN damage
 (or stop the workflow if `config["damage"]["strict"]` is true). Combinations
-of scenario dimensions with no hazard data at all (e.g. a future scenario in the
-baseline epoch) are NaN.
+of scenario dimensions with no hazard data anywhere on the grid (e.g. a future
+scenario in the baseline epoch) are NaN for every asset type, including those
+not vulnerable. Assets in cells with no data, or outside the grid, in a
+combination that does have data elsewhere have zero damage.
 
 Read the outputs with xarray, for example:
 

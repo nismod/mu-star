@@ -107,3 +107,24 @@ def test_stack_unstack_cases():
     assert no_cases.sizes["case"] == 1 and case_dims == []
     with pytest.raises(ValueError, match="return_period"):
         stack_cases(da.isel(return_period=0, drop=True))
+
+
+def test_missing_case_given_explicitly():
+    # all splits dry or outside the grid, but the hazard has data: zero damage, not missing
+    intensity = np.full((2, 2, 3), np.nan)
+    kwargs = dict(
+        asset_index=np.array([0, 1]),
+        quantity=np.array([1.0, 1.0]),
+        return_periods=[10, 100, 1000],
+        curves={"linear": LINEAR},
+        curve_weights={"linear": 1.0},
+        cost=_cost(),
+        n_samples=20,
+        seed=1,
+    )
+    inferred = sample_direct_damages(intensity, **kwargs)
+    assert np.isnan(inferred.asset_cost).all()
+    given = sample_direct_damages(intensity, missing_case=np.array([False, True]), **kwargs)
+    assert (given.asset_cost[:, 0] == 0).all()
+    assert np.isnan(given.asset_cost[:, 1]).all()
+    assert (given.total_ead[0] == 0).all()
