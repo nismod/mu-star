@@ -1,7 +1,7 @@
 {
   "attributes": {
     "title": "Tropical cyclone wind speed return periods, STORM, clipped to Port Louis",
-    "source": "Bloemendaal et al. (2022) STORM climate change tropical cyclone wind speed return periods, CC0, via https://doi.org/10.5281/zenodo.23271097",
+    "source": "Bloemendaal et al., STORM tropical cyclone wind speed return periods, CC0, via https://doi.org/10.5281/zenodo.23271097",
     "zarr_conventions": [
       {
         "uuid": "f17cb550-5864-4468-aeb7-f3180cfb622f",

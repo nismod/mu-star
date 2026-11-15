@@ -45,6 +45,18 @@ and summarised by quantiles. In each sample:
 Curve choice and systemic cost draws are shared across all hazard scenarios, so
 differences between scenarios (e.g. epochs) are not confounded by them.
 
+One random seed (`damage.seed` in `config/config.yaml`) is used for every snail
+call, across all asset types, layers and hazards, so results are reproducible.
+Because of this, the systemic cost multiplier and curve choice draws are the
+same across asset types, layers and hazards: systemic cost uncertainty is
+economy-wide and perfectly correlated between asset types. Per-asset draws are
+independent.
+
+With two or more weighted curves for an asset type and no other uncertainty,
+quantiles of damage fraction are just values from one curve or the other. When
+weights are near equal (e.g. 50/50), the median can switch between curves as the
+seed changes, so compare the 5% and 95% quantiles, not only the median.
+
 Quantiles of damage are reported for each split, each asset, and for the total
 over all assets of each type. Quantiles do not add up: the median damage to an
 asset is not the sum of median damages to its splits, and the median total
@@ -263,9 +275,16 @@ snakemake -c2 example/results/damage/summary.csv --configfile example/config.yam
 - Hazard intensity is the value of the cell a split falls in; there is no
   sub-grid information.
 - Per-split damages are calculated by a separate snail call from per-asset
-  damages (marginal quantiles of each). Per-split sampling is slow for very
-  large layers; splits with zero intensity in all return periods are skipped
-  when curves have zero damage at zero intensity.
+  damages (marginal quantiles of each). Splits with zero intensity in all return
+  periods are skipped when curves have zero damage at zero intensity. Measured
+  sampling cost:
+  - time grows with the number of exposed splits × scenario combinations, about
+    18 ms each at 10,000 samples
+  - a 10,000-segment road layer (about 100,000 splits, 5% flooded, 12 scenario
+    combinations × 9 return periods) took about 30 minutes and 2 GB
+  - outputs are held in memory as dense arrays, so layers above about 450,000
+    splits with 12 scenario combinations need more than 8 GB
+  - hazards that affect every split (e.g. wind) are far slower than floods
 - Layer totals across asset types need snail to sample several asset types
   (with their own curves and costs) in one call, or to return samples.
 - Impairment curves (loss of function) are not yet used.

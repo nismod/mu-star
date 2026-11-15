@@ -1,7 +1,7 @@
 {
   "attributes": {
     "title": "Coastal flood depth, WRI Aqueduct Floods (with subsidence), clipped to Port Louis",
-    "source": "Ward et al. (2020) Aqueduct Floods Methodology, CC-BY-4.0, via https://doi.org/10.5281/zenodo.23271097",
+    "source": "Ward et al., WRI Aqueduct Floods, CC-BY-4.0, via https://doi.org/10.5281/zenodo.23271097",
     "zarr_conventions": [
       {
         "uuid": "f17cb550-5864-4468-aeb7-f3180cfb622f",

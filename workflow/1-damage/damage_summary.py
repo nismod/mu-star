@@ -17,6 +17,7 @@ Example:
 """
 
 import logging
+import warnings
 from pathlib import Path
 
 import click
@@ -24,6 +25,9 @@ import pandas as pd
 import xarray as xr
 
 from damages.output import empty_summary_table, summary_table
+
+# Snakemake writes a .snakemake_timestamp file in directory outputs, which zarr reports when opening the store
+warnings.filterwarnings("ignore", message=r"Object at \.snakemake_timestamp is not recognized")
 
 
 def labels_from_path(path: str) -> dict[str, str]:

@@ -32,7 +32,7 @@ Results are written to `example/results/` (not committed).
 - `processed/hazard/rp/peril-cyclone/subperil-wind.zarr`: STORM tropical
   cyclone maximum 10-minute sustained wind speed (m/s), with dimensions
   `gcm` × `return_period` × `y` × `x`. `constant` is present climate; the
-  other models give 2015-2050 under SSP5-8.5.
+  other models give epoch 2050 under RCP 8.5.
 
 The hazard grids are coarse (about 1 km for coastal flooding, 10 km for wind).
 Hardly any roads cross the few coastal flood cells, so road damage from coastal
@@ -53,13 +53,13 @@ which redistributes:
   [Open Database License (ODbL-1.0)](https://opendatacommons.org/licenses/odbl/)
 - WRI Global Power Plant Database, World Resources Institute, under
   [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/)
-- WRI Aqueduct Floods, Ward, P.J. et al. (2020), under
+- WRI Aqueduct Floods, Ward, P.J. et al., under
   [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/)
 - STORM tropical cyclone wind speed return periods, Bloemendaal, N. et al.,
   under [CC0](https://creativecommons.org/share-your-work/public-domain/cc0/)
 
 Damage curves are from the physical vulnerability database of Nirandjan, S. et
-al. (2024), under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/),
+al. (2023), under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/),
 as packaged with [snail](https://github.com/nismod/snail).
 
 To regenerate, download and unzip `MUS.zip` from Zenodo, then:
