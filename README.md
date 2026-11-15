@@ -128,13 +128,19 @@ from `pyproject.toml`:
 ```shell
 pixi install
 pixi run test        # run the tests
+pixi run lint        # ruff check
 pixi run example     # run the direct damages workflow on the example data
 pixi shell           # or start a shell in the environment
 ```
 
-Either way, the `nismod-snail` dependency is installed from the
-`feat/mc-damages` branch on GitHub until the Monte Carlo damages are released,
-which needs a C++ compiler and CMake (the pixi environment includes them).
+`pixi.lock` is committed. Use `pixi install --environment inference` for the
+optional `osmnx` dependencies.
+
+Either way, the `nismod-snail` dependency is installed from a pinned commit on
+the `feat/mc-damages` branch on GitHub until the Monte Carlo damages are
+released. Building it needs a C++ compiler and CMake (both environments
+include them). `numpy<2` is required by `pypsa` 0.30, so `pyarrow` is held
+below 26, which requires numpy 2.
 
 Install `nbstripout` to ensure that no outputs are committed with any jupyter
 notebooks:

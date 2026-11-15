@@ -29,13 +29,14 @@ dependencies = [
     "highspy",
     "matplotlib",
     "networkx",
-    # Monte Carlo direct damages are not yet released, install from the branch
-    "nismod-snail @ git+https://github.com/nismod/snail@feat/mc-damages",
+    # Monte Carlo direct damages are not yet released: pinned to a commit on the
+    # feat/mc-damages branch of nismod/snail. Return to a PyPI release when available.
+    "nismod-snail @ git+https://github.com/nismod/snail@14e3807d0b206da094693c9f79ba34a7bab61ada",
     "numpy>=1.26,<2",
     "openpyxl",
     "pandas>=2,<3",
-    # pyarrow>=20 requires numpy>=2
-    "pyarrow<20",
+    # pyarrow 26 requires numpy>=2 (import fails); 19-25 work with numpy 1.26
+    "pyarrow<26",
     "pypsa>=0.30,<0.31",
     "pyyaml",
     "rasterio",
@@ -77,7 +78,7 @@ networkx = "*"
 numpy = ">=1.26,<2"
 openpyxl = "*"
 pandas = ">=2,<3"
-pyarrow = "<20"
+pyarrow = "<26"
 pyproj = "*"
 pypsa = ">=0.30,<0.31"
 pyyaml = "*"
