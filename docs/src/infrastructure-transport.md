@@ -116,161 +116,32 @@ for example `mode_split.ridership.commute_fraction: {bus: 0.3, metro: 0.3}`.
 **Per-island settings** go in `islands.<island>.overrides`. For example,
 Rodrigues uses distance-band mode shares.
 
-### File layout
+### Data
 
-```text
-{data}/incoming/                                   provided (schemas below)
-  Socio-economic/Census/2022/CA1-employment-by-area.csv
-  Socio-economic/Census/2022/appendix-ii-iv-area-codes.csv
-  Socio-economic/Census/2022/census-areas.gpkg
-  Socio-economic/Census/2022/CA27-residence-by-workplace-district.csv
-  Socio-economic/Census/2022/children-by-area-age.csv
-  Socio-economic/GDP/output-per-worker-by-sector.csv
-  Population/WorldPop/mus_ppp_2022_constrained.tif
-  Education/{island}/schools.gpkg
-  Infrastructure/Transport/{island}/road/roads.gpkg
-  Infrastructure/Transport/{island}/bus/bus_stops.gpkg, bus_routes.gpkg, bus_route_stops.csv
-  Infrastructure/Transport/mauritius/metro/metro_stations.gpkg, metro_lines.gpkg,
-      metro_line_stations.csv, metro_fare_stages.csv
-  Infrastructure/Transport/interisland/links.csv, nodes.gpkg, traffic.csv
+Every input dataset, its source and status, where it goes under
+`{data}/incoming/`, and its schema, plus the location and columns of every
+processed and output file, are listed in [Transport data
+requirements](./transport-data.md).
 
-{data}/processed/economy/{zoning}/economic-activity.parquet   rule economic_activity_h3 (stub)
+In short:
 
-{data}/processed/transport/national/                        both islands
-  population/census-zones.geoparquet
-  population/census-district-od.parquet, census-district-od-summary.json
-  population/worldpop-scaled.tif, worldpop-census-check.csv
-  zones/{zoning}/residents.parquet, jobs.parquet, children.parquet
+- *Census 2022*: Table CA1 (employed by area), Appendices II–IV (area
+  codes), area boundaries, Table CA27 (residence × workplace district), and
+  children by area and age band. These are mostly transcribed from Volume
+  VII.
+- *Population and jobs*: WorldPop, the H3 economic activity layer (mu-star),
+  and output per worker by sector.
+- *Schools* per island.
+- *Networks* per island: roads, bus stops, routes and stop sequences (with
+  timings and fare stages), and the metro stations, lines, station order and
+  fare stage matrix.
+- *Inter-island*: services, airports and ports, and observed traffic.
 
-{data}/processed/transport/{island}/
-  zones/{zoning}/zones.geoparquet
-  networks/road/, networks/bus/, networks/metro/ (empty on Rodrigues)
-  networks/multimodal/{zoning}/{scenario}/links.parquet, nodes.geoparquet, failure-units.parquet
-  demand/{zoning}/road-skim.parquet
-  demand/{zoning}/commute-od.parquet, commute-od-summary.json,
-      radiation-calibration.csv, district-od-comparison.csv
-  demand/{zoning}/school-od.parquet, school-od-summary.json
-  demand/{zoning}/{scenario}/demand-by-mode.parquet, demand-by-mode-summary.json
-
-{data}/out/transport/land/{island}/{zoning}/{scenario}/
-  baseline/link-flows.parquet, paths.parquet, od-journeys.parquet,
-      purpose-shares.parquet, unassigned.parquet, summary.json
-  criticality/failure-sets.parquet
-  criticality/batches/{batch}/scenario-impacts.parquet, od-impacts.parquet
-  criticality/asset-criticality.csv, asset-criticality.geoparquet
-
-{data}/out/transport/interisland/
-  link-flows.csv, criticality.csv
-```
-
-### Data inputs
-
-All input paths are set in the config: national inputs under
-`transport_land.inputs`, and network and school inputs per island under
-`transport_land.islands.<island>.inputs`. Where we provide the data
-ourselves (roads, bus, metro), the schema below is what we have chosen. Any
-CRS is accepted, because everything is reprojected to `crs_metric`
-(EPSG:32740).
-
-**2022 Housing and Population Census.** The reference date is 3 July 2022.
-Our source is Volume VII: Economic Characteristics. Employment covers
-anyone aged 16+ who worked at least one hour for pay, profit or family gain.
-That includes informal work, though it may be under-reported.
-
-- *Census geography* (Methodology Report §3.4, p. 17) uses hierarchical
-  codes:
-  - island (1 digit): 1 Mauritius, 2 Rodrigues, 3 Agaléga;
-  - district (+1): for example 11 Port Louis;
-  - area (+2): a Municipal Ward or Village Council Area on Mauritius, for
-    example 1201 Arsenal (Pamplemousses), or one of Rodrigues' six census
-    regions.
-
-  Codes are kept as strings.
-- *Table CA1* (pp. 1–30) gives employment and activity status by area. Area
-  names are printed in the rows, under district headings, and the first page
-  holds the national and district aggregates.
-  - It is transcribed to a CSV with `area_name`, `district` (the heading the
-    row is printed under), `row_type` (`aggregate` or `area`), `employed`
-    (*Currently active → Employed*), and optionally total population.
-  - Only `area` rows are used, so aggregates are never double counted.
-- *Appendix II* (pp. 474–476) gives the official codes and names of the
-  Municipal Wards and Village Council Areas by district. *Appendices III–IV*
-  (pp. 477–478) give the Rodrigues regions and their localities.
-  - They are transcribed to one CSV with `zone_id`, `zone_name` and
-    `district_code`.
-  - CA1 areas are matched to codes by name within their district, ignoring
-    accents, case and punctuation (`transport.census.match_codes`).
-  - A name that is unique across the lookup is matched even without a
-    district. `census_name_overrides` fixes anything left, and unmatched
-    rows are an error.
-  - No spatial join is needed for districts.
-
-  | Code | District           | Code | District         |
-  | ---- | ------------------ | ---- | ---------------- |
-  | 11   | Port Louis         | 16   | Savanne          |
-  | 12   | Pamplemousses      | 17   | Plaines Wilhems  |
-  | 13   | Rivière du Rempart | 18   | Moka             |
-  | 14   | Flacq              | 19   | Black River      |
-  | 15   | Grand Port         |      |                  |
-
-- *Boundaries* of the areas, with the same codes, are still needed to spread
-  totals over WorldPop pixels (source TBC).
-- *Table CA27* (p. 347; district breakdown from p. 349) gives the employed
-  population by residence district (rows) and workplace district (columns),
-  with sex and age breakdowns.
-  - The workplace columns are the nine districts plus *Not stated*,
-    *Rodrigues and Outer Islands*, and *Outside Mauritius*.
-  - It is transcribed to a CSV with one row per residence district × sex ×
-    age group.
-  - Only the *Both sexes*, all-ages rows and the nine × nine districts are
-    used. The three other workplace columns are kept for audit, and each row
-    is checked against its published total.
-- *Children by area and age band* (source TBC: the census population
-  volume) give the origins of school trips.
-
-**WorldPop** is a gridded population raster (about 100 m). We use only its
-spatial pattern within each census area. If CA1 has no total population,
-WorldPop is scaled to employed residents instead.
-
-**H3 economic activity** is the output of the rule `economic_activity_h3`
-(a stub). It is wide: one row per H3 cell (`h3_index`), and one output
-column per sector (`gva_<sector>`). The path and columns need checking.
-**Sectoral productivity** (`sector`, `output_per_worker`) is to be built
-from Statistics Mauritius data.
-
-**Schools** (`schools.gpkg` per island): `school_id`, `name`, `level`
-(`primary` or `secondary`), `enrolment` (or `capacity`), Point geometry.
-
-**Roads**, `roads.gpkg`, layer `edges`, LineStrings noded at junctions:
-
-| Column                    | Type | Required | Notes                                                              |
-| ------------------------- | ---- | -------- | ------------------------------------------------------------------ |
-| `edge_id`                 | str  | yes      | unique and stable; criticality results are reported against it     |
-| `from_node`, `to_node`    | str  | yes      | node ids at the start and end of the geometry                      |
-| `road_class`              | str  | yes      | motorway, trunk, primary, secondary, tertiary, unclassified, residential or service |
-| `oneway`                  | bool | yes      | true: traffic only runs from `from_node` to `to_node`              |
-| `speed_kph`               | num  | no       | free-flow speed. Defaults by class come from config                |
-| `capacity_vph`            | num  | no       | vehicles per hour per direction. Defaults by class                 |
-| `name`, `lanes`, `bridge` |      | no       | carried through                                                    |
-
-**Bus**, with route frequencies, between-stop timings and fare stages:
-
-- `bus_stops.gpkg`: `stop_id`, `name`, Point geometry
-- `bus_routes.gpkg`: `route_id`, `name`, `operator`, and peak
-  `frequency_per_hour` (or `headway_min`)
-- `bus_route_stops.csv`: `route_id`, `direction` (0/1), `stop_sequence`,
-  `stop_id`, `time_to_next_min`, and optionally `fare_stage` (the stop's
-  stage number on the route, for exact fares)
-
-**Metro** (Mauritius only):
-
-- `metro_stations.gpkg`: `station_id`, `name`, Point geometry
-- `metro_lines.gpkg`: `line_id` (`main` for Port Louis – Curepipe, `branch`
-  for Rose Hill – Réduit) and the line's geometry
-- `metro_line_stations.csv`: `line_id`, `station_id`, `seq`, and optionally
-  `run_time_min_to_next`
-- `metro_fare_stages.csv`: `from_station`, `to_station`, `stage`. This is
-  the operator's station-to-station stage matrix, used for reporting.
+Processed data are under `{data}/processed/transport/national/` (census and
+H3 population, jobs and children) and `{data}/processed/transport/{island}/`
+(zones, networks, demand). Results are under
+`{data}/out/transport/land/{island}/{zoning}/{scenario}/` and
+`{data}/out/transport/interisland/`.
 
 ### Parameters and their sources
 
