@@ -173,8 +173,8 @@ snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/base-mauritius/base-ma
 # the combined network, then its demand shares
 snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/inferred-provided-mauritius-rodrigues/inferred-provided-mauritius-rodrigues.nc"
 snakemake -c1 "data/processed/energy/$MODEL_DATA/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv"
-# the criticality of the combined network, in a results folder with the pack's date
-snakemake -c1 "data/results/energy/${MODEL_DATA%-model-data}-results/criticality/inferred-provided-mauritius-rodrigues/criticality.csv"
+# the criticality of the combined network by power flow, in a results folder with the pack's date
+snakemake -c1 "data/results/energy/${MODEL_DATA%-model-data}-results/criticality/flow/inferred-provided-mauritius-rodrigues/criticality.csv"
 # all three networks
 snakemake -c1 build_energy_networks
 ```
@@ -201,7 +201,7 @@ demand and criticality commands also need the incoming folder.
     area's and each node's share of its island's demand;
   - `demand_levels.csv`: each island's peak and average demand, with its
     source.
-- `data/results/energy/<date>-results/criticality/inferred-provided-<region>/`,
+- `data/results/energy/<date>-results/criticality/flow/inferred-provided-<region>/`,
   where `<date>` is the date of the pack:
   - `criticality.csv`: one row per substation, line and plant, with
     `unmet_mwh_per_day` and `unmet_peak_mw` when that component fails, and

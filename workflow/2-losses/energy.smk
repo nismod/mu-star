@@ -16,30 +16,31 @@ CRITICALITY_TABLES = {
     if CRITICALITY.get(name)
 }
 # Results of the model-data pack: 20261012-model-data gives 20261012-results.
-CRITICALITY_DIR = f"{{data}}/results/energy/{results_name(ENERGY)}/criticality/{INFERRED_PROVIDED_NAME}"
+CRITICALITY_RESULTS_DIR = f"{{data}}/results/energy/{results_name(ENERGY)}/criticality"
+CRITICALITY_FLOW_DIR = f"{CRITICALITY_RESULTS_DIR}/flow/{INFERRED_PROVIDED_NAME}"
 
 
-rule build_energy_criticality:
+rule build_energy_criticality_flow:
     """
     Fail each substation, provided line and power plant of inferred-provided in turn
     and record the unmet demand at peak (MW) and per day of outage (MWh, at average demand).
 
     Test with:
-    snakemake -c1 data/results/energy/<date>-results/criticality/inferred-provided-mauritius-rodrigues/criticality.csv
+    snakemake -c1 data/results/energy/<date>-results/criticality/flow/inferred-provided-mauritius-rodrigues/criticality.csv
     """
     input:
         network=f"{NETWORKS_DIR}/{INFERRED_PROVIDED_NAME}/{INFERRED_PROVIDED_NAME}.nc",
         substation_weights=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/service_weights_substations.csv",
         demand_levels=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/demand_levels.csv",
-        script=ancient("workflow/2-losses/energy_criticality.py"),
+        script=ancient("workflow/2-losses/energy_criticality_flow.py"),
         **CRITICALITY_TABLES,
     output:
-        criticality=f"{CRITICALITY_DIR}/criticality.csv",
-        by_area=f"{CRITICALITY_DIR}/criticality_by_area.csv",
-        line_ratings=f"{CRITICALITY_DIR}/line_ratings.csv",
-        metadata=f"{CRITICALITY_DIR}/metadata.json",
+        criticality=f"{CRITICALITY_FLOW_DIR}/criticality.csv",
+        by_area=f"{CRITICALITY_FLOW_DIR}/criticality_by_area.csv",
+        line_ratings=f"{CRITICALITY_FLOW_DIR}/line_ratings.csv",
+        metadata=f"{CRITICALITY_FLOW_DIR}/metadata.json",
     params:
-        output_dir=CRITICALITY_DIR,
+        output_dir=CRITICALITY_FLOW_DIR,
         tables=lambda wildcards, input: " ".join(
             f"--{name.replace('_', '-')} {shlex.quote(input[name])}" for name in CRITICALITY_TABLES
         ),

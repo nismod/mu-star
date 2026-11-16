@@ -32,8 +32,8 @@ Built networks (``01_networks.ipynb``):
 
 Criticality (``02_criticality.ipynb``):
 
-- ``CRITICALITY_DIR``: <data>/results/energy/<date>-results/criticality/inferred-provided-<region>.
-- ``load_criticality()``: ``(summary, by_area)``, the two tables of ``build_energy_criticality``.
+- ``CRITICALITY_DIR``: <data>/results/energy/<date>-results/criticality/flow/inferred-provided-<region>.
+- ``load_criticality()``: ``(summary, by_area)``, the two tables of ``build_energy_criticality_flow``.
 - ``demand_levels()``: each island's peak and average demand, with its source.
 - ``area_demand(summary)``: each substation area's share of its island's demand, and its demand in MW.
 - ``unmet_by_cause(summary, by_area)``: the unmet demand when each component fails, per day and at peak, and at
@@ -559,7 +559,7 @@ def explore_network(name, *, roads=True, clip=None, map_style="open-street-map")
 # --- Criticality ------------------------------------------------------------------
 
 CRITICALITY_NETWORK = f"inferred-provided-{REGION_SLUG}"
-CRITICALITY_DIR = energy_paths.results_energy_dir(DATA_ROOT) / "criticality" / CRITICALITY_NETWORK
+CRITICALITY_DIR = energy_paths.results_energy_dir(DATA_ROOT) / "criticality" / "flow" / CRITICALITY_NETWORK
 RUN_CRITICALITY = build_command(CRITICALITY_DIR / "criticality.csv")
 DEMAND_DIR = energy_paths.processed_energy_dir(DATA_ROOT) / "demand" / CRITICALITY_NETWORK
 
@@ -956,7 +956,7 @@ def _unmet_breakdown(asset_id, asset, summary, by_area) -> str:
 def plot_line_ratings(*, clip=None, ax=None, figsize=(9, 11)):
     """Map the transmission line ratings, by design voltage (colour) and number of circuits (width).
 
-    From ``line_ratings.csv`` of ``build_energy_criticality``, the ratings the analysis used. The legend gives
+    From ``line_ratings.csv`` of ``build_energy_criticality_flow``, the ratings the analysis used. The legend gives
     each class's rating at the voltage the lines run at.
     ``clip``: a ``(minx, miny, maxx, maxy)`` box in degrees; the default is the islands with transmission lines.
     """
