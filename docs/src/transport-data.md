@@ -49,9 +49,9 @@ config, not the scripts.
 | 9 | Output per worker by sector | converting output to jobs | Statistics Mauritius: GVA by industry (National Accounts 2013–2026 series, Table 3, 2022) ÷ 2022 census employment by industry (Vol. VII, CA3) | **open** (`transport_open_stats_output_per_worker`) | `incoming/Socio-economic/GDP/output-per-worker-by-sector.csv` |
 | 10 | Schools | destinations of school trips | Official geoportal primary school list plus OpenStreetMap; no enrolment, so placeholder capacities. Ministry of Education list still wanted | **open fallback** (`transport_open_osm_schools`) | `incoming/Education/{island}/schools.gpkg` |
 | 11 | Road network | car routing, bus mapping, criticality assets | provided; else OpenStreetMap (ODbL) | **open fallback** (`transport_open_osm_roads`) | `incoming/Infrastructure/Transport/{island}/road/roads.gpkg` |
-| 12 | Bus stops | bus network | provided | have / build | `incoming/Infrastructure/Transport/{island}/bus/bus_stops.gpkg` |
-| 13 | Bus routes and frequencies | bus network, capacity | provided (timetables) | have / build | `incoming/Infrastructure/Transport/{island}/bus/bus_routes.gpkg` |
-| 14 | Bus route stop sequences, timings, fare stages | bus network, fares | provided (timetables, fare stages TBC) | build | `incoming/Infrastructure/Transport/{island}/bus/bus_route_stops.csv` |
+| 12 | Bus stops | bus network | provided; else www.mauritius-buses.com (transcribed from NLTA timetables, no explicit reuse licence) with stop locations from OpenStreetMap. Locations are approximate | **open fallback** (`transport_open_bus_write`) | `incoming/Infrastructure/Transport/{island}/bus/bus_stops.gpkg` |
+| 13 | Bus routes and frequencies | bus network, capacity | provided; else www.mauritius-buses.com (transcribed from NLTA timetables, no explicit reuse licence) with stop locations from OpenStreetMap | **open fallback** (`transport_open_bus_write`) | `incoming/Infrastructure/Transport/{island}/bus/bus_routes.gpkg` |
+| 14 | Bus route stop sequences, timings, fare stages | bus network, fares | provided; else www.mauritius-buses.com (transcribed from NLTA timetables, no explicit reuse licence) with stop locations from OpenStreetMap | **open fallback** (`transport_open_bus_write`) | `incoming/Infrastructure/Transport/{island}/bus/bus_route_stops.csv` |
 | 15 | Metro stations | metro network | provided; else OpenStreetMap | **open fallback** (`transport_open_osm_metro`) | `incoming/Infrastructure/Transport/mauritius/metro/metro_stations.gpkg` |
 | 16 | Metro lines | metro network | provided; else OpenStreetMap | **open fallback** (`transport_open_osm_metro`) | `incoming/Infrastructure/Transport/mauritius/metro/metro_lines.gpkg` |
 | 17 | Metro line station order and run times | metro network | OpenStreetMap route relations (order only; no run times) | **open fallback** (`transport_open_osm_metro`) | `incoming/Infrastructure/Transport/mauritius/metro/metro_line_stations.csv` |
@@ -77,6 +77,24 @@ by hand at the same location is used as it is. What to know about them:
 - *Schools* have no enrolment. Each gets a flat placeholder capacity by
   level, and OSM misses many secondary schools and most Rodrigues schools.
 - *Metro* has no run times, so the default speed is used.
+- *Bus* (`transport_open_bus.smk`, Mauritius only): 282 routes with stop
+  order, scheduled minutes between stops and, for 87% of stop rows, official
+  fare stages, read from www.mauritius-buses.com (about 1,080 pages, fetched
+  once at one request per second and cached).
+  - **Stop locations are approximate.** The site has no coordinates, so
+    stops are located by name against OpenStreetMap. `location_quality`
+    records how: 1 = a named OSM bus stop (9% of stops); 2 = a named feature
+    or road junction (18%); 3 = a place or named road (32%); 4 = the village
+    centroid or interpolated along the route (41%). Typical error is 0.3–1 km
+    for levels 2–4, and some are much worse.
+  - 41 of 767 stops could not be located and are left out. Two routes are
+    dropped for having fewer than two located stops.
+  - Headways are the published average frequency, not the peak, and are
+    missing for 58 lines (the config default applies).
+  - The site has no explicit reuse licence. Confirm with its owner before
+    publishing derived files. Official NLTA stop coordinates or a GTFS feed
+    would replace all of this.
+  - Rodrigues buses are not covered: its bus inputs must be provided.
 - *Output per worker* (`transport_open_stats.smk`): run this rule before
   the jobs step, which uses the table only if the file exists.
   - The table has `output_per_worker` and `output_per_worker_adjusted`.

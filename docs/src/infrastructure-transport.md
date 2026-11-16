@@ -422,6 +422,11 @@ Mauritius is about 2,500 H3 resolution-8 cells.
   failure only swaps the weights of its own arcs (the next fastest parallel
   arc takes over), so a 60 × 60 grid with 232 failed edges takes about
   0.15 s.
+- *Measured on real Mauritius data* (OSM roads, 65,933 edges; 282 bus
+  routes): the road, bus and metro network steps take seconds, and bus
+  detours take about 8 minutes for the 12,184 road edges that buses use.
+  Buses can detour around 12,030 of those edges, must skip stops for 770,
+  and are cut for 442.
 - *Still to measure*: the criticality runtime. Merging degree-2 road nodes
   would cut the number of edges.
 

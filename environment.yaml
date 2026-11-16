@@ -42,4 +42,6 @@ dependencies:
   - tqdm
   - xarray
   - xlrd  # census .xls workbooks
+  - beautifulsoup4  # bus timetable pages
+  - requests
   - zarr
