@@ -56,10 +56,6 @@ LINK_COLUMNS = (
     "station_to",  # metro links
 )
 
-MODES = ("car", "bus", "metro", "walk")
-#: Modes assigned to the network; walk and cycle trips are counted only.
-ASSIGNED_MODES = ("car", "bus", "metro")
-ACTIVE_MODES = ("walk", "cycle")
 
 
 #: Top-level config sections a scenario may override. Scenarios apply from
@@ -143,7 +139,7 @@ def h3_resolution(zoning: str) -> int:
 
 
 def zone_node(zone_id: str, kind: str) -> str:
-    if kind not in ("car", "bus", "metro", "school_bus"):
+    if kind not in ("car", "bus", "metro"):
         raise ValueError(kind)
     return f"zone/{zone_id}/{kind}"
 
