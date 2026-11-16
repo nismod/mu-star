@@ -19,11 +19,13 @@ asset failed in turn. The lines at or below it are distribution lines, run radia
   disconnect when the grid is lost.
 
 Unmet demand is the demand the network cannot supply: demand minus supply, at each supply point. The
-unmet demand of a failure is the demand shed minus any shed with nothing failed. Each failure gives two
-quantities: the unmet demand at peak demand (MW), and the unmet energy per day of outage (MWh), which is
-the unmet demand at average demand over 24 hours. The per-day value is exact when whole areas lose supply
-and too low for shortfalls that occur only near peak. Each failure that leaves demand unmet at peak is
-solved again without line ratings, to give the part due to the ratings.
+unmet demand of a failure is the rise in the total demand shed over that with nothing failed. At each
+supply point it is the rise at that point; when demand is shed with nothing failed, a failure can move
+that shedding from one point to another, so the points can add up to more than the total. Each failure
+gives two quantities: the unmet demand at peak demand (MW), and the unmet energy per day of outage (MWh),
+which is the unmet demand at average demand over 24 hours. The per-day value is exact when whole areas
+lose supply and too low for shortfalls that occur only near peak. Each failure that leaves demand unmet
+at peak is solved again without line ratings, to give the part due to the ratings.
 """
 
 from __future__ import annotations
@@ -384,21 +386,28 @@ def failure_assets(
 
 def _unmet_by_failure(
     model: TransmissionModel, assets: pd.DataFrame, demand: pd.Series, settings: dict, *, split_limits: bool
-) -> tuple[pd.DataFrame, pd.Series, float]:
-    """Return the unmet demand (MW) of each failure (rows) at each supply point (columns), the part of each
-    failure's total due to line ratings (zero unless ``split_limits``), and the total with nothing failed."""
+) -> tuple[pd.DataFrame, pd.Series, pd.Series, float]:
+    """Return the unmet demand (MW) of each failure: at each supply point (rows: failures, columns: supply
+    points) and in total; the part of each total due to line ratings (zero unless ``split_limits``); and the
+    total with nothing failed.
+
+    A failure's total is the rise in the network's total unmet demand, and its value at a supply point the
+    rise at that point.
+    """
     base = unmet_demand(model, demand, **settings)
     base_free = unmet_demand(model, demand, line_limits=False, **settings) if split_limits else None
-    unmet_rows, limits = {}, {}
+    unmet_rows, totals, limits = {}, {}, {}
     for asset in assets.itertuples(index=False):
         failure = {"lines": asset.lines, "bus": asset.bus, "plants": asset.plants}
-        unmet = (unmet_demand(model, demand, **failure, **settings) - base).clip(lower=0.0)
+        unmet = unmet_demand(model, demand, **failure, **settings)
+        unmet_rows[asset.asset_id] = (unmet - base).clip(lower=0.0)
+        totals[asset.asset_id] = max(0.0, float(unmet.sum() - base.sum()))
         limits[asset.asset_id] = 0.0
-        if split_limits and unmet.sum() > TOLERANCE_MW:
-            free = (unmet_demand(model, demand, **failure, line_limits=False, **settings) - base_free).clip(lower=0.0)
-            limits[asset.asset_id] = max(0.0, float(unmet.sum() - free.sum()))
-        unmet_rows[asset.asset_id] = unmet
-    return pd.DataFrame(unmet_rows).T, pd.Series(limits), float(base.sum())
+        if split_limits and totals[asset.asset_id] > TOLERANCE_MW:
+            free = unmet_demand(model, demand, **failure, line_limits=False, **settings)
+            free_total = max(0.0, float(free.sum() - base_free.sum()))
+            limits[asset.asset_id] = max(0.0, totals[asset.asset_id] - free_total)
+    return pd.DataFrame(unmet_rows).T, pd.Series(totals, dtype=float), pd.Series(limits, dtype=float), float(base.sum())
 
 
 def _by_area(frame: pd.DataFrame, name: str) -> pd.DataFrame:
@@ -421,16 +430,19 @@ def criticality(
     Returns one row per asset with ``unmet_mwh_per_day`` (the unmet demand at average demand over 24 hours),
     ``unmet_peak_mw`` and ``line_limits_peak_mw`` (the part of ``unmet_peak_mw`` due to line ratings); the two
     unmet quantities by asset and substation area (``area_bus_id``), where either is above zero; and the two
-    for the intact network.
+    for the intact network. When demand is unmet with nothing failed, an asset's areas can add up to more
+    than its total, since a failure can move the shortfall from one area to another.
     """
     settings = {"s_max_pu": s_max_pu, "island_carriers": tuple(island_carriers)}
-    at_peak, limits, intact_peak = _unmet_by_failure(model, assets, peak, settings, split_limits=True)
-    at_average, _, intact_average = _unmet_by_failure(model, assets, average, settings, split_limits=False)
+    at_peak, peak_totals, limits, intact_peak = _unmet_by_failure(model, assets, peak, settings, split_limits=True)
+    at_average, average_totals, _, intact_average = _unmet_by_failure(
+        model, assets, average, settings, split_limits=False
+    )
 
     summary = assets[["asset_id", "asset_type", "name", "island"]].copy()
     summary["lines"] = assets["lines"].map(" ".join)
-    summary["unmet_mwh_per_day"] = summary["asset_id"].map(HOURS_PER_DAY * at_average.sum(axis=1))
-    summary["unmet_peak_mw"] = summary["asset_id"].map(at_peak.sum(axis=1))
+    summary["unmet_mwh_per_day"] = summary["asset_id"].map(HOURS_PER_DAY * average_totals)
+    summary["unmet_peak_mw"] = summary["asset_id"].map(peak_totals)
     summary["line_limits_peak_mw"] = summary["asset_id"].map(limits)
     order = {asset_type: position for position, asset_type in enumerate(ASSET_TYPES)}
     summary = summary.sort_values(

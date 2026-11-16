@@ -190,6 +190,20 @@ def test_criticality_separates_unmet_demand_due_to_line_ratings():
     assert list(summary["asset_type"].drop_duplicates()) == ["substation", "line", "plant"]
 
 
+def test_unmet_demand_of_a_failure_is_the_rise_in_the_total():
+    network = _network()
+    network.generators.loc["thermal_a", "p_nom"] = 45.0  # with the 10 MW solar farm, 5 MW short of 60 MW
+    model = transmission_model(network, ISLANDS, line_circuits=_circuits())
+    assets = failure_assets(model, network, _circuits())
+
+    summary, _, intact = criticality(model, assets, _demand(), _demand())
+
+    assert intact["unmet_peak_mw"] == pytest.approx(5.0)
+    # Losing B - C cuts off C (30 MW; its solar farm cannot run alone) and leaves A and B 45 MW for 30 MW, so the
+    # total rises by 25 MW, wherever the power flow shed the 5 MW with nothing failed.
+    assert summary.set_index("asset_id").at["R2", "unmet_peak_mw"] == pytest.approx(25.0)
+
+
 def test_build_criticality_writes_the_tables(tmp_path):
     _network().export_to_netcdf(tmp_path / "network.nc")
     _circuits().reset_index().to_csv(tmp_path / "circuits.csv", index=False)
