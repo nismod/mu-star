@@ -10,7 +10,8 @@ Without a productivity table, total output is used as relative
 attractiveness. Jobs are national here; transport_zones scales them to each
 island's employed residents (jobs.scale_to_employed_residents).
 
-Productivity table (CSV): sector, output_per_worker.
+Productivity table (CSV): sector, output_per_worker, and optionally
+output_per_worker_adjusted (see jobs.output_per_worker_column in config).
 
 Output columns: h3_index, output (total), jobs, plus jobs_<sector> per sector.
 """
@@ -52,8 +53,13 @@ def main(config_path, zoning, activity, productivity_path, output):
 
     if productivity_path:
         productivity = pd.read_csv(productivity_path)
-        require_columns(productivity, ["sector", "output_per_worker"], "output_per_worker table")
-        per_worker = productivity.set_index("sector")["output_per_worker"]
+        # Prefer the configured column (e.g. the one adjusted for global business
+        # companies and imputed rent) where the table has it.
+        column = cfg["jobs"].get("output_per_worker_column") or "output_per_worker"
+        if column not in productivity.columns:
+            column = "output_per_worker"
+        require_columns(productivity, ["sector", column], "output_per_worker table")
+        per_worker = productivity.set_index("sector")[column]
         missing = sorted(set(sectors) - set(per_worker.index))
         if missing:
             raise ValueError(f"No output_per_worker for sectors: {missing}")

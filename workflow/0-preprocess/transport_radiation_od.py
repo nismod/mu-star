@@ -11,7 +11,8 @@ model decides how many trips stay in the cell. They are not assigned to the
 network, but count towards the district comparison (CA27 includes them).
 
 Calibration (islands with district_od: true and radiation.calibration.enabled):
-every combination of impedance, max_impedance, origin mass and include_self is
+every combination of impedance, max_impedance, origin mass, include_self and
+alpha (the scale parameter of the extended radiation model) is
 scored against census Table CA27 aggregated to districts
 (transport_flow_model.calibrate_radiation), and the best is used.
 
@@ -118,6 +119,7 @@ def main(
         "max_impedance": float(cfg["max_impedance"]),
         "origin_mass": cfg["origin_mass"],
         "include_self": bool(cfg["include_self"]),
+        "alpha": cfg.get("alpha"),
         "source": "config",
     }
     calibration = pd.DataFrame()
@@ -134,6 +136,7 @@ def main(
                 origin_masses={m: origin_masses[m] for m in grid["origin_mass"]},
                 max_impedances=grid["max_impedance"][name],
                 include_self=grid["include_self"],
+                alphas=grid.get("alpha") or [None],
                 normalisation=cfg["normalisation"],
                 metric=grid["metric"],
             )
@@ -150,6 +153,7 @@ def main(
             "max_impedance": float(best["max_impedance"]),
             "origin_mass": best["origin_mass"],
             "include_self": bool(best["include_self"]),
+            "alpha": None if pd.isna(best["alpha"]) else float(best["alpha"]),
             "source": f"calibrated ({grid['metric']} = {best[grid['metric']]:.4f})",
         }
     calibration.to_csv(output_calibration, index=False)
@@ -164,6 +168,7 @@ def main(
         normalisation=cfg["normalisation"],
         min_flow=cfg["min_trips"],
         include_self=settings["include_self"],
+        alpha=settings["alpha"],
     )
 
     fit_before = fit_after = None

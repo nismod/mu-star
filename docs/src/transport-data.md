@@ -46,7 +46,7 @@ config, not the scripts.
 | 6 | Total population by area | scaling WorldPop to people | Vol. II sheet D2 | **open** (the `population` column of item 1) | column in item 1 |
 | 7 | WorldPop gridded population | spatial pattern within areas | WorldPop Global2 R2025A, 2022, 100 m constrained (CC BY 4.0) | **open** (`transport_open_osm_worldpop_total`) | `incoming/Population/WorldPop/mus_ppp_2022_constrained.tif` |
 | 8 | H3 economic activity (output by sector) | jobs (trip destinations) | mu-star economics workflow, rule `economic_activity_h3` | mu-star (stub; path and columns need checking) | `processed/economy/{zoning}/economic-activity.parquet` |
-| 9 | Output per worker by sector | converting output to jobs | Statistics Mauritius national accounts and employment by industry | build | `incoming/Socio-economic/GDP/output-per-worker-by-sector.csv` |
+| 9 | Output per worker by sector | converting output to jobs | Statistics Mauritius: GVA by industry (National Accounts 2013–2026 series, Table 3, 2022) ÷ 2022 census employment by industry (Vol. VII, CA3) | **open** (`transport_open_stats_output_per_worker`) | `incoming/Socio-economic/GDP/output-per-worker-by-sector.csv` |
 | 10 | Schools | destinations of school trips | Official geoportal primary school list plus OpenStreetMap; no enrolment, so placeholder capacities. Ministry of Education list still wanted | **open fallback** (`transport_open_osm_schools`) | `incoming/Education/{island}/schools.gpkg` |
 | 11 | Road network | car routing, bus mapping, criticality assets | provided; else OpenStreetMap (ODbL) | **open fallback** (`transport_open_osm_roads`) | `incoming/Infrastructure/Transport/{island}/road/roads.gpkg` |
 | 12 | Bus stops | bus network | provided | have / build | `incoming/Infrastructure/Transport/{island}/bus/bus_stops.gpkg` |
@@ -58,7 +58,7 @@ config, not the scripts.
 | 18 | Metro fare stage matrix | exact metro fares | Metro Express conditions of travel (2023) | transcribe | `incoming/Infrastructure/Transport/mauritius/metro/metro_fare_stages.csv` |
 | 19 | Inter-island services | inter-island flows and criticality | MSC sailing schedules; airline schedules | build | `incoming/Infrastructure/Transport/interisland/links.csv` |
 | 20 | Airports and ports | inter-island network | OpenStreetMap aerodromes; ports from a short documented list located in OSM | **open fallback** (`transport_open_osm_interisland_nodes`) | `incoming/Infrastructure/Transport/interisland/nodes.gpkg` |
-| 21 | Inter-island traffic (optional) | observed passengers and freight by commodity | airport and port statistics; Rodrigues Airport presentation (2025); Blue Economy annual report 2025/26 | find | `incoming/Infrastructure/Transport/interisland/traffic.csv` |
+| 21 | Inter-island traffic (optional) | observed passengers and freight by commodity | by link: still to assemble. Published totals: Statistics Mauritius tourism and Rodrigues digests | find; published totals **open** (`transport_open_stats_traffic`, `traffic-published.csv`) | `incoming/Infrastructure/Transport/interisland/traffic.csv` |
 
 **Open data rules.** `workflow/0-preprocess/transport_open_census.smk` and
 `transport_open_osm.smk` download the sources and write these inputs in the
@@ -77,6 +77,25 @@ by hand at the same location is used as it is. What to know about them:
 - *Schools* have no enrolment. Each gets a flat placeholder capacity by
   level, and OSM misses many secondary schools and most Rodrigues schools.
 - *Metro* has no run times, so the default speed is used.
+- *Output per worker* (`transport_open_stats.smk`): run this rule before
+  the jobs step, which uses the table only if the file exists.
+  - The table has `output_per_worker` and `output_per_worker_adjusted`.
+    The adjusted column leaves out global business companies (sections G, K
+    and M) and the imputed rent of owner-occupied dwellings (about 78% of
+    section L). The jobs step uses it by default
+    (`jobs.output_per_worker_column`).
+  - Section T (households as employers) shares section S's ratio.
+  - The ratios depend on the national accounts basis: the older Digest of
+    National Accounts gives noticeably different 2022 values.
+- *School enrolment* by district and level (Digest of Education Statistics
+  2025) is written to `incoming/Education/enrolment-by-district-level.csv`.
+  No school-by-school enrolment is published. It is not yet used to scale
+  the placeholder school capacities.
+- *Inter-island traffic* (`traffic-published.csv`): Mauritius–Rodrigues
+  passengers by direction, 2005–2025, with air and sea combined (about
+  155,000 each way in 2025), plus Rodrigues exports to Mauritius by
+  commodity. No freight from Mauritius to Rodrigues, and nothing for Agaléga
+  or St Brandon, is published.
 - *Attribution*: © OpenStreetMap contributors (ODbL; derived files shared
   publicly must also be ODbL); WorldPop (CC BY 4.0); Statistics Mauritius.
 

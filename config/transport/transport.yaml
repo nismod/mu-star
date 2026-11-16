@@ -165,6 +165,11 @@ transport_land:
   jobs:
     # Scale total jobs to equal total employed residents (closed-island assumption).
     scale_to_employed_residents: true
+    # Column of the output-per-worker table to divide by. The adjusted column
+    # leaves out value added that has few or no workers behind it: global
+    # business companies (sections G, K, M) and the imputed rent of
+    # owner-occupied dwellings (about 78% of section L).
+    output_per_worker_column: output_per_worker_adjusted
     # ISIC sections to leave out of commuting destinations, e.g. A (agriculture)
     # if those workers mostly live on site. TODO: agree.
     exclude_sectors: []
@@ -180,6 +185,10 @@ transport_land:
     # the mean travel time within a cell: 0.83 x the H3 cell circumradius, at
     # connectors.car_speed_kph (or in km for length_km).
     include_self: true
+    # Scale parameter of the extended radiation model (Yang et al. 2014).
+    # null = the original, parameter-free model. Smaller values give longer
+    # trips; the paper finds values near zero for zones under about 10 km.
+    alpha: null
     # "row": every employed resident makes exactly one trip (incl. within-cell).
     normalisation: row
     # Drop OD pairs below this many trips. The dropped trips are spread back
@@ -188,9 +197,9 @@ transport_land:
 
     # Calibration against CA27 (islands with district_od: true): every
     # combination below is scored by fit to the district-to-district table, and
-    # the best is used. Note the radiation model only depends on the ranking of
-    # destinations, so the choices are limited: the impedance, the cut-off,
-    # the origin mass and whether trips can stay within a cell.
+    # the best is used. The original model only depends on the ranking of
+    # destinations, so its choices are limited (impedance, cut-off, origin
+    # mass, trips within a cell). alpha adds a continuous parameter.
     calibration:
       enabled: true
       impedance: [time_min, length_km]
@@ -199,6 +208,7 @@ transport_land:
         length_km: [10, 20, 30, 50, 80]
       origin_mass: [employed_residents, jobs]
       include_self: [true, false]
+      alpha: [null, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0]
       # "cpc_shares": common part of commuters after scaling CA27 to the
       # modelled total (fits the pattern, not the total); or "cpc", "r2".
       metric: cpc_shares
@@ -475,6 +485,11 @@ transport_interisland:
     # Sources: 2025 Rodrigues Airport development presentation; Blue Economy
     # annual report 2025/26; airport arrivals series.
     traffic: incoming/Infrastructure/Transport/interisland/traffic.csv
+    # Published annual passengers and freight between Mauritius and Rodrigues
+    # (Statistics Mauritius digests; rule transport_open_stats_traffic). A
+    # source table for building traffic.csv: it is not keyed by link_id, and
+    # most rows do not split air and sea.
+    traffic_published: incoming/Infrastructure/Transport/interisland/traffic-published.csv
   # Days per year, to report daily flows.
   days_per_year: 365
   # Baseline annual passenger trips (two-way) by island pair and mode, where
