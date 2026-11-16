@@ -117,7 +117,7 @@ one circuit built for the voltage it runs at. Without the names table,
 substations keep their ids.
 
 Each failure is solved at peak and at average demand, which gives two
-quantities:
+quantities, each the rise in unmet demand over that with nothing failed:
 
 - `unmet_peak_mw`: the unmet demand in the worst hour (MW);
 - `unmet_mwh_per_day`: the unmet energy per day of outage (MWh), which is the
@@ -220,7 +220,9 @@ demand and criticality commands also need the incoming folder.
     area left with unmet demand, with the same two quantities. `area_bus_id`
     names the area by the bus of its substation (or power station, on
     Rodrigues), which `service_weights_nodes.csv` links to the nodes of the
-    distribution network;
+    distribution network. When demand is unmet with nothing failed, a failure
+    can move that shortfall from one area to another, so a failure's areas
+    can add up to more than its value in `criticality.csv`;
   - `line_ratings.csv`: the rating of each transmission line segment, with
     its line (`asset_id`), the voltage it was built for, its circuits and the
     voltage it runs at.
