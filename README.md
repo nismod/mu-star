@@ -191,7 +191,9 @@ output files.
 
 While this workflow is in development, some of the rules are placeholders.
 
-The energy rules build three models of the electricity network. How to get
+The energy rules build three models of the electricity network and measure
+the unmet demand when each substation, transmission line or power plant
+fails. How to get
 the data and run the rules is in the Energy chapter of the documentation,
 `docs/src/infrastructure-energy.md`. Settings are in
 `config/energy/energy.yaml`.
@@ -216,7 +218,8 @@ ruff check
 
 `notebooks/` holds notebooks for looking at the workflow's files while working
 on the code, one folder per system. `notebooks/energy/` has `00_inputs.ipynb`
-for the inputs and `01_networks.ipynb` for the networks. Before committing a
+for the inputs, `01_networks.ipynb` for the networks and `02_criticality.ipynb`
+for the criticality results. Before committing a
 notebook, do the one-time setup in `notebooks/README.md`, which strips outputs,
 kernel name and Python version on commit.
 
