@@ -12,14 +12,17 @@ Three notebooks for checking the energy model while working on `src/energy/`:
   of each substation area, the transmission line ratings, the unmet demand when
   each component fails, by cause and by substation area, and maps of the
   critical lines, substations and plants and of the distribution network left
-  without supply. It reads the tables of `build_energy_criticality_flow` and
-  builds nothing.
+  without supply, then the unmet demand when each distribution line fails. It
+  reads the tables of `build_energy_criticality_flow` and
+  `build_energy_criticality_connectivity` and builds nothing.
 
 After editing `src/energy/`, rebuild with `snakemake -c1 build_energy_networks`
 (or set `RUN_BUILD = True` in `01_networks.ipynb`) and rerun `01_networks.ipynb`.
-After editing `src/energy/criticality.py`, add `-R build_energy_criticality_flow`
-to the criticality command in "Running the model" and rerun `02_criticality.ipynb`;
-the rule writes only to `data/results/`, so the OneDrive links can stay.
+After editing `src/energy/criticality.py` or `src/energy/connectivity.py`, add
+`-R build_energy_criticality_flow` or `-R build_energy_criticality_connectivity`
+to the criticality commands in "Running the model" and rerun
+`02_criticality.ipynb`; the rules write only to `data/results/`, so the OneDrive
+links can stay.
 
 All three import `_helpers.py` as `h`, which takes its paths from
 `config/config.yaml` and `config/energy/energy.yaml`; its docstring lists the
