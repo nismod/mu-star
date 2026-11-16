@@ -139,6 +139,7 @@ def transmission_model(
     line_circuits: pd.DataFrame | None = None,
     line_types: dict[int, str] | None = None,
     max_radial_line_voltage_kv: float = DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV,
+    rated: bool = True,
 ) -> TransmissionModel:
     """Build the transmission model from the lines of ``network`` above ``max_radial_line_voltage_kv``.
 
@@ -147,7 +148,8 @@ def transmission_model(
     (see ``read_line_circuits``) gives each line's route, design voltage and circuits; without it, each
     line has one circuit built for the voltage it runs at, and a route is the run of segments between
     two substations or junctions. ``line_types`` maps a design voltage (kV) to the PyPSA line type of one
-    circuit.
+    circuit. With ``rated=False`` the lines get no rating or impedance (``s_nom``, ``x`` and ``r`` are NaN),
+    as an analysis by connectivity needs neither.
     """
     line_types = {int(kv): name for kv, name in (line_types or DEFAULT_LINE_TYPES).items()}
     buses = network.buses
@@ -205,14 +207,21 @@ def transmission_model(
                 f"line circuits do not match the network: missing {unlisted[:5]}, not in network {unknown[:5]}"
             )
         circuits = line_circuits.reindex(meshed.index)
-    no_type = sorted(set(circuits["built_for_kv"].astype(int)) - set(line_types))
-    if no_type:
-        raise ValueError(f"no line type for lines built for {no_type} kV")
-    types = network.line_types.loc[circuits["built_for_kv"].astype(int).map(line_types)]
     count = circuits["circuits"].astype(float).to_numpy()
     if (count < 1).any():
         raise ValueError("every transmission line needs at least one circuit")
     length = meshed["length"].astype(float).to_numpy()
+    ratings = {"s_nom": np.nan, "x": np.nan, "r": np.nan}
+    if rated:
+        no_type = sorted(set(circuits["built_for_kv"].astype(int)) - set(line_types))
+        if no_type:
+            raise ValueError(f"no line type for lines built for {no_type} kV")
+        types = network.line_types.loc[circuits["built_for_kv"].astype(int).map(line_types)]
+        ratings = {
+            "s_nom": math.sqrt(3) * voltage * types["i_nom"].to_numpy() * count,
+            "x": np.maximum(types["x_per_length"].to_numpy() * length / count, MIN_REACTANCE_OHM),
+            "r": types["r_per_length"].to_numpy() * length / count,
+        }
     lines = pd.DataFrame(
         {
             "bus0": meshed["bus0"],
@@ -221,9 +230,7 @@ def transmission_model(
             "v_nom": voltage,
             "built_for_kv": circuits["built_for_kv"].astype(int),
             "circuits": circuits["circuits"].astype(int),
-            "s_nom": math.sqrt(3) * voltage * types["i_nom"].to_numpy() * count,
-            "x": np.maximum(types["x_per_length"].to_numpy() * length / count, MIN_REACTANCE_OHM),
-            "r": types["r_per_length"].to_numpy() * length / count,
+            **ratings,
         },
         index=meshed.index,
     )
