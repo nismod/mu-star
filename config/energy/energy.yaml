@@ -75,6 +75,8 @@ energy:
     # Lines above this voltage are run meshed and make up the network of the
     # power flow; lines at or below it are distribution lines, run radially
     # (each fed from one substation), and are left out of the power flow.
+    # The demand step also uses it, to find each substation's area along the
+    # distribution lines.
     # Keep it between the voltage of the distribution lines (11 kV in the
     # estimated network) and that of the transmission lines (66 kV). Below the
     # distribution lines, it moves them into the power flow, run meshed and

@@ -11,7 +11,6 @@ docs/src/infrastructure-energy.md.
 
 from energy.paths import results_name
 
-CRITICALITY = ENERGY.get("criticality", {})
 # Optional tables, as paths in the incoming folder.
 CRITICALITY_TABLES = {
     name: f"{INCOMING_DIR}/{CRITICALITY[name]}" for name in ("line_circuits", "substation_names") if CRITICALITY.get(name)
@@ -52,7 +51,7 @@ rule compute_energy_criticality:
             f"--line-type {int(kv)} {shlex.quote(str(line_type))}"
             for kv, line_type in CRITICALITY.get("line_types", {}).items()
         ),
-        max_radial_line_voltage_kv=CRITICALITY.get("max_radial_line_voltage_kv", 35),
+        max_radial_line_voltage_kv=MAX_RADIAL_LINE_VOLTAGE_KV,
         s_max_pu=CRITICALITY.get("s_max_pu", 1.0),
         island_carriers=" ".join(
             f"--island-carrier {shlex.quote(str(carrier))}"
