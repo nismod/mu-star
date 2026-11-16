@@ -85,9 +85,9 @@ transport_land:
       district_name: district
       row_type: row_type
       employed_residents: employed  # aged 16+, includes informal work
-      # Optional: total population. Without it, employed residents are spread
-      # over each area by the WorldPop pattern (no scaling of WorldPop needed).
-      population: null
+      # Total population (all ages), from Volume II Table D2. If null, employed
+      # residents are spread over each area by the WorldPop pattern instead.
+      population: population
     # Official 4-digit codes and names, by district: Appendix II (pp. 474-476)
     # for Mauritius, Appendices III-IV (pp. 477-478) for the Rodrigues regions
     # and their localities. Columns: zone_id (code), zone_name, district_code.
@@ -98,7 +98,13 @@ transport_land:
     # Boundaries of the Municipal Wards / Village Council Areas and Rodrigues
     # regions, with the 4-digit code. TODO: source.
     census_boundaries: incoming/Socio-economic/Census/2022/census-areas.gpkg
-    census_boundaries_zone_id: TODO_code
+    census_boundaries_zone_id: zone_id
+    # OpenStreetMap does not map two tabulated areas, Vacoas-Phoenix Wards 5
+    # and 6 West (codes 1735, 1736). If true, the unmapped part of the town is
+    # split between them by a straight line in proportion to their populations
+    # (flagged "approximate" in geometry_source). If false, the census zones
+    # rule fails until OSM has the two wards or boundaries are provided.
+    open_census_approximate_residuals: true
     worldpop: incoming/Population/WorldPop/mus_ppp_2022_constrained.tif  # TODO: product / year
 
     # Census Table CA27 (Volume VII, p. 347 onwards; district breakdown from

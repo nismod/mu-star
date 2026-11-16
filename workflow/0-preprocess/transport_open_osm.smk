@@ -67,23 +67,8 @@ def tosm_official_flag(wc, input):
     return f"--official {input.official[0]}" if input.official else ""
 
 
-rule transport_open_osm_download:
-    """
-    Download the OpenStreetMap extract of Mauritius, Rodrigues, Agalega and St Brandon (Geofabrik
-    is not used: the openstreetmap.fr daily extract is). The URL is "latest": the file changes
-    daily, so keep the one in incoming/ for reproducibility, and record the date.
-
-    Test with:
-    snakemake -c1 data/incoming/Infrastructure/OpenStreetMap/mauritius-latest.osm.pbf
-    """
-    output:
-        pbf=TOSM_PBF,
-    shell:
-        """
-        mkdir -p $(dirname {output.pbf})
-        curl -sS -f -L --retry 3 -o {output.pbf}.part {OSM_PBF_URL}
-        mv {output.pbf}.part {output.pbf}
-        """
+# The OSM extract itself is downloaded by transport_open_census_download_osm
+# (workflow/0-preprocess/transport_open_census.smk), to the path in TOSM_PBF.
 
 
 rule transport_open_osm_download_primary_schools:

@@ -41,4 +41,5 @@ dependencies:
   - terracotta==0.9.1
   - tqdm
   - xarray
+  - xlrd  # census .xls workbooks
   - zarr
