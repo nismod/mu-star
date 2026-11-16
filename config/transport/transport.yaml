@@ -356,7 +356,7 @@ transport_land:
     journey_time_checks:
       - {from: Place d'Armes, to: Curepipe Central, minutes: 52}
       - {from: Place d'Armes, to: Rose Hill Central, minutes: 23}
-      - {from: Place d'Armes, to: Quatre Bornes, minutes: 29}
+      - {from: Place d'Armes, to: Quatre Bornes Central, minutes: 29}
     default_speed_kph: 30  # used where run times are missing
     # Peak headway by line (line_id in metro_line_stations.csv). Nominal 10 min
     # on the main line; the Rose Hill - Reduit branch is a model assumption
