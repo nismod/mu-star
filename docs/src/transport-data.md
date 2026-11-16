@@ -31,32 +31,57 @@ config, not the scripts.
 | **build** | to be assembled by us from several sources (e.g. GTFS-like bus files) |
 | **mu-star** | produced by another part of the mu-star workflow |
 | **find** | source still to be found or confirmed |
+| **open** | downloaded and built automatically from published open data by the named rule |
+| **open fallback** | built automatically from open data as a stand-in until better (provided or official) data arrive |
 
 ## Input inventory
 
 | # | Dataset | Used for | Source | Status | Location under `{data}/` |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Census Table CA1: employed by area | employed residents (trip origins) | 2022 census, Vol. VII, pp. 1–30 | transcribe | `incoming/Socio-economic/Census/2022/CA1-employment-by-area.csv` |
-| 2 | Census area codes | matching area names to codes; district and island | Vol. VII Appendix II (pp. 474–476), Appendices III–IV (pp. 477–478) | transcribe | `incoming/Socio-economic/Census/2022/appendix-ii-iv-area-codes.csv` |
-| 3 | Census area boundaries | spreading area totals over WorldPop | TBC (Statistics Mauritius / cadastre) | find | `incoming/Socio-economic/Census/2022/census-areas.gpkg` |
-| 4 | Census Table CA27: residence × workplace district | calibrating and validating journeys to work | Vol. VII, p. 347 (districts from p. 349) | transcribe | `incoming/Socio-economic/Census/2022/CA27-residence-by-workplace-district.csv` |
-| 5 | Children by area and age band | origins of school trips | 2022 census population volume (TBC) | find | `incoming/Socio-economic/Census/2022/children-by-area-age.csv` |
-| 6 | Total population by area (optional) | scaling WorldPop to people | 2022 census (TBC) | find | column in item 1 |
-| 7 | WorldPop gridded population | spatial pattern within areas | WorldPop (2022 constrained product preferred) | have | `incoming/Population/WorldPop/mus_ppp_2022_constrained.tif` |
+| 1 | Census Table CA1: employed by area, with total population | employed residents (trip origins) | 2022 census workbooks: Vol. VII sheet CA1; population from Vol. II sheet D2 | **open** (`transport_open_census_tables`) | `incoming/Socio-economic/Census/2022/CA1-employment-by-area.csv` |
+| 2 | Census area codes | matching area names to codes; district and island | Vol. VII Appendix II; Rodrigues regions from Appendix IV with synthetic codes 2101–2106 (none are published) | **open** (`transport_open_census_tables`) | `incoming/Socio-economic/Census/2022/appendix-ii-iv-area-codes.csv` |
+| 3 | Census area boundaries | spreading area totals over WorldPop | OpenStreetMap admin boundaries (levels 8 and 9), matched to the codes. Not official census boundaries | **open** (`transport_open_census_boundaries`) | `incoming/Socio-economic/Census/2022/census-areas.gpkg` |
+| 4 | Census Table CA27: residence × workplace district | calibrating and validating journeys to work | Vol. VII sheet CA27 | **open** (`transport_open_census_tables`) | `incoming/Socio-economic/Census/2022/CA27-residence-by-workplace-district.csv` |
+| 5 | Children by area and age band | origins of school trips | Vol. II sheet D2 (5-year bands); 10–11 and 12–14 split using district single-year shares from D1 | **open** (`transport_open_census_tables`) | `incoming/Socio-economic/Census/2022/children-by-area-age.csv` |
+| 6 | Total population by area | scaling WorldPop to people | Vol. II sheet D2 | **open** (the `population` column of item 1) | column in item 1 |
+| 7 | WorldPop gridded population | spatial pattern within areas | WorldPop Global2 R2025A, 2022, 100 m constrained (CC BY 4.0) | **open** (`transport_open_osm_worldpop_total`) | `incoming/Population/WorldPop/mus_ppp_2022_constrained.tif` |
 | 8 | H3 economic activity (output by sector) | jobs (trip destinations) | mu-star economics workflow, rule `economic_activity_h3` | mu-star (stub; path and columns need checking) | `processed/economy/{zoning}/economic-activity.parquet` |
 | 9 | Output per worker by sector | converting output to jobs | Statistics Mauritius national accounts and employment by industry | build | `incoming/Socio-economic/GDP/output-per-worker-by-sector.csv` |
-| 10 | Schools | destinations of school trips | Ministry of Education (TBC) | find | `incoming/Education/{island}/schools.gpkg` |
-| 11 | Road network | car routing, bus mapping, criticality assets | provided | have / build | `incoming/Infrastructure/Transport/{island}/road/roads.gpkg` |
+| 10 | Schools | destinations of school trips | Official geoportal primary school list plus OpenStreetMap; no enrolment, so placeholder capacities. Ministry of Education list still wanted | **open fallback** (`transport_open_osm_schools`) | `incoming/Education/{island}/schools.gpkg` |
+| 11 | Road network | car routing, bus mapping, criticality assets | provided; else OpenStreetMap (ODbL) | **open fallback** (`transport_open_osm_roads`) | `incoming/Infrastructure/Transport/{island}/road/roads.gpkg` |
 | 12 | Bus stops | bus network | provided | have / build | `incoming/Infrastructure/Transport/{island}/bus/bus_stops.gpkg` |
 | 13 | Bus routes and frequencies | bus network, capacity | provided (timetables) | have / build | `incoming/Infrastructure/Transport/{island}/bus/bus_routes.gpkg` |
 | 14 | Bus route stop sequences, timings, fare stages | bus network, fares | provided (timetables, fare stages TBC) | build | `incoming/Infrastructure/Transport/{island}/bus/bus_route_stops.csv` |
-| 15 | Metro stations | metro network | provided | have | `incoming/Infrastructure/Transport/mauritius/metro/metro_stations.gpkg` |
-| 16 | Metro lines | metro network | provided | have | `incoming/Infrastructure/Transport/mauritius/metro/metro_lines.gpkg` |
-| 17 | Metro line station order and run times | metro network | Metro Express itinerary | build | `incoming/Infrastructure/Transport/mauritius/metro/metro_line_stations.csv` |
+| 15 | Metro stations | metro network | provided; else OpenStreetMap | **open fallback** (`transport_open_osm_metro`) | `incoming/Infrastructure/Transport/mauritius/metro/metro_stations.gpkg` |
+| 16 | Metro lines | metro network | provided; else OpenStreetMap | **open fallback** (`transport_open_osm_metro`) | `incoming/Infrastructure/Transport/mauritius/metro/metro_lines.gpkg` |
+| 17 | Metro line station order and run times | metro network | OpenStreetMap route relations (order only; no run times) | **open fallback** (`transport_open_osm_metro`) | `incoming/Infrastructure/Transport/mauritius/metro/metro_line_stations.csv` |
 | 18 | Metro fare stage matrix | exact metro fares | Metro Express conditions of travel (2023) | transcribe | `incoming/Infrastructure/Transport/mauritius/metro/metro_fare_stages.csv` |
 | 19 | Inter-island services | inter-island flows and criticality | MSC sailing schedules; airline schedules | build | `incoming/Infrastructure/Transport/interisland/links.csv` |
-| 20 | Airports and ports | inter-island network | provided / OpenStreetMap | build | `incoming/Infrastructure/Transport/interisland/nodes.gpkg` |
+| 20 | Airports and ports | inter-island network | OpenStreetMap aerodromes; ports from a short documented list located in OSM | **open fallback** (`transport_open_osm_interisland_nodes`) | `incoming/Infrastructure/Transport/interisland/nodes.gpkg` |
 | 21 | Inter-island traffic (optional) | observed passengers and freight by commodity | airport and port statistics; Rodrigues Airport presentation (2025); Blue Economy annual report 2025/26 | find | `incoming/Infrastructure/Transport/interisland/traffic.csv` |
+
+**Open data rules.** `workflow/0-preprocess/transport_open_census.smk` and
+`transport_open_osm.smk` download the sources and write these inputs in the
+schemas below, so the workflow runs from published data alone. A file placed
+by hand at the same location is used as it is. What to know about them:
+
+- *Census workbooks* (Statistics Mauritius, 2022 Housing and Population
+  Census, Volumes II and VII, Excel). Every published total is checked
+  against the sum of its parts. On area rows, `area_name` is the official
+  name from the code list, and the printed name is kept in `printed_name`.
+- *Area boundaries* come from OpenStreetMap, not the census office. Two
+  tabulated wards (Vacoas-Phoenix Wards 5 and 6 West, codes 1735 and 1736)
+  are not mapped. With `open_census_approximate_residuals: true` they are cut
+  from the unmapped part of the town by a straight line and flagged
+  `approximate`.
+- *Schools* have no enrolment. Each gets a flat placeholder capacity by
+  level, and OSM misses many secondary schools and most Rodrigues schools.
+- *Metro* has no run times, so the default speed is used.
+- *Attribution*: © OpenStreetMap contributors (ODbL; derived files shared
+  publicly must also be ODbL); WorldPop (CC BY 4.0); Statistics Mauritius.
+
+Downloaded source files are kept next to the outputs, with a `.source.json`
+sidecar (URL, time, checksum) for the census workbooks and the OSM extract.
 
 The scalar parameters (ridership, headways, vehicle capacities, fare
 schedules, values of time, operating costs) are not files. They are set in

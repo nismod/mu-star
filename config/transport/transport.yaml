@@ -250,6 +250,11 @@ transport_land:
     peak_period_share: 0.6
     peak_period_hours: 2.0
     car_occupancy: 1.3  # persons per vehicle, to compare with road capacity
+    # Share of peak bus and metro capacity taken by trips that are not
+    # modelled (purposes other than work and school), which modelled trips
+    # cannot use. One value for both modes. Placeholder: 10-15% is plausible
+    # now that school trips are modelled explicitly. TODO: sensitivity.
+    other_purpose_load_share: 0.12
 
   # --- Generalised cost (perceived, MUR per person-trip) -------------------------
   # cost = per_minute * time_min + per_km[mode] * length_km + fare
@@ -339,10 +344,6 @@ transport_land:
     default_headway_min: 20
     # Standard vehicle size (passengers, seated + standing). TODO: confirm.
     vehicle_capacity: 70
-    # Share of peak bus capacity taken by trips that are not journeys to work
-    # (school, other purposes), which commuters cannot use. Unknown. TODO:
-    # sensitivity; school and work trips both load the weekday peak.
-    other_purpose_load_share: 0.3
     # Only used where a between-stop time is missing: bus in-vehicle speed as a
     # share of car free-flow speed on the same road edges, plus dwell time.
     # Also scales bus detour times. Not varied by scenarios (bus detours are
@@ -354,9 +355,6 @@ transport_land:
     # incl. standing). Main line Place d'Armes (Port Louis) - Curepipe Central,
     # ~26 km, ~52 min end to end (~30 km/h).
     vehicle_capacity: 422
-    # Share of peak metro capacity taken by non-work trips. Students are about
-    # 15-18% of metro passengers (2022); other purposes unknown. TODO.
-    other_purpose_load_share: 0.25
     # Published journey times, used to check the network's run times
     # (station names as in metro_stations.gpkg "name"). TODO: check names.
     journey_time_checks:
@@ -451,8 +449,6 @@ transport_land:
       secondary: {walk: 0.15, cycle: 0.02, car: 0.20, bus: 0.55, metro: 0.08}
     # Share of daily school trips in the modelled peak period.
     peak_period_share: 0.9
-  # With school trips modelled, bus / metro other_purpose_load_share should
-  # cover only the remaining purposes (TODO: lower them when school is enabled).
 
 
 # --- Inter-island air and sea links ----------------------------------------------

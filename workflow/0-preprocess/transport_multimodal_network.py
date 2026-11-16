@@ -101,7 +101,7 @@ def main(
             "fare": fares["bus"]["per_km"] * bus["length_km"],
             # Commuters only get the capacity left by other purposes (e.g. school).
             "capacity": peak_capacity(bus["headway_min"], bus["vehicle_capacity"], hours)
-            * (1.0 - cfg["bus"]["other_purpose_load_share"]),
+            * (1.0 - cfg["period"]["other_purpose_load_share"]),
         }
     )
     calls = pd.concat(
@@ -165,7 +165,7 @@ def main(
             "time_min": metro["time_min"],
             "fare": fares["metro"]["per_km"] * metro["length_km"],
             "capacity": peak_capacity(metro["headway_min"], metro["capacity_per_train"], hours)
-            * (1.0 - cfg["metro"]["other_purpose_load_share"]),
+            * (1.0 - cfg["period"]["other_purpose_load_share"]),
         }
     )
     mcalls = pd.concat(
