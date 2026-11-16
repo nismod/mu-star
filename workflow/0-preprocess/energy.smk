@@ -442,13 +442,15 @@ rule fetch_energy_population:
 rule build_energy_demand:
     """
     Estimate the demand share of each substation and node of inferred-provided,
-    the area each substation supplies, and the peak and average demand.
+    the area each substation supplies along the distribution lines, and the peak
+    and average demand.
 
     Test with:
     snakemake -c1 data/processed/energy/<model_data>/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv
     """
     input:
         nodes=f"{NETWORKS_DIR}/{INFERRED_PROVIDED_NAME}/geoparquet/{INFERRED_PROVIDED_NAME}-nodes.geoparquet",
+        edges=f"{NETWORKS_DIR}/{INFERRED_PROVIDED_NAME}/geoparquet/{INFERRED_PROVIDED_NAME}-edges.geoparquet",
         aoi=f"{{data}}/{OSM_AOI}",
         population=POPULATION_RASTER,
         nightlights=NIGHTLIGHT_COMPOSITE,
@@ -464,17 +466,21 @@ rule build_energy_demand:
         output_dir=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}",
         weight_nightlights=DEMAND.get("weight_nightlights", 0.6),
         weight_population=DEMAND.get("weight_population", 0.4),
+        # The criticality analysis splits lines at the same voltage.
+        max_radial_line_voltage_kv=ENERGY.get("criticality", {}).get("max_radial_line_voltage_kv", 35),
     shell:
         """
         python {input.script:q} \
             --nodes {input.nodes:q} \
+            --edges {input.edges:q} \
             --aoi {input.aoi:q} \
             --population {input.population:q} \
             --nightlights {input.nightlights:q} \
             --demand-levels {input.demand_levels:q} \
             --output-dir {params.output_dir:q} \
             --weight-nightlights {params.weight_nightlights} \
-            --weight-population {params.weight_population}
+            --weight-population {params.weight_population} \
+            --max-radial-line-voltage-kv {params.max_radial_line_voltage_kv}
         """
 
 

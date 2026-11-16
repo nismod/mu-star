@@ -4,12 +4,16 @@ The method is PyPSA-Earth's ``build_demand_profiles.upsample`` (0.6 GDP + 0.4 po
 VIIRS night-light radiance in place of GDP as the measure of economic activity: a GDP raster is
 too coarse for a 50 km island.
 
-1. Each substation serves the area nearer to it than to any other substation (a Voronoi cell
-   clipped to the island outline). An island with no substation (Rodrigues) is served from its
-   power stations; an island with one supply point is one area.
-2. An area's score is ``0.6 * radiance + 0.4 * population`` (default weights), each term being the
-   area's fraction of the total over its island's areas. Scores are normalised again into shares
-   that add to one on each island. Radiance is the VIIRS composite; population is the WorldPop raster.
+1. Each substation serves the nodes nearer to it along the distribution lines (the lines at or below
+   ``max_radial_line_voltage_kv``) than to any other substation. An island with no substation
+   (Rodrigues) is served from its power stations. A node that the distribution lines do not join to
+   any supply point gets no demand; it is counted in the area of the supply point nearest in a
+   straight line. A substation's service area is the part of its island nearer to its nodes than to
+   any other node.
+2. Each raster cell goes to the nearest node joined to a supply point. An area's score is
+   ``0.6 * radiance + 0.4 * population`` (default weights), each term being the area's fraction of the
+   total over its island's areas. Scores are normalised again into shares that add to one on each
+   island. Radiance is the VIIRS composite; population is the WorldPop raster.
 3. Within an area, the same formula, using the raster cells nearest each node, splits the area's
    share between its nodes.
 
@@ -29,10 +33,16 @@ import pandas as pd
 import rasterio
 import shapely
 from rasterio.features import geometry_mask
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import dijkstra
 from shapely.geometry import MultiPoint
 
 GEOGRAPHIC_CRS = "EPSG:4326"
 DEFAULT_WEIGHTS = {"nightlights": 0.6, "population": 0.4}
+# Lines at or below this voltage are distribution lines. IEC 60038 lists three-phase systems up to 35 kV
+# apart from those above it; see config/energy/energy.yaml.
+DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV = 35.0
+MIN_LENGTH_KM = 1e-6  # for line segments of almost no length, so that every line counts as joined
 METHOD_NOTE = (
     "PyPSA-Earth's build_demand_profiles.upsample (0.6 GDP + 0.4 population), "
     "with night-light radiance in place of GDP."
@@ -80,7 +90,7 @@ def supply_points(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     its rooftop PV) count once.
     """
     kind = nodes["kind"].astype(str)
-    region = nodes["region"].astype(str) if "region" in nodes else pd.Series("all", index=nodes.index)
+    region = _islands(nodes)
     chosen = []
     for name, index in nodes.groupby(region, sort=True).groups.items():
         members = nodes.loc[index]
@@ -91,32 +101,92 @@ def supply_points(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             raise ValueError(f"{name}: no substation or generator node to serve demand from")
         chosen.append(candidates[["bus_id", "geometry"]].assign(island=name))
     points = gpd.GeoDataFrame(pd.concat(chosen), geometry="geometry", crs=nodes.crs)
+    points["bus_id"] = points["bus_id"].astype(str)
     return points[~points.geometry.duplicated()].reset_index(drop=True)
 
 
-def service_areas(supply_points: gpd.GeoDataFrame, outlines: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Return the Voronoi cell of each supply point, clipped to its island outline (EPSG:4326).
+def _islands(nodes: gpd.GeoDataFrame) -> pd.Series:
+    return nodes["region"].astype(str) if "region" in nodes else pd.Series("all", index=nodes.index)
 
-    ``outlines`` are the island polygons of the OSM area of interest. A point outside every
-    outline belongs to the nearest one; an island with one supply point is a single area.
+
+def road_areas(
+    nodes: gpd.GeoDataFrame,
+    edges: pd.DataFrame,
+    points: gpd.GeoDataFrame,
+    *,
+    max_radial_line_voltage_kv: float = DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV,
+) -> pd.DataFrame:
+    """Return the supply point of each node: the one nearest along the distribution lines.
+
+    The distribution lines are the ``edges`` at or below ``max_radial_line_voltage_kv`` (``model_v_nom_kv``),
+    measured by ``length_km``. A node that they do not join to any of the supply ``points`` takes the supply
+    point nearest in a straight line on its island. One row per node, indexed by ``bus_id``: ``area_bus_id``
+    and ``reached`` (whether the distribution lines join the node to its supply point).
     """
-    points = supply_points.to_crs(GEOGRAPHIC_CRS)
-    island_shapes = list(outlines.to_crs(GEOGRAPHIC_CRS).geometry)
-    nearest_island = shapely.STRtree(island_shapes).query_nearest(points.geometry.to_numpy(), all_matches=False)[1]
-    rows = []
-    for island_index in sorted(set(nearest_island.tolist())):
-        island = island_shapes[island_index]
-        members = points.iloc[np.flatnonzero(nearest_island == island_index)]
-        if len(members) == 1:
-            rows.append({"bus_id": str(members["bus_id"].iloc[0]), "geometry": island})
-            continue
-        cells = list(shapely.voronoi_polygons(MultiPoint(list(members.geometry)), extend_to=island).geoms)
-        cell_tree = shapely.STRtree(cells)
-        for bus_id, point in zip(members["bus_id"].astype(str), members.geometry, strict=True):
-            hits = cell_tree.query(point, predicate="within")
-            cell_index = int(hits[0]) if len(hits) else int(cell_tree.query_nearest(point)[0])
-            rows.append({"bus_id": bus_id, "geometry": cells[cell_index].intersection(island)})
-    areas = gpd.GeoDataFrame(rows, geometry="geometry", crs=GEOGRAPHIC_CRS)
+    bus_ids = nodes["bus_id"].astype(str).to_numpy()
+    position = pd.Series(np.arange(len(bus_ids)), index=bus_ids)
+    lines = edges[edges["model_v_nom_kv"].astype(float) <= max_radial_line_voltage_kv]
+    lines = lines[lines["bus0"].astype(str).isin(position.index) & lines["bus1"].astype(str).isin(position.index)]
+    end0 = position[lines["bus0"].astype(str)].to_numpy()
+    end1 = position[lines["bus1"].astype(str)].to_numpy()
+    pairs = pd.DataFrame(
+        {
+            "low": np.minimum(end0, end1),
+            "high": np.maximum(end0, end1),
+            "km": np.maximum(lines["length_km"].astype(float).to_numpy(), MIN_LENGTH_KM),
+        }
+    )
+    pairs = pairs[pairs["low"] != pairs["high"]].groupby(["low", "high"], as_index=False)["km"].min()
+    graph = coo_matrix((pairs["km"], (pairs["low"], pairs["high"])), shape=(len(bus_ids), len(bus_ids))).tocsr()
+    sources = position[points["bus_id"].astype(str)].to_numpy()
+    distance, _, source = dijkstra(graph, directed=False, indices=sources, min_only=True, return_predecessors=True)
+    reached = np.isfinite(distance)
+    areas = pd.DataFrame(
+        {"area_bus_id": np.where(reached, bus_ids[np.maximum(source, 0)], ""), "reached": reached}, index=bus_ids
+    )
+
+    if (~reached).any():
+        metric_crs = points.estimate_utm_crs()
+        island_of_node = pd.Series(_islands(nodes).to_numpy(), index=bus_ids)
+        located = nodes.assign(bus_id=bus_ids).to_crs(metric_crs).set_index("bus_id").geometry
+        supply = points.to_crs(metric_crs)
+        for island, members in supply.groupby("island"):
+            lost = areas.index[~areas["reached"] & island_of_node.eq(island).to_numpy()]
+            if len(lost):
+                tree = shapely.STRtree(members.geometry.to_numpy())
+                nearest = tree.query_nearest(located[lost].to_numpy(), all_matches=False)[1]
+                areas.loc[lost, "area_bus_id"] = members["bus_id"].to_numpy()[nearest]
+    return areas.rename_axis("bus_id")
+
+
+def service_areas(nodes: gpd.GeoDataFrame, node_areas: pd.DataFrame, outlines: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Return the service area of each supply point (EPSG:4326): the part of its island nearer to its nodes.
+
+    Each node joined to its supply point (``reached`` in ``node_areas``) owns the part of the island nearer to
+    it than to any other such node (its Voronoi cell); a service area joins the cells of its nodes. One row
+    per supply point, as ``bus_id``.
+    """
+    reached = nodes[nodes["bus_id"].astype(str).map(node_areas["reached"]).fillna(False).to_numpy(dtype=bool)]
+    metric_crs = reached.estimate_utm_crs()
+    points = reached.to_crs(metric_crs)
+    points = points.assign(area_bus_id=points["bus_id"].astype(str).map(node_areas["area_bus_id"]).to_numpy())
+    points = points[~points.geometry.duplicated()]
+    land = shapely.union_all(outlines.to_crs(metric_crs).geometry.to_numpy())
+    if len(points) == 1:
+        cells = gpd.GeoDataFrame({"area_bus_id": points["area_bus_id"].to_numpy()}, geometry=[land], crs=metric_crs)
+    else:
+        polygons = np.asarray(shapely.voronoi_polygons(MultiPoint(list(points.geometry)), extend_to=land).geoms)
+        point_index, cell_index = shapely.STRtree(polygons).query(points.geometry.to_numpy(), predicate="within")
+        cells = gpd.GeoDataFrame(
+            {"area_bus_id": points["area_bus_id"].to_numpy()[point_index]},
+            geometry=polygons[cell_index],
+            crs=metric_crs,
+        )
+    rows = [
+        {"bus_id": area_bus_id, "geometry": shapely.intersection(shapely.union_all(block.geometry.to_numpy()), land)}
+        for area_bus_id, block in cells.groupby("area_bus_id", sort=True)
+    ]
+    areas = gpd.GeoDataFrame(rows, geometry="geometry", crs=metric_crs).to_crs(GEOGRAPHIC_CRS)
     return areas[~areas.geometry.is_empty].reset_index(drop=True)
 
 
@@ -146,51 +216,33 @@ def _sum_by_nearest(cells: gpd.GeoDataFrame, targets: gpd.GeoDataFrame) -> np.nd
     return totals
 
 
-def area_scores(areas: gpd.GeoDataFrame, rasters: dict[str, Path]) -> pd.DataFrame:
-    """Sum each raster over each service area: one column per indicator, one row per bus_id."""
-    scores = pd.DataFrame(index=areas["bus_id"].astype(str))
-    for indicator, path in rasters.items():
-        cells = _raster_cells(path, areas)
-        joined = gpd.sjoin(cells, areas[["bus_id", "geometry"]], how="inner", predicate="within")
-        sums = joined.groupby(joined["bus_id"].astype(str))["value"].sum()
-        scores[indicator] = sums.reindex(scores.index).fillna(0.0)
-    return scores
-
-
-def node_scores(nodes: gpd.GeoDataFrame, areas: gpd.GeoDataFrame, rasters: dict[str, Path]) -> pd.DataFrame:
+def node_scores(
+    nodes: gpd.GeoDataFrame, node_areas: pd.DataFrame, rasters: dict[str, Path], outlines: gpd.GeoDataFrame
+) -> pd.DataFrame:
     """Return each node's raster sums from the cells nearest to it, and the service area it is in.
 
-    One row per node, indexed by ``bus_id``: one column per raster and ``area_bus_id``. A node
-    outside every area joins the nearest one.
+    One row per node, indexed by ``bus_id``: one column per raster and ``area_bus_id``. Each positive cell
+    inside ``outlines`` goes to the nearest node joined to its supply point (``reached``); the other nodes
+    score zero.
     """
     points = nodes.to_crs(GEOGRAPHIC_CRS)[["bus_id", "geometry"]].copy()
     points["bus_id"] = points["bus_id"].astype(str)
-    area_lookup = areas[["bus_id", "geometry"]].rename(columns={"bus_id": "area_bus_id"})
-    located = gpd.sjoin(points, area_lookup, how="left", predicate="within")
-    located = located[~located.index.duplicated(keep="first")]
-    outside = located["area_bus_id"].isna()
-    if outside.any():
-        metric_crs = areas.estimate_utm_crs()
-        tree = shapely.STRtree(areas.to_crs(metric_crs).geometry.to_numpy())
-        outside_points = located.loc[outside].to_crs(metric_crs).geometry.to_numpy()
-        nearest = tree.query_nearest(outside_points, all_matches=False)[1]
-        located.loc[outside, "area_bus_id"] = areas["bus_id"].astype(str).to_numpy()[nearest]
     scores = pd.DataFrame(
-        {"area_bus_id": located["area_bus_id"].astype(str).to_numpy()},
-        index=located["bus_id"].to_numpy(),
+        {"area_bus_id": points["bus_id"].map(node_areas["area_bus_id"]).to_numpy()}, index=points["bus_id"].to_numpy()
     )
-    # Each cell goes to the nearest node in its own service area, not one across the boundary.
-    area_lookup = areas[["bus_id", "geometry"]].rename(columns={"bus_id": "area_bus_id"})
+    reached = points[points["bus_id"].map(node_areas["reached"]).fillna(False).to_numpy(dtype=bool)]
     for indicator, path in rasters.items():
-        cells = gpd.sjoin(_raster_cells(path, areas), area_lookup, how="inner", predicate="within")
         totals = pd.Series(0.0, index=scores.index)
-        for area_bus_id, area_cells in cells.groupby("area_bus_id"):
-            area_nodes = located[located["area_bus_id"].astype(str).eq(str(area_bus_id))]
-            if area_nodes.empty:
-                continue
-            totals.loc[area_nodes["bus_id"].to_numpy()] += _sum_by_nearest(area_cells, area_nodes)
+        totals.loc[reached["bus_id"].to_numpy()] = _sum_by_nearest(_raster_cells(path, outlines), reached)
         scores[indicator] = totals.to_numpy()
     return scores
+
+
+def area_scores(node_score_frame: pd.DataFrame, supply_point_ids) -> pd.DataFrame:
+    """Return each service area's raster sums, the sums of its nodes: one row per supply point bus_id."""
+    indicators = [column for column in node_score_frame.columns if column != "area_bus_id"]
+    sums = node_score_frame.groupby("area_bus_id")[indicators].sum()
+    return sums.reindex(pd.Index(supply_point_ids, dtype=str)).fillna(0.0)
 
 
 def node_shares(
@@ -226,24 +278,28 @@ def _read_outlines(path: Path) -> gpd.GeoDataFrame:
 def build_demand_shares(
     *,
     nodes_path: Path,
+    edges_path: Path,
     aoi_path: Path,
     population_path: Path,
     nightlights_path: Path,
     demand_levels_path: Path,
     output_dir: Path,
     weights: dict[str, float] | None = None,
+    max_radial_line_voltage_kv: float = DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV,
 ) -> DemandOutputs:
     """Write one network's service areas, demand shares and demand levels to ``output_dir``.
 
-    ``nodes_path`` is the network's node GeoParquet layer. ``demand_levels_path`` has ``level``,
-    ``island`` and ``demand_mw`` for every island. Writes ``service_areas.geoparquet``,
-    ``service_weights_substations.csv``, ``service_weights_nodes.csv``, ``demand_levels.csv`` (a copy
-    of ``demand_levels_path``) and ``metadata.json``. Shares add to one on each island.
+    ``nodes_path`` and ``edges_path`` are the network's node and edge GeoParquet layers.
+    ``demand_levels_path`` has ``level``, ``island`` and ``demand_mw`` for every island. Writes
+    ``service_areas.geoparquet``, ``service_weights_substations.csv``, ``service_weights_nodes.csv``,
+    ``demand_levels.csv`` (a copy of ``demand_levels_path``) and ``metadata.json``. Shares add to one on
+    each island.
     """
     weights = dict(DEFAULT_WEIGHTS if weights is None else weights)
     nodes = gpd.read_parquet(nodes_path)
     if "bus_id" not in nodes or "kind" not in nodes:
         raise ValueError("nodes layer must contain bus_id and kind")
+    edges = pd.read_parquet(edges_path, columns=["bus0", "bus1", "model_v_nom_kv", "length_km"])
     rasters = {"population": Path(population_path), "nightlights": Path(nightlights_path)}
     levels = pd.read_csv(demand_levels_path, comment="#")
     missing_columns = {"level", "island", "demand_mw"} - set(levels.columns)
@@ -251,19 +307,23 @@ def build_demand_shares(
         raise ValueError(f"{demand_levels_path}: missing columns {sorted(missing_columns)}")
 
     points = supply_points(nodes)
-    areas = service_areas(points, _read_outlines(aoi_path))
-    area_islands = points.assign(bus_id=points["bus_id"].astype(str)).set_index("bus_id")["island"]
-    areas["island"] = areas["bus_id"].map(area_islands)
-    missing_islands = set(areas["island"]) - set(levels["island"].astype(str))
+    area_islands = points.set_index("bus_id")["island"]
+    missing_islands = set(area_islands) - set(levels["island"].astype(str))
     if missing_islands:
         raise ValueError(f"{demand_levels_path}: no demand levels for {sorted(missing_islands)}")
-    score_frame = area_scores(areas, rasters)
+    outlines = _read_outlines(aoi_path)
+    node_areas = road_areas(nodes, edges, points, max_radial_line_voltage_kv=max_radial_line_voltage_kv)
+    areas = service_areas(nodes, node_areas, outlines)
+    areas["island"] = areas["bus_id"].map(area_islands)
+    scores = node_scores(nodes, node_areas, rasters, outlines)
+    score_frame = area_scores(scores, points["bus_id"])
     area_key = pd.concat(
         distribution_key(block, weights=weights)
         for _, block in score_frame.groupby(score_frame.index.map(area_islands).to_numpy())
     ).reindex(score_frame.index)
-    scores = node_scores(nodes[["bus_id", "geometry"]], areas, rasters)
-    shares = node_shares(scores, area_key, weights=weights, area_islands=area_islands)
+    reached = node_areas["reached"].reindex(scores.index).to_numpy(dtype=bool)
+    shares = node_shares(scores[reached], area_key, weights=weights, area_islands=area_islands)
+    shares = shares.reindex(scores.index).fillna(0.0)
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -290,15 +350,19 @@ def build_demand_shares(
     node_table.to_csv(outputs.node_weights, index=False)
     levels.to_csv(outputs.demand_levels, index=False)
     metadata = {
-        "method": "voronoi_service_areas_with_population_and_nightlight_key",
+        "method": "road_distance_service_areas_with_population_and_nightlight_key",
         "method_note": METHOD_NOTE,
         "weights": weights,
+        "max_radial_line_voltage_kv": max_radial_line_voltage_kv,
         "nodes": str(nodes_path),
+        "edges": str(edges_path),
         "aoi": str(aoi_path),
         "population_raster": str(population_path),
         "nightlights_raster": str(nightlights_path),
         "demand_levels": levels.to_dict("records"),
         "service_areas": len(areas),
+        "nodes_joined_to_a_supply_point": int(node_areas["reached"].sum()),
+        "nodes_not_joined": int((~node_areas["reached"]).sum()),
         "nodes_with_share": int((shares > 0).sum()),
     }
     outputs.metadata.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")

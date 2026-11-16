@@ -40,8 +40,8 @@ import numpy as np
 import pandas as pd
 import pypsa
 
-# IEC 60038 lists three-phase systems up to 35 kV apart from those above it; see config/energy/energy.yaml.
-DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV = 35.0
+from energy.demand import DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV
+
 DEFAULT_LINE_TYPES = {66: "149-AL1/24-ST1A 110.0", 132: "243-AL1/39-ST1A 110.0"}
 DEFAULT_ISLAND_CARRIERS = ("thermal", "hydro")
 SHED_COST = 10_000.0  # per MWh; plants cost nothing, so demand is shed only when it cannot be supplied

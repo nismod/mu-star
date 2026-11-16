@@ -56,16 +56,20 @@ its own folder in `data/processed/energy/<model_data>/`:
      distribution network added.
 
    The same file sets the placeholder voltages and capacities of the networks.
-4. **Demand shares** (`demand/`). Each substation supplies its service area,
-   the part of the island closer to it than to any other substation; on
-   Rodrigues, which has no substations, the power stations take their place.
-   An area's share of its island's demand is 0.6 times its share of the
-   island's night-light radiance plus 0.4 times its share of the population.
-   This is PyPSA-Earth's method, with night lights in place of GDP, whose grids
-   are too coarse for these islands. The same weights split each area's demand
-   between the nodes of its distribution network. Each island's demand comes
-   from the annual report: 525.7 MW at peak and 346.8 MW on average on
-   Mauritius, and 8.52 MW and 5.75 MW on Rodrigues.
+4. **Demand shares** (`demand/`). Each substation supplies its service area:
+   the nodes of the distribution network nearer to it along the distribution
+   lines than to any other substation, and the land nearer to those nodes than
+   to any other node. On Rodrigues, which has no substations, the power
+   stations take their place. Nodes that no distribution line joins to a
+   substation, such as the bends of 66 kV lines, get no demand. An area's
+   share of its island's demand is 0.6 times its share of the island's
+   night-light radiance plus 0.4 times its share of the population, each grid
+   cell counting towards the nearest node. This is PyPSA-Earth's method, with
+   night lights in place of GDP, whose grids are too coarse for these islands.
+   The same weights split each area's demand between the nodes of its
+   distribution network. Each island's demand comes from the annual report:
+   525.7 MW at peak and 346.8 MW on average on Mauritius, and 8.52 MW and
+   5.75 MW on Rodrigues.
 
 ### Criticality
 
@@ -241,6 +245,11 @@ criticality results.
 - The voltages and capacities in the networks are placeholders. The
   criticality analysis, the only part that runs a power flow, rates lines by
   standard line types, which are placeholders too until CEB provides ratings.
+- The service areas and the radial routes follow the roads: each node is
+  supplied from the substation nearest along them. Where roads are sparse, in
+  less populated places, that substation is less likely to be the one that
+  supplies the node; the rule is the same everywhere, so the error is of the
+  same kind across the islands.
 - The criticality analysis fails one component at a time. The unmet demand
   when a hazard damages several components at once is not the sum of the
   single-failure values: a substation fed by two lines keeps its supply when
