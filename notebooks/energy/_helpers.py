@@ -33,6 +33,7 @@ Built networks (``01_networks.ipynb``):
 Criticality (``02_criticality.ipynb``):
 
 - ``CRITICALITY_DIR``: <data>/results/energy/<date>-results/criticality/inferred-provided-<region>.
+- ``MAX_RADIAL_LINE_VOLTAGE_KV``: lines above it are transmission lines, the rest distribution lines.
 - ``load_criticality()``: ``(summary, by_area)``, the two tables of ``build_energy_criticality``.
 - ``demand_levels()``: each island's peak and average demand, with its source.
 - ``area_demand(summary)``: each substation area's share of its island's demand, and its demand in MW.
@@ -560,6 +561,7 @@ def explore_network(name, *, roads=True, clip=None, map_style="open-street-map")
 
 CRITICALITY_NETWORK = f"inferred-provided-{REGION_SLUG}"
 CRITICALITY_DIR = energy_paths.results_energy_dir(DATA_ROOT) / "criticality" / CRITICALITY_NETWORK
+MAX_RADIAL_LINE_VOLTAGE_KV = float(_setting("criticality", "max_radial_line_voltage_kv", default=35))
 RUN_CRITICALITY = build_command(CRITICALITY_DIR / "criticality.csv")
 DEMAND_DIR = energy_paths.processed_energy_dir(DATA_ROOT) / "demand" / CRITICALITY_NETWORK
 
@@ -617,7 +619,8 @@ def _island_bounds(islands, margin: float = 0.01) -> tuple[float, float, float, 
 
 
 def _transmission(edges: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    return edges[edges["source"].eq("provided_transmission")]
+    """Return the edges above ``MAX_RADIAL_LINE_VOLTAGE_KV``, the lines of the power flow."""
+    return edges[edges["model_v_nom_kv"].astype(float) > MAX_RADIAL_LINE_VOLTAGE_KV]
 
 
 def _dot(colour: str, label: str, size: float = 8, marker: str = "o") -> Line2D:
@@ -877,7 +880,7 @@ def plot_failure(
     share = (hit["unmet_peak_mw"] / hit["area_bus_id"].map(_area_demand_mw()["peak_mw"])).clip(upper=1.0)
     share.index = hit["area_bus_id"]
     areas = _node_areas()
-    lines = edges[~edges["source"].eq("provided_transmission")].copy()
+    lines = edges.drop(index=_transmission(edges).index)
     ends = [lines[end].map(areas).map(share).fillna(0.0) for end in ("bus0", "bus1")]
     lines["share"] = np.minimum(*ends)
     clip = clip or _island_bounds([asset["island"]])

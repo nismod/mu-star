@@ -71,27 +71,37 @@ its own folder in `data/processed/energy/<model_data>/`:
 
 The criticality analysis measures how much each component of
 `inferred-provided-<region>` matters for supply: the unmet demand when that
-substation, CEB line or power plant fails on its own (an N-1 analysis). It
+substation, transmission line or power plant fails on its own (an N-1
+analysis). It
 involves no hazard and runs once. Whether a hazard event damages a component
 depends on the hazard intensity at the component and on the component's
 vulnerability curve; this analysis gives the consequence for supply if it
 does.
 
-For each failure, a linear optimal power flow (PyPSA) on the CEB 66 kV network
-supplies as much demand as the remaining network allows. The power flow does
-not include the distribution network: the demand of each substation's service
-area, from the demand shares above, sits on the substation's 66 kV bus, as do
-the plants assigned to the substation. Rodrigues, which has no CEB lines, is a
-single bus with all its plants and demand. The demand the power flow cannot
-supply is the unmet demand: demand minus supply, at each substation. On
-Rodrigues, the unmet demand of the single bus is split between the power
-stations' areas in proportion to their demand.
+For each failure, a linear optimal power flow (PyPSA) supplies as much demand
+as the remaining network allows. The power flow includes the lines above
+`max_radial_line_voltage_kv` in `config/energy/energy.yaml`, which are run
+meshed: in `inferred-provided`, the CEB 66 kV network. The lines at or below
+it are distribution lines, each fed from one substation, and are left out:
+the demand of each substation's service area, from the demand shares above,
+sits on the substation's 66 kV bus, as do the plants assigned to the
+substation. Rodrigues, which has no CEB lines, is a single bus with all its
+plants and demand. The demand the power flow cannot supply is the unmet
+demand: demand minus supply, at each substation. On Rodrigues, the unmet
+demand of the single bus is split between the power stations' areas in
+proportion to their demand.
+
+No single voltage separates transmission from distribution: 132 kV lines are
+transmission in Scotland but distribution in England and Wales. The default of
+35 kV follows IEC 60038, the international standard of system voltages, which
+lists the systems up to 35 kV (such as 11, 22 and 33 kV) apart from those above
+it. CEB runs its transmission at 66 kV and its distribution at 22 and 6.6 kV.
 
 A failed substation takes its bus out of the network, with the lines and
 plants connected to it, so the demand of its whole area is unmet. Lines and
 plants carry no demand, so the unmet demand when one of them fails lies in the
-areas of the substations that the remaining network cannot fully supply. A CEB
-line made of several segments fails as a whole. A part of the network cut off
+areas of the substations that the remaining network cannot fully supply. A
+transmission line made of several segments fails as a whole. A part of the network cut off
 from the rest keeps supply only if it has a thermal or hydro plant, because
 solar and wind farms disconnect when they lose the grid.
 

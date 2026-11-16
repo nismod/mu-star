@@ -70,8 +70,18 @@ energy:
     weight_population: 0.4
 
   criticality:
-    # Unmet demand when each substation, provided line or plant of
+    # Unmet demand when each substation, transmission line or plant of
     # inferred-provided fails (workflow/2-losses/energy.smk).
+    # Lines above this voltage are run meshed and make up the network of the
+    # power flow; lines at or below it are distribution lines, run radially
+    # (each fed from one substation), and are left out of the power flow.
+    # IEC 60038:2009+AMD1:2021 (IEC standard voltages) lists three-phase
+    # systems above 1 kV and up to 35 kV, such as 11, 22 and 33 kV, in
+    # Table 3, apart from those above 35 kV (Table 4). PyPSA-Earth builds its
+    # transmission network from OpenStreetMap lines of 51 kV and above
+    # (threshold_voltage in its config.default.yaml). CEB runs transmission at
+    # 66 kV and distribution at 22 and 6.6 kV (annual report 2023-24, p. 60).
+    max_radial_line_voltage_kv: 35
     # Two optional tables in the incoming folder, here read from CEB's network
     # map. line_circuits gives each line's route, the voltage it was built for
     # and its circuits; without it, the segments between two substations or
