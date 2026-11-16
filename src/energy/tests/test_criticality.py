@@ -79,7 +79,7 @@ def _demand(c=30.0):
 def test_model_rates_lines_by_circuits_and_puts_demand_on_the_transmission_buses():
     model = transmission_model(_network(), ISLANDS, line_circuits=_circuits())
 
-    assert list(model.lines.index) == ["ceb_ab", "ceb_bc"]  # the road line is not part of the model
+    assert list(model.lines.index) == ["ceb_ab", "ceb_bc"]  # the 11 kV road line is a distribution line
     assert model.lines.at["ceb_ab", "s_nom"] == pytest.approx(math.sqrt(3) * 66 * 0.47)  # 149-AL1/24-ST1A
     assert model.lines.at["ceb_ab", "x"] == pytest.approx(0.41 * 10)
     assert model.supply_points["bus"].to_dict() == {
@@ -101,16 +101,29 @@ def test_model_rates_lines_by_circuits_and_puts_demand_on_the_transmission_buses
     assert doubled.lines.at["ceb_ab", "x"] == pytest.approx(model.lines.at["ceb_ab", "x"] / 2)
 
 
-def test_model_needs_every_provided_line_in_the_circuits_table():
+def test_model_needs_every_transmission_line_in_the_circuits_table():
     with pytest.raises(ValueError, match="missing \\['ceb_bc'\\]"):
         transmission_model(_network(), ISLANDS, line_circuits=_circuits().loc[["ceb_ab"]])
 
 
-def test_model_without_a_circuits_table_joins_segments_between_substations_at_the_network_voltage():
+def test_model_takes_only_the_lines_above_the_radial_voltage():
     network = _network()
     network.buses.loc[["hv::A", "hv::B", "hv::C"], "v_nom"] = 33.0
+    line_types = {33: "149-AL1/24-ST1A 110.0"}
+
+    # At the default of 35 kV, 33 kV lines are distribution lines, so Mauritius is one bus.
+    radial = transmission_model(network, ISLANDS, line_types=line_types)
+    assert radial.lines.empty
+    assert set(radial.supply_points["bus"]) == {"island::mauritius", "island::rodrigues"}
+    meshed = transmission_model(network, ISLANDS, line_types=line_types, max_radial_line_voltage_kv=22.0)
+    assert list(meshed.lines.index) == ["ceb_ab", "ceb_bc"]
+
+
+def test_model_without_a_circuits_table_joins_segments_between_substations_at_the_network_voltage():
+    network = _network()
+    network.buses.loc[["hv::A", "hv::B", "hv::C"], "v_nom"] = 45.0
     # B - C in two segments, joined at a bend where nothing else meets.
-    bend = pd.DataFrame({"x": [57.15], "y": [-20.0], "v_nom": [33.0], "region": ["mauritius"]}, index=["hv::bend"])
+    bend = pd.DataFrame({"x": [57.15], "y": [-20.0], "v_nom": [45.0], "region": ["mauritius"]}, index=["hv::bend"])
     network.import_components_from_dataframe(bend, "Bus")
     network.lines.loc["ceb_bc", "bus1"] = "hv::bend"
     second = pd.DataFrame(
@@ -119,16 +132,16 @@ def test_model_without_a_circuits_table_joins_segments_between_substations_at_th
     )
     network.import_components_from_dataframe(second, "Line")
 
-    model = transmission_model(network, ISLANDS, line_types={33: "149-AL1/24-ST1A 110.0"})
+    model = transmission_model(network, ISLANDS, line_types={45: "149-AL1/24-ST1A 110.0"})
 
     assert model.lines["route"].to_dict() == {"ceb_ab": "ceb_ab", "ceb_bc": "ceb_bc", "ceb_bc_2": "ceb_bc"}
     assert model.lines["circuits"].tolist() == [1, 1, 1]
-    assert model.lines.at["ceb_ab", "s_nom"] == pytest.approx(math.sqrt(3) * 33 * 0.47)
+    assert model.lines.at["ceb_ab", "s_nom"] == pytest.approx(math.sqrt(3) * 45 * 0.47)
     assets = failure_assets(model, network).set_index("asset_id")
     assert assets.at["ceb_bc", "lines"] == ("ceb_bc", "ceb_bc_2")
     assert assets.at["SUB_B", "name"] == "SUB_B"
     assert unmet_demand(model, _demand(), lines=assets.at["ceb_bc", "lines"])["bus::SUB_C"] == pytest.approx(30.0)
-    with pytest.raises(ValueError, match="no line type for lines built for \\[33\\] kV"):
+    with pytest.raises(ValueError, match="no line type for lines built for \\[45\\] kV"):
         transmission_model(network, ISLANDS)
 
 
@@ -214,10 +227,9 @@ def test_build_criticality_writes_the_tables(tmp_path):
     assert summary.at["R2", "unmet_mwh_per_day"] == pytest.approx(24 * 20.0)
     by_area = pd.read_csv(outputs.by_area)
     assert list(by_area.columns) == ["asset_id", "area_bus_id", "unmet_mwh_per_day", "unmet_peak_mw"]
-    assert json.loads(outputs.metadata.read_text())["unmet_with_nothing_failed"] == {
-        "unmet_mwh_per_day": 0.0,
-        "unmet_peak_mw": 0.0,
-    }
+    metadata = json.loads(outputs.metadata.read_text())
+    assert metadata["unmet_with_nothing_failed"] == {"unmet_mwh_per_day": 0.0, "unmet_peak_mw": 0.0}
+    assert metadata["max_radial_line_voltage_kv"] == 35.0
     assert len(read_line_circuits(tmp_path / "circuits.csv")) == 2
     ratings = pd.read_csv(outputs.line_ratings)
     assert list(ratings.columns) == ["line_id", "asset_id", "built_for_kv", "circuits", "voltage_kv", "rating_mva"]

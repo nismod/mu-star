@@ -1,11 +1,11 @@
-"""Write the N-1 criticality tables of inferred-provided (see energy.criticality)."""
+"""Write the N-1 criticality tables of inferred-provided by power flow (see energy.criticality)."""
 
 import logging
 from pathlib import Path
 
 import click
 
-from energy.criticality import DEFAULT_ISLAND_CARRIERS, build_criticality
+from energy.criticality import DEFAULT_ISLAND_CARRIERS, DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV, build_criticality
 
 
 @click.command()
@@ -22,6 +22,14 @@ from energy.criticality import DEFAULT_ISLAND_CARRIERS, build_criticality
     multiple=True,
     help="A design voltage (kV) and the PyPSA line type of one circuit; repeat for each design voltage.",
 )
+@click.option(
+    "--max-radial-line-voltage-kv",
+    "max_radial_line_voltage_kv",
+    type=float,
+    default=DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV,
+    show_default=True,
+    help="Lines above this voltage enter the power flow; lines at or below it are distribution lines.",
+)
 @click.option("--s-max-pu", "s_max_pu", type=float, default=1.0, show_default=True)
 @click.option("--island-carrier", "island_carriers", multiple=True, default=DEFAULT_ISLAND_CARRIERS, show_default=True)
 def main(
@@ -32,6 +40,7 @@ def main(
     line_circuits,
     substation_names,
     line_types,
+    max_radial_line_voltage_kv,
     s_max_pu,
     island_carriers,
 ):
@@ -45,6 +54,7 @@ def main(
         line_circuits_path=line_circuits,
         substation_names_path=substation_names,
         line_types=dict(line_types) or None,
+        max_radial_line_voltage_kv=max_radial_line_voltage_kv,
         s_max_pu=s_max_pu,
         island_carriers=tuple(island_carriers),
     )

@@ -1,11 +1,12 @@
-"""Unmet demand when one substation, provided transmission line or power plant fails (N-1 criticality).
+"""Unmet demand when one substation, transmission line or power plant fails (N-1 criticality), by power flow.
 
-The provided transmission network of inferred-provided is solved as a linear power flow (PyPSA, HiGHS)
-at peak and at average demand, first with nothing failed, then with each asset failed in turn:
+The lines above ``max_radial_line_voltage_kv`` (35 kV by default), which are run meshed, are solved as a
+linear power flow (PyPSA, HiGHS) at peak and at average demand, first with nothing failed, then with each
+asset failed in turn. The lines at or below it are distribution lines, run radially, and are left out:
 
-- Buses are the points where provided lines meet, at the voltage the network gives them. A substation's
-  demand and plants sit on the transmission bus at the substation. An island without provided lines
-  (Rodrigues) is one bus with all its plants and demand.
+- Buses are the points where the lines above that voltage meet, at the voltage the network gives them. A
+  substation's demand and plants sit on the transmission bus at the substation. An island without such
+  lines (Rodrigues) is one bus with all its plants and demand.
 - A line's rating is its number of circuits times the rating of one circuit of its PyPSA line type at
   the line's voltage; its reactance is the type's reactance per km times its length, divided by its
   circuits. The type is chosen by the voltage the line was built for. A line circuits table (on
@@ -37,7 +38,8 @@ import numpy as np
 import pandas as pd
 import pypsa
 
-PROVIDED_LINE_SOURCE = "provided_transmission"
+# IEC 60038 lists three-phase systems up to 35 kV apart from those above it; see config/energy/energy.yaml.
+DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV = 35.0
 DEFAULT_LINE_TYPES = {66: "149-AL1/24-ST1A 110.0", 132: "243-AL1/39-ST1A 110.0"}
 DEFAULT_ISLAND_CARRIERS = ("thermal", "hydro")
 SHED_COST = 10_000.0  # per MWh; plants cost nothing, so demand is shed only when it cannot be supplied
@@ -134,8 +136,9 @@ def transmission_model(
     *,
     line_circuits: pd.DataFrame | None = None,
     line_types: dict[int, str] | None = None,
+    max_radial_line_voltage_kv: float = DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV,
 ) -> TransmissionModel:
-    """Build the transmission model from a network with provided lines (inferred-provided).
+    """Build the transmission model from the lines of ``network`` above ``max_radial_line_voltage_kv``.
 
     ``supply_point_islands`` maps each supply point (a substation, or a power station on an island
     with no substation) to its island, as in ``service_weights_substations.csv``. ``line_circuits``
@@ -146,11 +149,14 @@ def transmission_model(
     """
     line_types = {int(kv): name for kv, name in (line_types or DEFAULT_LINE_TYPES).items()}
     buses = network.buses
-    provided = network.lines[network.lines["source"].eq(PROVIDED_LINE_SOURCE)]
-    voltage = buses.loc[provided["bus0"], "v_nom"].astype(float).to_numpy()
-    if not np.allclose(voltage, buses.loc[provided["bus1"], "v_nom"].astype(float).to_numpy()):
-        raise ValueError("a provided line joins buses of different voltages")
-    line_buses = sorted(set(provided["bus0"]) | set(provided["bus1"]))
+    voltage0 = buses.loc[network.lines["bus0"], "v_nom"].astype(float).to_numpy()
+    voltage1 = buses.loc[network.lines["bus1"], "v_nom"].astype(float).to_numpy()
+    above = (voltage0 > max_radial_line_voltage_kv) | (voltage1 > max_radial_line_voltage_kv)
+    meshed = network.lines[above]
+    voltage = voltage0[above]
+    if not np.allclose(voltage, voltage1[above]):
+        raise ValueError(f"a line above {max_radial_line_voltage_kv:g} kV joins buses of different voltages")
+    line_buses = sorted(set(meshed["bus0"]) | set(meshed["bus1"]))
     model_buses = buses.loc[line_buses, ["region", "v_nom"]].rename(columns={"region": "island"})
     model_buses = model_buses.astype({"island": str, "v_nom": float})
     networked = set(model_buses["island"])
@@ -183,32 +189,32 @@ def transmission_model(
     if line_circuits is None:
         circuits = pd.DataFrame(
             {
-                "route": _routes(provided, set(supply_bus.values()) | set(plant_bus.values())),
+                "route": _routes(meshed, set(supply_bus.values()) | set(plant_bus.values())),
                 "built_for_kv": voltage.round().astype(int),
                 "circuits": 1,
             },
-            index=provided.index,
+            index=meshed.index,
         )
     else:
-        unlisted = sorted(set(provided.index) - set(line_circuits.index))
-        unknown = sorted(set(line_circuits.index) - set(provided.index))
+        unlisted = sorted(set(meshed.index) - set(line_circuits.index))
+        unknown = sorted(set(line_circuits.index) - set(meshed.index))
         if unlisted or unknown:
             raise ValueError(
                 f"line circuits do not match the network: missing {unlisted[:5]}, not in network {unknown[:5]}"
             )
-        circuits = line_circuits.reindex(provided.index)
+        circuits = line_circuits.reindex(meshed.index)
     no_type = sorted(set(circuits["built_for_kv"].astype(int)) - set(line_types))
     if no_type:
         raise ValueError(f"no line type for lines built for {no_type} kV")
     types = network.line_types.loc[circuits["built_for_kv"].astype(int).map(line_types)]
     count = circuits["circuits"].astype(float).to_numpy()
     if (count < 1).any():
-        raise ValueError("every provided line needs at least one circuit")
-    length = provided["length"].astype(float).to_numpy()
+        raise ValueError("every transmission line needs at least one circuit")
+    length = meshed["length"].astype(float).to_numpy()
     lines = pd.DataFrame(
         {
-            "bus0": provided["bus0"],
-            "bus1": provided["bus1"],
+            "bus0": meshed["bus0"],
+            "bus1": meshed["bus1"],
             "route": circuits["route"].astype(str),
             "v_nom": voltage,
             "built_for_kv": circuits["built_for_kv"].astype(int),
@@ -217,7 +223,7 @@ def transmission_model(
             "x": np.maximum(types["x_per_length"].to_numpy() * length / count, MIN_REACTANCE_OHM),
             "r": types["r_per_length"].to_numpy() * length / count,
         },
-        index=provided.index,
+        index=meshed.index,
     )
     supply_points = pd.DataFrame(
         {"bus": pd.Series(supply_bus), "island": supply_point_islands.astype(str)}
@@ -451,6 +457,7 @@ def build_criticality(
     line_circuits_path: Path | None = None,
     substation_names_path: Path | None = None,
     line_types: dict[int, str] | None = None,
+    max_radial_line_voltage_kv: float = DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV,
     s_max_pu: float = 1.0,
     island_carriers: tuple[str, ...] = DEFAULT_ISLAND_CARRIERS,
 ) -> CriticalityOutputs:
@@ -469,7 +476,11 @@ def build_criticality(
     weights = pd.read_csv(substation_weights_path)
     levels = pd.read_csv(demand_levels_path, comment="#")
     model = transmission_model(
-        network, weights.set_index("bus_id")["island"], line_circuits=line_circuits, line_types=line_types
+        network,
+        weights.set_index("bus_id")["island"],
+        line_circuits=line_circuits,
+        line_types=line_types,
+        max_radial_line_voltage_kv=max_radial_line_voltage_kv,
     )
     assets = failure_assets(model, network, line_circuits, names)
     demands = {level: demand_by_supply_point(weights, levels, level) for level in ("peak", "average")}
@@ -498,6 +509,7 @@ def build_criticality(
         "substation_weights": str(substation_weights_path),
         "demand_levels": str(demand_levels_path),
         "line_types": {str(kv): name for kv, name in (line_types or DEFAULT_LINE_TYPES).items()},
+        "max_radial_line_voltage_kv": max_radial_line_voltage_kv,
         "s_max_pu": s_max_pu,
         "island_carriers": list(island_carriers),
         "demand_mw": {level: round(float(demand.sum()), 3) for level, demand in demands.items()},
