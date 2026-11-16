@@ -3,10 +3,11 @@
 For each failure (scenario):
 
 1. transport_flow_model.disrupt reroutes the baseline paths that use a
-   removed link (capacity constrained, on top of the unaffected flows).
-2. Bus links on a detour (failure unit link_changes) stay in use with new
-   times and lengths: passengers on them keep their path, at the new
-   time / distance / cost.
+   removed link (capacity constrained, on top of the unaffected flows). Bus
+   links on a detour (failure unit link_changes) are passed to it as link cost
+   changes, so rerouted trips see the detoured bus costs.
+2. Passengers whose path only uses detoured bus links keep their path, at
+   the new time / distance / cost.
 3. Trips left with no path on their own mode try the fallback modes in
    criticality.fallback (e.g. metro -> bus -> car), assigned on the disrupted
    network on top of the existing flows. Bus trips do not fall back: buses
@@ -111,10 +112,25 @@ def main(
 
     sets = pd.read_parquet(failure_sets)
     sets = sets[sets.batch == batch]
-    scenarios = [
-        Scenario.remove_links(row.scenario_id, list(row.link_ids), asset_type=row.asset_type, asset_id=row.asset_id)
-        for row in sets.itertuples()
-    ]
+    # Each failure removes links and, for bus detours, changes the cost of the
+    # bus links that stay. Rerouted trips are routed with the changed costs.
+    cost_of = links.set_index("edge_id")["cost"]
+    scenario_links_of, scenarios = {}, []
+    for row in sets.itertuples():
+        changes = list(row.link_changes) if row.link_changes is not None else []
+        changed_links = apply_link_changes(links, changes, cfg["cost"])
+        scenario_links_of[row.scenario_id] = changed_links
+        new_cost = changed_links.set_index("edge_id")["cost"]
+        ids = [c["edge_id"] for c in changes if c["edge_id"] in cost_of.index]
+        scenarios.append(
+            Scenario.from_changes(
+                row.scenario_id,
+                remove=list(row.link_ids),
+                cost={edge: float(new_cost[edge]) for edge in ids},
+                asset_type=row.asset_type,
+                asset_id=row.asset_id,
+            )
+        )
     results = disrupt(network, scenarios, base=base, capacity_constrained=True, directed=True, skip_unaffected=True)
     by_id = {r.scenario.id: r for r in results}
 
@@ -128,7 +144,7 @@ def main(
         if result is None and not changed:
             continue  # no baseline flow on anything this failure touches
         evaluated.append(row.scenario_id)
-        scenario_links = apply_link_changes(links, changes, cfg["cost"])
+        scenario_links = scenario_links_of[row.scenario_id]
 
         uses_removed = path_links.loc[path_links.edge_path.isin(removed), "index"].unique()
         uses_changed = path_links.loc[path_links.edge_path.isin(changed), "index"].unique()

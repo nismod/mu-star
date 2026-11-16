@@ -12,7 +12,7 @@ dependencies:
       # transport_flow_model, pinned to a git commit until a working release is
       # published (radiation model changes, branch claude/land-transport-workflow-draft-j0njkf).
       # Builds a Rust extension with maturin, hence rust below.
-      - nismod-tfm @ git+https://github.com/nismod/transport_flow_model@5cf046610bf5131b80b3da1cd51590b02e9bfd36
+      - nismod-tfm @ git+https://github.com/nismod/transport_flow_model@d08031a9333d6c5e1262f1fbac9424efd795132e
       - h3>=4
       - osmium
   - geopandas

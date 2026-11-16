@@ -530,13 +530,18 @@ which mu-star pins in `environment.yaml`.
   - `aggregate_od`, `scale_to_aggregate`, `common_part_of_commuters` and
     `od_fit` (OD constraints and validation);
   - `calibrate_radiation`.
+- *Disruption*: a scenario can change link costs as well as remove links
+  (`Scenario.from_changes`). Rerouted flows use the changed costs, and flows
+  that stay on a repriced link are reported with their new cost. mu-star
+  passes bus detours this way.
+- *Release*: proposed per-platform wheel workflows are in
+  `ci/proposed-workflows/` in tfm, to be applied by a maintainer.
 
 Possible further tfm work:
 
 - *Release*: per-platform wheels, for example via maturin-action.
-- *Disruption*: `disrupt` could support link cost changes, not only removals,
-  for the bus detours that mu-star now applies itself. It could also report
-  several path attributes, not only cost.
+- *Disruption*: `disrupt` could report several path attributes, not only
+  cost.
 - *Congestion*: the `congestion` method is GB-specific and only in `assign`.
 - *Capacity*: capacity has to be finite; we use 1e15 for unconstrained
   links.
