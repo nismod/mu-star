@@ -411,6 +411,14 @@ def test_build_inferred_provided_uses_only_provided_power_assets(tmp_path):
     bus_voltages = set(network.buses["v_nom"].round().astype(int))
     assert 66 in bus_voltages
     assert 11 in bus_voltages
+    # Substation A is at the end of the CEB line, so the line ends at A's own transformer, rated as the
+    # connections to substations, with no connection of zero length to a separate point on the line.
+    transformer = network.transformers.loc["transformer::bus::A::11-66kv"]
+    assert (transformer["bus0"], transformer["bus1"]) == ("bus::A::66kv", "bus::A")
+    assert transformer["s_nom"] == metadata["inferred_anchor_capacity_mva"]
+    assert network.buses.loc["bus::A::66kv", "kind"] == "transformer"
+    assert not network.buses.loc["bus::A::66kv", "is_root"]
+    assert not network.lines.index.str.startswith("anchor::A::").any()
 
 
 def test_build_inferred_provided_connects_an_island_plant_at_its_own_node(tmp_path):

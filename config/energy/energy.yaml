@@ -46,7 +46,8 @@ energy:
     # rates each line by its circuits instead (criticality below).
     transmission_voltage_kv: 66
     transmission_capacity_mva: 50
-    # Line from each substation or plant to the road: 137 MVA, the average of
+    # Line from each substation or plant to the road, and transformer between
+    # the CEB lines and the roads at each substation: 137 MVA, the average of
     # 2,595 MVA of transformers over 19 major substations (annual report
     # 2023-24, p. 60).
     anchor_capacity_mva: 137
