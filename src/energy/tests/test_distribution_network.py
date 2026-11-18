@@ -68,14 +68,42 @@ def _node_position(graph, node):
 
 def test_asset_at_the_start_of_a_reversed_road_joins_that_end():
     _p, _q, r, roads = _reversed_road_pair()
+    # 5 m west of R, beyond the end of the R -> P road.
+    substation = _substation(x=r[0] - 0.000048, y=r[1])
 
-    graph = build_inferred_distribution_graph(_substation(*r), osm_distribution_lines=roads, max_anchor_distance_m=1000)
+    graph = build_inferred_distribution_graph(substation, osm_distribution_lines=roads, max_anchor_distance_m=1000)
 
     (anchor,) = [(u, v, a) for u, v, a in graph.edges(data=True) if a["source"] == "substation_anchor"]
     junction = anchor[1] if anchor[0] == "bus::SUB_001" else anchor[0]
     assert _node_position(graph, junction) == pytest.approx(r, abs=1e-9), "joined to the far end of the road"
-    assert geodesic_length_km(anchor[2]["geometry"]) < 0.001
+    assert geodesic_length_km(anchor[2]["geometry"]) < 0.01
+    assert graph.nodes["bus::SUB_001"]["anchor_distance_m"] < 10
+
+
+def test_road_ending_at_an_asset_joins_the_asset_with_no_connection():
+    p, _q, r, roads = _reversed_road_pair()
+
+    graph = build_inferred_distribution_graph(_substation(*r), osm_distribution_lines=roads, max_anchor_distance_m=1000)
+
+    assert not [a for *_, a in graph.edges(data=True) if a["source"] == "substation_anchor"]
+    neighbours = [_node_position(graph, node) for node in graph.neighbors("bus::SUB_001")]
+    assert neighbours == [pytest.approx(p, abs=1e-9)], "the substation takes the place of R, the end it is at"
+    assert graph.nodes["bus::SUB_001"]["anchor_status"] == "anchored"
     assert graph.nodes["bus::SUB_001"]["anchor_distance_m"] < 1
+    assert graph.number_of_nodes() == 3
+
+
+def test_road_through_an_asset_is_split_at_the_asset():
+    road = _lines([(57.5, -20.2), (57.5096, -20.2)], region=["mauritius"])
+
+    graph = build_inferred_distribution_graph(
+        _substation(x=57.5048, y=-20.2), osm_distribution_lines=road, max_anchor_distance_m=100
+    )
+
+    pieces = {a["edge_id"] for _, _, a in graph.edges("bus::SUB_001", data=True)}
+    assert pieces == {"osm_000001::1", "osm_000001::2"}
+    assert graph.number_of_edges() == 2
+    assert nx.is_connected(graph)
 
 
 def test_pieces_of_a_cut_reversed_road_keep_their_own_geometry():
@@ -179,6 +207,50 @@ def test_power_asset_can_join_supported_roads_to_provided_backbone():
         anchor_to_each_line_source=True,
     )
 
+    # The substation is at the end of the backbone line, so the line ends at it; the road is 10 m away.
+    sources = sorted(a["source"] for _, _, a in graph.edges("bus::SUB", data=True))
+    assert sources == ["provided_transmission", "substation_anchor"]
+    anchor_ids = [a["edge_id"] for _, _, a in graph.edges(data=True) if a["source"] == "substation_anchor"]
+    assert anchor_ids == ["anchor::SUB::osm"]
+
+
+def test_power_asset_off_the_backbone_gets_a_connection_to_each_line_source():
+    assets = gpd.GeoDataFrame(
+        {"asset_id": ["SUB"], "asset_kind": ["substation"], "geometry": [Point(57.4995, -20.2)]},
+        crs="EPSG:4326",
+    )
+    roads = _lines([(57.5001, -20.2), (57.501, -20.2)])
+    backbone = _lines([(57.5, -20.2), (57.5, -20.19)])
+
+    graph = build_inferred_distribution_graph(
+        assets,
+        osm_distribution_lines=roads,
+        provided_backbone_lines=backbone,
+        max_anchor_distance_m=100,
+        anchor_to_each_line_source=True,
+    )
+
     assert graph.degree["bus::SUB"] == 2
     anchor_ids = sorted(a["edge_id"] for _, _, a in graph.edges(data=True) if a["source"] == "substation_anchor")
     assert anchor_ids == ["anchor::SUB::osm", "anchor::SUB::provided_transmission"]
+
+
+def test_substation_takes_a_point_of_a_line_before_a_plant_at_the_same_point():
+    assets = gpd.GeoDataFrame(
+        {
+            "asset_id": ["plant", "SUB"],
+            "asset_kind": ["generator", "substation"],
+            "geometry": [Point(57.5, -20.2), Point(57.5, -20.2)],
+        },
+        crs="EPSG:4326",
+    )
+    backbone = _lines([(57.5, -20.2), (57.5, -20.19)])
+
+    graph = build_inferred_distribution_graph(assets, provided_backbone_lines=backbone, max_anchor_distance_m=100)
+
+    assert {a["source"] for _, _, a in graph.edges("bus::SUB", data=True)} == {
+        "provided_transmission",
+        "generator_anchor",
+    }
+    (plant_line,) = graph.edges("asset::plant", data=True)
+    assert plant_line[1] == "bus::SUB"
