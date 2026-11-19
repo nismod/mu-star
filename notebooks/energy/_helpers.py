@@ -887,19 +887,17 @@ def compare_methods(flow: pd.DataFrame, connectivity: pd.DataFrame) -> pd.DataFr
 
 
 def distribution_line_counts(connectivity: pd.DataFrame, threshold_mw: float = 1.0) -> pd.DataFrame:
-    """Return, for each island, its distribution lines and the number whose failure leaves at least ``threshold_mw``
-    unmet at peak, with the network run radially and after switching, and the largest unmet demand (MW)."""
+    """Return, for each island, its distribution lines, those in service in radial operation, the number whose
+    failure leaves at least ``threshold_mw`` unmet at peak, and the largest unmet demand (MW)."""
     lines = connectivity[connectivity["asset_type"].eq("distribution_line")].groupby("island")
-    at_least = f"at_least_{threshold_mw:g}_mw"
     return pd.DataFrame(
         {
             "distribution_lines": lines.size(),
-            f"radial_lines_{at_least}": lines["unmet_peak_mw"].agg(lambda unmet: int((unmet >= threshold_mw).sum())),
-            "radial_largest_peak_mw": lines["unmet_peak_mw"].max(),
-            f"after_switching_lines_{at_least}": lines["unmet_after_switching_peak_mw"].agg(
+            "in_service": lines["in_service"].sum(),
+            f"lines_at_least_{threshold_mw:g}_mw": lines["unmet_peak_mw"].agg(
                 lambda unmet: int((unmet >= threshold_mw).sum())
             ),
-            "after_switching_largest_peak_mw": lines["unmet_after_switching_peak_mw"].max(),
+            "largest_peak_mw": lines["unmet_peak_mw"].max(),
         }
     ).reset_index()
 
@@ -916,12 +914,10 @@ def largest_distribution_failures(
     return lines[columns].reset_index(drop=True)
 
 
-# The four quantities of the connectivity tables, with the words used for them in titles and colour bars.
+# The two quantities of the connectivity tables, with the words used for them in titles and colour bars.
 DISTRIBUTION_QUANTITIES = {
-    "unmet_peak_mw": ("radial, at peak demand", "MW"),
-    "unmet_after_switching_peak_mw": ("after switching, at peak demand", "MW"),
-    "unmet_mwh_per_day": ("radial, per day of outage", "MWh per day"),
-    "unmet_after_switching_mwh_per_day": ("after switching, per day of outage", "MWh per day"),
+    "unmet_peak_mw": ("at peak demand", "MW"),
+    "unmet_mwh_per_day": ("per day of outage", "MWh per day"),
 }
 
 
@@ -930,17 +926,18 @@ def plot_distribution_criticality(
 ):
     """Map the distribution lines, coloured on a log scale by the unmet demand when each fails.
 
-    ``quantity``: one of ``DISTRIBUTION_QUANTITIES``. Lines whose failure leaves less than a hundredth of the largest
-    value unmet are grey. ``clip``: a ``(minx, miny, maxx, maxy)`` box in degrees; the default is the island with the
-    most distribution lines.
+    ``quantity``: one of ``DISTRIBUTION_QUANTITIES``. Lines in service whose failure leaves less than a hundredth of
+    the largest value unmet are grey, and open lines, which radial operation leaves out of service, are dotted.
+    ``clip``: a ``(minx, miny, maxx, maxy)`` box in degrees; the default is the island with the most distribution
+    lines.
     """
     what, unit = DISTRIBUTION_QUANTITIES[quantity]
     nodes, edges = _criticality_layers()
-    lines = connectivity[connectivity["asset_type"].eq("distribution_line")]
-    unmet = lines.set_index("asset_id")[quantity]
+    lines = connectivity[connectivity["asset_type"].eq("distribution_line")].set_index("asset_id")
     clip = clip or _island_bounds([lines["island"].value_counts().index[0]])
-    roads = edges[edges["line_id"].isin(unmet.index)].copy()
-    roads["unmet"] = roads["line_id"].map(unmet).fillna(0.0)
+    roads = edges[edges["line_id"].isin(lines.index)].copy()
+    roads["unmet"] = roads["line_id"].map(lines[quantity]).fillna(0.0)
+    roads["open"] = ~roads["line_id"].map(lines["in_service"]).fillna(False).astype(bool)
     roads = _clip(roads, clip).sort_values("unmet")  # the largest values are drawn on top
     top = max(float(roads["unmet"].max()) if len(roads) else 0.0, 1e-3)
     norm = LogNorm(top / 100, top)
@@ -949,7 +946,8 @@ def plot_distribution_criticality(
     subs = _clip(nodes[nodes["kind"].eq("substation")], clip)
     if ax is None:
         _, ax = plt.subplots(figsize=figsize)
-    _draw(roads[~hit], ax, color=_CONTEXT, linewidth=0.3, zorder=1)
+    _draw(roads[roads["open"]], ax, color=_NO_LOSS, linewidth=0.4, linestyle=(0, (1, 2)), zorder=1)
+    _draw(roads[~hit & ~roads["open"]], ax, color=_CONTEXT, linewidth=0.3, zorder=1)
     if hit.any():
         _draw(roads[hit], ax, color=[_SCALE(norm(value)) for value in roads.loc[hit, "unmet"]], linewidth=0.9, zorder=2)
     _draw(ceb, ax, color=_NO_LOSS, linewidth=1.0, zorder=3)
@@ -960,8 +958,12 @@ def plot_distribution_criticality(
     entries = [
         (hit.any(), Line2D([], [], color=_SCALE(0.6), linewidth=1.5, label="distribution line, unmet demand")),
         (
-            (~hit).any(),
+            (~hit & ~roads["open"]).any(),
             Line2D([], [], color=_CONTEXT, linewidth=1, label=f"distribution line, under {top / 100:.2g} {unit} unmet"),
+        ),
+        (
+            roads["open"].any(),
+            Line2D([], [], color=_NO_LOSS, linewidth=1, linestyle=(0, (1, 2)), label="distribution line, open"),
         ),
         (len(ceb) > 0, Line2D([], [], color=_NO_LOSS, linewidth=1, label="transmission line")),
         (len(subs) > 0, _dot(_NO_LOSS, "substation", size=6)),

@@ -9,20 +9,19 @@ the distribution lines:
   plant of an ``island_carriers`` type (thermal, hydro); a shortfall is shared between the part's supply
   points in proportion to their demand. Line ratings are left out, so the results equal the power flow's
   wherever no rating binds.
-- The distribution lines, those at or below it, are run radially. Each supply point feeds the nodes of its
-  service area (``area_bus_id`` in ``service_weights_nodes.csv``) along the shortest routes through the area's
-  lines; the lines between areas are open. A failed line cuts off the nodes beyond it. After switching, a
-  failed line cuts off demand only if no other route through the area's lines remains, that is, if it is a
-  bridge of the area's network. No demand moves to another area, since the ratings of the lines between
-  areas are unknown. A part cut off keeps supply only as a part of the transmission network does: from a
-  plant of an ``island_carriers`` type within it.
+- The distribution lines, those at or below it, are run radially, as distribution networks are in normal
+  operation. Each supply point feeds the nodes of its service area (``area_bus_id`` in
+  ``service_weights_nodes.csv``) along the shortest routes through the area's lines; the area's other lines
+  and the lines between areas are open (``in_service`` is false). A failed line cuts off the nodes beyond it
+  until it is repaired: switching, which could restore some of them through another route, is left out. A part
+  cut off keeps supply only as a part of the transmission network does: from a plant of an ``island_carriers``
+  type within it.
 - Substations, transmission lines and plants fail as in the power-flow analysis. The connections that the
   build adds between a substation or plant and the nearest road (``CONNECTOR_SOURCES``) fail with it, not
   alone.
 
 Each failure gives the unmet demand at peak (MW) and the unmet energy per day of outage (MWh, at average
-demand), with the distribution lines run radially and after switching; the two are equal for substations,
-transmission lines and plants. A failure's unmet demand is the rise over the unmet demand with nothing failed.
+demand). A failure's unmet demand is the rise over the unmet demand with nothing failed.
 """
 
 from __future__ import annotations
@@ -51,12 +50,10 @@ from energy.demand import DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV
 CONNECTOR_SOURCES = ("substation_anchor", "generator_anchor")
 ASSET_TYPES = ("substation", "line", "plant", "distribution_line")
 LEVELS = ("peak", "average")
-QUANTITIES = (
-    "unmet_mwh_per_day",
-    "unmet_peak_mw",
-    "unmet_after_switching_mwh_per_day",
-    "unmet_after_switching_peak_mw",
-)
+QUANTITIES = ("unmet_mwh_per_day", "unmet_peak_mw")
+# What a line in service cuts off when it fails: the nodes' share of their island's demand, the capacity of
+# their plants (MW), and whether one of those plants can supply a part cut off (``island_carriers``).
+CUT_COLUMNS = {"weight": float, "capacity": float, "island_carrier": bool}
 
 
 @dataclass(frozen=True)
@@ -135,26 +132,20 @@ def distribution_lines(network: pypsa.Network, max_radial_line_voltage_kv: float
 
 def _area_failures(area_lines: pd.DataFrame, root: str, weight: pd.Series, capacity: pd.Series, carrier: pd.Series):
     """Return, for one service area, the share of the area's weight and the plant capacity cut off when each
-    line fails, radial and after switching, and the weight of the nodes not joined to ``root``.
+    line in service fails, and the weight of the nodes not joined to ``root``.
 
-    ``weight`` is each node's share of its island's demand; ``capacity`` (MW) and ``carrier`` (whether one of its
-    plants is of an ``island_carriers`` type) are indexed by node. Returns a frame indexed by line_id with
-    ``weight``, ``capacity``, ``island_carrier``, ``radial`` and ``bridge`` (whether the line cuts off these nodes
-    in radial operation and after switching), and the weight not joined.
+    The lines in service are those on the shortest routes from ``root`` through ``area_lines``; of two lines
+    between the same nodes, the shorter. ``weight`` is each node's share of its island's demand; ``capacity`` (MW)
+    and ``carrier`` (whether one of its plants is of an ``island_carriers`` type) are indexed by node. Returns a
+    frame indexed by the line_id of each line in service, with the ``weight``, ``capacity`` and
+    ``island_carrier`` of the nodes beyond it, and the weight not joined.
     """
     graph = nx.Graph()
     graph.add_nodes_from([root, *weight.index])
-    doubled = set()
     for line_id, bus0, bus1, length in zip(
         area_lines.index, area_lines["bus0"], area_lines["bus1"], area_lines["length"]
     ):
-        if bus0 == bus1:
-            continue
-        if graph.has_edge(bus0, bus1):
-            doubled.add(frozenset((bus0, bus1)))
-            if length < graph[bus0][bus1]["weight"]:
-                graph[bus0][bus1].update(weight=float(length), line=line_id)
-        else:
+        if bus0 != bus1 and (not graph.has_edge(bus0, bus1) or length < graph[bus0][bus1]["weight"]):
             graph.add_edge(bus0, bus1, weight=float(length), line=line_id)
     parent_of, _ = nx.dijkstra_predecessor_and_distance(graph, root, weight="weight")
     children: dict[str, list[str]] = {}
@@ -174,7 +165,6 @@ def _area_failures(area_lines: pd.DataFrame, root: str, weight: pd.Series, capac
         below_weight[parent] += below_weight[node]
         below_capacity[parent] += below_capacity[node]
         below_carrier[parent] = below_carrier[parent] or below_carrier[node]
-    bridges = {frozenset(edge) for edge in nx.bridges(graph)} - doubled
     rows = {}
     for node in order[1:]:
         parent = parent_of[node][0]
@@ -182,11 +172,8 @@ def _area_failures(area_lines: pd.DataFrame, root: str, weight: pd.Series, capac
             "weight": below_weight[node],
             "capacity": below_capacity[node],
             "island_carrier": below_carrier[node],
-            "radial": True,
-            "bridge": frozenset((parent, node)) in bridges,
         }
-    columns = {"weight": float, "capacity": float, "island_carrier": bool, "radial": bool, "bridge": bool}
-    cut = pd.DataFrame.from_dict(rows, orient="index", columns=list(columns)).astype(columns)
+    cut = pd.DataFrame.from_dict(rows, orient="index", columns=list(CUT_COLUMNS)).astype(CUT_COLUMNS)
     not_joined = float(weight.drop(index=order, errors="ignore").sum())
     return cut, not_joined
 
@@ -200,14 +187,14 @@ def distribution_failures(
     max_radial_line_voltage_kv: float = DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV,
     island_carriers: tuple[str, ...] = DEFAULT_ISLAND_CARRIERS,
 ) -> tuple[pd.DataFrame, dict[str, float], dict[str, int]]:
-    """Return the unmet demand (MW) when each distribution line fails, radial and after switching.
+    """Return the unmet demand (MW) when each distribution line fails, with the distribution lines run radially.
 
     ``node_weights`` is ``service_weights_nodes.csv``; ``island_demand`` maps each level to each island's demand
     (MW); ``supplied_share`` maps each level to the share of each area's demand (by ``area_bus_id``) supplied with
     nothing failed (one when not given). Returns one row per distribution line other than a connection the build
-    adds, indexed by line_id, with ``area_bus_id`` (empty for a line between areas), ``island``,
-    ``unmet_<level>_mw`` and ``unmet_after_switching_<level>_mw``; the demand of nodes not joined to their supply
-    point, unmet with nothing failed (MW per level); and counts of lines by role.
+    adds, indexed by line_id, with ``area_bus_id`` (empty for a line between areas), ``island``, ``in_service``
+    (false for an open line, which cuts off nothing) and ``unmet_<level>_mw``; the demand of nodes not joined to
+    their supply point, unmet with nothing failed (MW per level); and counts of lines.
     """
     lines = distribution_lines(network, max_radial_line_voltage_kv)
     nodes = node_weights.assign(bus_id=node_weights["bus_id"].astype(str)).set_index("bus_id")
@@ -231,8 +218,8 @@ def distribution_failures(
         for level, demand in island_demand.items():
             supplied = 1.0 if supplied_share is None else float(supplied_share[level].get(root, 1.0))
             not_joined[level] += weight_not_joined * float(demand[island]) * supplied
-        cut_parts.append(cut.assign(area_bus_id=root, island=island))
-    cut = pd.concat(cut_parts) if cut_parts else pd.DataFrame()
+        cut_parts.append(cut)
+    cut = pd.concat(cut_parts) if cut_parts else pd.DataFrame(columns=list(CUT_COLUMNS))
 
     table = pd.DataFrame(index=lines.index[~lines["connector"]])
     table["area_bus_id"] = line_area.reindex(table.index)
@@ -242,19 +229,16 @@ def distribution_failures(
         .fillna(lines["bus0"].map(nodes["island"]).reindex(table.index))
     )
     cut = cut.reindex(table.index)
-    radial, bridge = cut["radial"].eq(True), cut["bridge"].eq(True)
+    table["in_service"] = cut["weight"].notna()
     for level, demand in island_demand.items():
         supplied = table["area_bus_id"].map(supplied_share[level]).fillna(1.0) if supplied_share else 1.0
         cut_off = cut["weight"].fillna(0.0) * table["island"].map(demand).fillna(0.0) * supplied
         kept = cut["capacity"].fillna(0.0).where(cut["island_carrier"].eq(True), 0.0)
-        unmet = (cut_off - kept).clip(lower=0.0)
-        table[f"unmet_{level}_mw"] = unmet.where(radial, 0.0)
-        table[f"unmet_after_switching_{level}_mw"] = unmet.where(bridge, 0.0)
+        table[f"unmet_{level}_mw"] = (cut_off - kept).clip(lower=0.0)
     counts = {
         "distribution_lines": len(table),
+        "in_service": int(table["in_service"].sum()),
         "between_areas": int(table["area_bus_id"].eq("").sum()),
-        "in_radial_trees": int(radial.sum()),
-        "bridges": int(bridge.sum()),
         "connections_added_by_the_build": int(lines["connector"].sum()),
     }
     return table, not_joined, counts
@@ -266,15 +250,8 @@ def _long(frame: pd.DataFrame, name: str) -> pd.DataFrame:
     return frame.melt(id_vars="asset_id", var_name="area_bus_id", value_name=name)
 
 
-def _quantities(peak: pd.Series, average: pd.Series, peak_switched: pd.Series, average_switched: pd.Series):
-    return pd.DataFrame(
-        {
-            "unmet_mwh_per_day": HOURS_PER_DAY * average,
-            "unmet_peak_mw": peak,
-            "unmet_after_switching_mwh_per_day": HOURS_PER_DAY * average_switched,
-            "unmet_after_switching_peak_mw": peak_switched,
-        }
-    )
+def _quantities(peak: pd.Series, average: pd.Series) -> pd.DataFrame:
+    return pd.DataFrame({"unmet_mwh_per_day": HOURS_PER_DAY * average, "unmet_peak_mw": peak})
 
 
 def connectivity_criticality(
@@ -290,9 +267,9 @@ def connectivity_criticality(
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Fail each substation, transmission line, plant and distribution line at peak and at average demand.
 
-    Returns one row per asset with the four ``QUANTITIES``; the same by asset and service area (``area_bus_id``),
-    where any is above zero; and a summary with the unmet demand with nothing failed and counts of distribution
-    lines.
+    Returns one row per asset with the ``QUANTITIES`` and ``in_service`` (false for a distribution line left open);
+    the quantities by asset and service area (``area_bus_id``), where either is above zero; and a summary with the
+    unmet demand with nothing failed and counts of distribution lines.
     """
     carriers = tuple(island_carriers)
     island_demand = {
@@ -316,8 +293,8 @@ def connectivity_criticality(
     )
 
     upper = assets[["asset_id", "asset_type", "name", "island"]].assign(lines=assets["lines"].map(" ".join))
-    peak, average = transmission["peak"][1], transmission["average"][1]
-    upper = upper.join(_quantities(peak, average, peak, average), on="asset_id")
+    upper = upper.join(_quantities(transmission["peak"][1], transmission["average"][1]), on="asset_id")
+    upper["in_service"] = True
     lower = pd.DataFrame(
         {
             "asset_id": lines.index,
@@ -326,15 +303,8 @@ def connectivity_criticality(
             "island": lines["island"].to_numpy(),
             "lines": lines.index,
         }
-    ).join(
-        _quantities(
-            lines["unmet_peak_mw"],
-            lines["unmet_average_mw"],
-            lines["unmet_after_switching_peak_mw"],
-            lines["unmet_after_switching_average_mw"],
-        ),
-        on="asset_id",
-    )
+    ).join(_quantities(lines["unmet_peak_mw"], lines["unmet_average_mw"]), on="asset_id")
+    lower["in_service"] = lower["asset_id"].map(lines["in_service"])
     summary = pd.concat([upper, lower], ignore_index=True)
     order = {asset_type: position for position, asset_type in enumerate(ASSET_TYPES)}
     summary = summary.sort_values(
@@ -346,14 +316,10 @@ def connectivity_criticality(
     upper_by_area = _long(HOURS_PER_DAY * transmission["average"][0], "unmet_mwh_per_day").merge(
         _long(transmission["peak"][0], "unmet_peak_mw"), on=["asset_id", "area_bus_id"]
     )
-    upper_by_area["unmet_after_switching_mwh_per_day"] = upper_by_area["unmet_mwh_per_day"]
-    upper_by_area["unmet_after_switching_peak_mw"] = upper_by_area["unmet_peak_mw"]
     lower_by_area = lower.set_index("asset_id")[list(QUANTITIES)].assign(area_bus_id=lines["area_bus_id"])
     lower_by_area = lower_by_area[lower_by_area["area_bus_id"].ne("")].reset_index()
     by_area = pd.concat([upper_by_area, lower_by_area], ignore_index=True)[["asset_id", "area_bus_id", *QUANTITIES]]
-    per_day = ["unmet_mwh_per_day", "unmet_after_switching_mwh_per_day"]
-    at_peak = ["unmet_peak_mw", "unmet_after_switching_peak_mw"]
-    hit = by_area[per_day].gt(HOURS_PER_DAY * TOLERANCE_MW).any(axis=1) | by_area[at_peak].gt(TOLERANCE_MW).any(axis=1)
+    hit = by_area["unmet_mwh_per_day"].gt(HOURS_PER_DAY * TOLERANCE_MW) | by_area["unmet_peak_mw"].gt(TOLERANCE_MW)
     by_area = by_area[hit].sort_values(["asset_id", "area_bus_id"]).reset_index(drop=True)
 
     unmet_intact = {

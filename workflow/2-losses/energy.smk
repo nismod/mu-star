@@ -88,7 +88,7 @@ rule build_energy_criticality_connectivity:
     Fail each substation, transmission line, power plant and distribution line of
     inferred-provided in turn and record the unmet demand at peak (MW) and per day of
     outage (MWh, at average demand), from the connectivity of the network alone, with the
-    distribution lines run radially and after switching.
+    distribution lines run radially and no switching.
 
     Test with:
     snakemake -c1 data/results/energy/<date>-results/criticality/connectivity/inferred-provided-mauritius-rodrigues/criticality.csv

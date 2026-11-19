@@ -49,24 +49,22 @@ def _feeders():
     return network, weights
 
 
-def test_distribution_lines_cut_off_the_nodes_beyond_them_radially_and_only_as_bridges_after_switching():
+def test_distribution_lines_run_radially_cut_off_the_nodes_beyond_them():
     network, weights = _feeders()
     demand = {"peak": pd.Series({"mauritius": 100.0}), "average": pd.Series({"mauritius": 50.0})}
 
     table, not_joined, counts = distribution_failures(network, weights, demand)
 
-    # Radially, l23 is open: l12 feeds d2 (10 MW) and l13 feeds d3 and d4 (40 MW). After switching, only the spur
-    # l34 cuts off demand. The tie between the areas is open, and the build's connections fail with their substation.
+    # l12 feeds d2 (10 MW) and l13 feeds d3 and d4 (40 MW), so l23, a longer route to d3, is open. The tie between
+    # the areas is open too, and the build's connections fail with their substation, so they have no row.
     assert table["unmet_peak_mw"].to_dict() == pytest.approx(
         {"l12": 10.0, "l13": 40.0, "l23": 0.0, "l34": 20.0, "tie": 0.0}
     )
-    assert table["unmet_after_switching_peak_mw"].to_dict() == pytest.approx(
-        {"l12": 0.0, "l13": 0.0, "l23": 0.0, "l34": 20.0, "tie": 0.0}
-    )
+    assert table["in_service"].to_dict() == {"l12": True, "l13": True, "l23": False, "l34": True, "tie": False}
     assert table.at["l13", "unmet_average_mw"] == pytest.approx(20.0)
     assert table.at["tie", "area_bus_id"] == ""
     assert not_joined == {"peak": 0.0, "average": 0.0}
-    assert counts["connections_added_by_the_build"] == 2
+    assert counts == {"distribution_lines": 5, "in_service": 3, "between_areas": 1, "connections_added_by_the_build": 2}
 
     # A 30 MW thermal plant at d4 keeps d4 supplied, and supplies 30 of the 40 MW beyond l13.
     network.import_components_from_dataframe(
@@ -110,19 +108,23 @@ def test_build_connectivity_criticality_writes_the_tables(tmp_path):
         "plant": 4,
         "substation": 3,
     }
-    # As in the power flow: losing B - C cuts off C, 30 MW at peak and 20 MW at average demand.
-    assert summary.loc["R2", ["unmet_peak_mw", "unmet_after_switching_peak_mw"]].tolist() == pytest.approx([30.0, 30.0])
-    assert summary.at["R2", "unmet_mwh_per_day"] == pytest.approx(24 * 20.0)
-    assert summary.at["road_ab", "unmet_peak_mw"] == 0.0  # a line between two areas, so open
-    by_area = pd.read_csv(outputs.by_area)
-    assert list(by_area.columns) == [
-        "asset_id",
-        "area_bus_id",
+    assert list(summary.columns) == [
+        "asset_type",
+        "name",
+        "island",
+        "lines",
         "unmet_mwh_per_day",
         "unmet_peak_mw",
-        "unmet_after_switching_mwh_per_day",
-        "unmet_after_switching_peak_mw",
+        "in_service",
     ]
+    # As in the power flow: losing B - C cuts off C, 30 MW at peak and 20 MW at average demand.
+    assert summary.at["R2", "unmet_peak_mw"] == pytest.approx(30.0)
+    assert summary.at["R2", "unmet_mwh_per_day"] == pytest.approx(24 * 20.0)
+    # A line between two areas is open, so it cuts off nothing.
+    assert summary.loc["road_ab", ["unmet_peak_mw", "in_service"]].tolist() == [0.0, False]
+    assert summary.loc[summary["asset_type"].ne("distribution_line"), "in_service"].all()
+    by_area = pd.read_csv(outputs.by_area)
+    assert list(by_area.columns) == ["asset_id", "area_bus_id", "unmet_mwh_per_day", "unmet_peak_mw"]
     metadata = json.loads(outputs.metadata.read_text())
     assert metadata["unmet_with_nothing_failed"] == {"unmet_mwh_per_day": 0.0, "unmet_peak_mw": 0.0}
     assert metadata["max_radial_line_voltage_kv"] == 35.0

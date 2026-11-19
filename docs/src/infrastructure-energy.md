@@ -136,20 +136,17 @@ the power flow does, but without line ratings: each part of the transmission
 network supplies its demand up to the capacity of its plants if it has a
 thermal or hydro plant, and a part short of capacity shares the shortfall
 between its substations in proportion to their demand. It then fails each
-distribution line, with the distribution network run in two ways:
-
-- radially, without switching: each substation feeds its service area along
-  the shortest routes through the area's lines, and a failed line cuts off the
-  nodes beyond it;
-- after switching: a failed line cuts off demand only if no other route
-  through the area's lines remains.
-
-The lines between two areas stay open in both, so no demand moves to another
-area, since the ratings of those lines are unknown. On the estimated network,
-the radial result is an upper bound on the unmet demand and the result after
-switching a lower bound. The connections that the build adds between a
-substation or plant and the nearest road do not fail on their own: they fail
-with the substation or plant.
+distribution line, with the distribution network run radially, as
+distribution networks are in normal operation: each substation feeds its
+service area along the shortest routes through the area's lines, so that each
+node has one route to its substation, and the area's other lines and the lines
+between areas are open. On Mauritius, the lines in service total 4,116 km of
+the estimated network's 5,942 km, close to CEB's 4,100 km of medium-voltage
+lines (annual report, p. 60). A failed line cuts off the nodes beyond it until
+it is repaired. Switching, by which an operator can restore some of those
+nodes through another route before the repair, is left out. The connections
+that the build adds between a substation or plant and the nearest road do not
+fail on their own: they fail with the substation or plant.
 
 #### Results
 
@@ -161,13 +158,9 @@ quantities, each the rise in unmet demand over that with nothing failed:
   unmet demand at average demand over 24 hours. Multiplied by a restoration
   time in days, it gives the energy not supplied.
 
-The connectivity rule gives both with the distribution network run radially
-and, as `unmet_after_switching_peak_mw` and
-`unmet_after_switching_mwh_per_day`, after switching; the two are equal for
-substations, transmission lines and plants. The per-day value is exact when
-whole areas lose supply. It is too low for shortfalls that occur only near
-peak: on Rodrigues, losing a power station leaves demand unmet at peak but not
-at average demand.
+The per-day value is exact when whole areas lose supply. It is too low for
+shortfalls that occur only near peak: on Rodrigues, losing a power station
+leaves demand unmet at peak but not at average demand.
 
 The run times show why the power flow stops at the transmission network. On
 one core of an Apple M1 Max laptop, with the networks of Mauritius and
@@ -287,11 +280,10 @@ demand and criticality commands also need the incoming folder.
 - `data/results/energy/<date>-results/criticality/connectivity/inferred-provided-<region>/`:
   - `criticality.csv`: as for the power flow, with a row for each distribution
     line too (`asset_type` `distribution_line`; `asset_id` is the line's
-    `line_id` in the network's edges layer) and the two quantities after
-    switching, `unmet_after_switching_mwh_per_day` and
-    `unmet_after_switching_peak_mw`; without line limits;
-  - `criticality_by_area.csv`: as for the power flow, with the same four
-    quantities; a distribution line has one row, for its own area.
+    `line_id` in the network's edges layer) and `in_service`, false for a
+    distribution line that radial operation leaves open; without line limits;
+  - `criticality_by_area.csv`: as for the power flow; a distribution line has
+    one row, for its own area.
 
 The notebooks in `notebooks/energy/` show the inputs, the networks and the
 criticality results.
@@ -306,18 +298,22 @@ criticality results.
 - Rooftop solar and plants with no location yet are left out.
 - The voltages and capacities in the networks are placeholders. The
   power-flow rule, the only part that rates lines, uses standard line types,
-  which are placeholders too until CEB provides ratings. The distribution
-  lines have no ratings, so the result after switching assumes that the lines
-  left in an area can carry its demand.
+  which are placeholders too until CEB provides ratings.
+- The distribution lines are run radially without switching, so a failed line
+  cuts off the nodes beyond it until it is repaired, even where an operator
+  could restore them sooner through another route.
 - The service areas and the radial routes follow the roads: each node is
   supplied from the substation nearest along them. Where roads are sparse, in
   less populated places, that substation is less likely to be the one that
   supplies the node; the rule is the same everywhere, so the error is of the
   same kind across the islands.
-- The build joins each substation to the roads at one point, so every route
-  from a substation starts there. Where that point is at the end of a road,
-  the first road segment carries the whole area even after switching (at
-  Dumas, 51.9 MW at peak); a real substation has several feeders.
+- The build joins each substation to the roads at one point (Champagne at
+  two, one through the power station next to it), so the routes from a
+  substation start on one or two road segments, as if it had one or two
+  feeders. At each of the 18 substations on Mauritius, the distribution line
+  whose failure leaves the most demand unmet is one of these first segments,
+  with 55–100% of the area's peak demand; a real substation divides its area
+  between several feeders.
 - The criticality analysis fails one component at a time. The unmet demand
   when a hazard damages several components at once is not the sum of the
   single-failure values: a substation fed by two lines keeps its supply when
