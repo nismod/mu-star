@@ -1,0 +1,4 @@
+# Example hazards, see config/hazard.csv for column definitions
+peril,subperil,path,variable,hazard,description
+flood,coastal,processed/hazard/rp/peril-flood/subperil-coastal.zarr,inundation_depth,coastal_aqueduct,WRI Aqueduct coastal flood depth
+cyclone,wind,processed/hazard/rp/peril-cyclone/subperil-wind.zarr,wind_speed,wind_storm,STORM tropical cyclone wind speed
