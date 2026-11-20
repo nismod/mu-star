@@ -74,7 +74,7 @@ class DamageArrays:
 
 def quantile_columns(quantiles: Sequence[float]) -> list[str]:
     """Names snail gives to quantile summary columns."""
-    return [f"q_{round(q * 100):02d}" for q in quantiles]
+    return [f"q_{(q * 100)}".removesuffix(".0") for q in quantiles]
 
 
 def clean_intensity(intensity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

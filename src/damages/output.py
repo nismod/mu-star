@@ -113,7 +113,7 @@ def summary_table(totals: xr.Dataset, **labels) -> pd.DataFrame:
     for metric in ("damage_cost", "ead"):
         da = totals[metric]
         frame = da.to_series().unstack(QUANTILE)
-        frame.columns = [f"q_{round(q * 100):02d}" for q in frame.columns]
+        frame.columns = [f"q_{(q * 100)}".removesuffix(".0") for q in frame.columns]
         frame = frame.reset_index()
         if RETURN_PERIOD not in frame:
             frame[RETURN_PERIOD] = np.nan
