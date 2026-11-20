@@ -128,13 +128,10 @@ from `pyproject.toml`:
 ```shell
 pixi install
 pixi run test        # run the tests
+pixi run lint        # ruff check
 pixi run example     # run the direct damages workflow on the example data
 pixi shell           # or start a shell in the environment
 ```
-
-Either way, the `nismod-snail` dependency is installed from the
-`feat/mc-damages` branch on GitHub until the Monte Carlo damages are released,
-which needs a C++ compiler and CMake (the pixi environment includes them).
 
 Install `nbstripout` to ensure that no outputs are committed with any jupyter
 notebooks:

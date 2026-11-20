@@ -6,6 +6,9 @@ channels:
   - nodefaults
 dependencies:
   - python=3.12
+  # Build requirements for nismod-snail from git (C++ extension), on any platform
+  - cxx-compiler
+  - cmake
   - pip:
       - -e .[dev]
       - nismod-snail @ git+https://github.com/nismod/snail@v0.6.0
@@ -26,7 +29,8 @@ dependencies:
   - pdoc
   - plotly>=6
   - pre-commit
-  - pyarrow<20
+  # pyarrow 26 requires numpy>=2; 19-25 work with numpy 1.26
+  - pyarrow<26
   - click
   - dask
   - rioxarray
