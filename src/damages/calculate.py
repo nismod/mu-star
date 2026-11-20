@@ -216,7 +216,19 @@ def sample_direct_damages(
 
     if active.any():
         split_entity = np.arange(n_split)
-        # TODO explain properly why we do multiple calls here
+        # snail reports quantiles per ``asset_id`` group, and a quantile of a sum is
+        # not the sum of quantiles. So each output level needs its own call, with
+        # the entity column set to the level we want summarised:
+        #   1. entity = split, quantity = cost = 1, no cost CV: damage fraction only,
+        #      without cost uncertainty mixed in.
+        #   2. entity = split: cost and EAD for each split on its own.
+        #   3. entity = asset: the splits of an asset share local draws (hazard,
+        #      damage noise, unit cost) and their samples are summed before taking
+        #      quantiles. ``aggregate_assets`` also sums samples across assets for
+        #      the totals.
+        # Every call uses the same seed, so curve choices and systemic cost draws
+        # match across calls. Local draws do not, so per-split results agree with
+        # per-asset results in distribution, but not sample by sample.
 
         # 1. damage fraction per split
         frame = _long_frame(intensity, split_entity, np.ones(n_split), 1.0, active, rp_columns)
