@@ -23,14 +23,19 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "click",
+    "dask",
     "geopandas",
     "highspy",
     "matplotlib",
     "networkx",
+    # Monte Carlo direct damages are not yet released, install from the tag
+    "nismod-snail @ git+https://github.com/nismod/snail@v0.6.0",
     "numpy>=1.26,<2",
     "openpyxl",
     "pandas>=2,<3",
-    "pyarrow",
+    # pyarrow>=20 requires numpy>=2
+    "pyarrow<20",
     "pypsa>=0.30,<0.31",
     "pyyaml",
     "rasterio",
@@ -38,6 +43,7 @@ dependencies = [
     "scipy",
     "shapely",
     "xarray",
+    "zarr>=3",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +59,65 @@ dev = [
     "ruff",
 ]
 
+[tool.pixi.workspace]
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+
+[tool.pixi.dependencies]
+# Prefer conda-forge builds of the compiled geospatial stack. Python packages
+# not listed here are installed from PyPI, from [project.dependencies].
+python = "3.12.*"
+click = "*"
+dask = "*"
+geopandas = "*"
+highspy = "*"
+matplotlib = "*"
+netcdf4 = "*"
+networkx = "*"
+numpy = ">=1.26,<2"
+openpyxl = "*"
+pandas = ">=2,<3"
+pyarrow = "<20"
+pyproj = "*"
+pypsa = ">=0.30,<0.31"
+pyyaml = "*"
+rasterio = "*"
+rioxarray = "*"
+scipy = "*"
+shapely = ">=2.1"
+snakemake = ">=9"
+xarray = "*"
+zarr = ">=3"
+# Build requirements for nismod-snail from git (C++ extension)
+cmake = "*"
+cxx-compiler = "*"
+
+[tool.pixi.pypi-dependencies]
+mu-star = { path = ".", editable = true }
+
+[tool.pixi.feature.dev.dependencies]
+jupyter = "*"
+nbstripout = "*"
+pre-commit = "*"
+pytest = "*"
+pytest-cov = "*"
+pytest-xdist = "*"
+psutil = "*"
+ruff = "*"
+
+[tool.pixi.feature.inference.dependencies]
+osmnx = ">=2"
+
+[tool.pixi.environments]
+default = { features = ["dev"], solve-group = "default" }
+inference = { features = ["dev", "inference"], solve-group = "default" }
+
+[tool.pixi.tasks]
+test = "python -m pytest -n 2 src/"
+lint = "ruff check"
+format = "ruff format"
+example = "snakemake --cores 2 example/results/damage/summary.csv --configfile example/config.yaml"
+
 [tool.hatch.version]
 source = "vcs"
 
@@ -60,10 +125,17 @@ source = "vcs"
 include = ["/src"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mu_star", "src/transport", "src/energy"]
+packages = ["src/mu_star", "src/transport", "src/energy", "src/damages"]
+
+[tool.hatch.metadata]
+# Allow the git dependency on nismod-snail
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+markers = [
+    "integration: runs the snakemake workflow on example data (deselect with '-m \"not integration\"')",
+]
 
 [tool.ruff]
 line-length = 120

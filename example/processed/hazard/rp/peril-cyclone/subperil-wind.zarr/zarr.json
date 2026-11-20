@@ -1,0 +1,50 @@
+{
+  "attributes": {
+    "title": "Tropical cyclone wind speed return periods, STORM, clipped to Port Louis",
+    "source": "Bloemendaal et al. (2022) STORM climate change tropical cyclone wind speed return periods, CC0, via https://doi.org/10.5281/zenodo.23271097",
+    "zarr_conventions": [
+      {
+        "uuid": "f17cb550-5864-4468-aeb7-f3180cfb622f",
+        "name": "proj",
+        "description": "Coordinate reference system information for geospatial data",
+        "schema_url": "https://raw.githubusercontent.com/zarr-conventions/proj/refs/tags/v0.1/schema.json",
+        "spec_url": "https://github.com/zarr-conventions/proj/blob/v0.1/README.md"
+      },
+      {
+        "uuid": "689b58e2-cf7b-45e0-9fff-9cfc0883d6b4",
+        "name": "spatial",
+        "description": "Spatial coordinate information",
+        "schema_url": "https://raw.githubusercontent.com/zarr-conventions/spatial/refs/tags/v0.1/schema.json",
+        "spec_url": "https://github.com/zarr-conventions/spatial/blob/v0.1/README.md"
+      }
+    ],
+    "spatial:dimensions": [
+      "y",
+      "x"
+    ],
+    "spatial:shape": [
+      5,
+      5
+    ],
+    "spatial:transform": [
+      0.09999999999999964,
+      0.0,
+      57.25000000000002,
+      0.0,
+      -0.09999999999999964,
+      -19.949999999999992
+    ],
+    "spatial:transform_type": "affine",
+    "spatial:bbox": [
+      57.25000000000002,
+      -20.44999999999999,
+      57.75000000000002,
+      -19.949999999999992
+    ],
+    "spatial:registration": "pixel",
+    "proj:wkt2": "GEOGCRS[\"WGS 84\",DATUM[\"World Geodetic System 1984\",ELLIPSOID[\"WGS 84\",6378137,298.257223563,LENGTHUNIT[\"metre\",1]]],PRIMEM[\"Greenwich\",0,ANGLEUNIT[\"degree\",0.0174532925199433]],CS[ellipsoidal,2],AXIS[\"geodetic latitude (Lat)\",north,ORDER[1],ANGLEUNIT[\"degree\",0.0174532925199433]],AXIS[\"geodetic longitude (Lon)\",east,ORDER[2],ANGLEUNIT[\"degree\",0.0174532925199433]],ID[\"EPSG\",4326]]",
+    "proj:code": "EPSG:4326"
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

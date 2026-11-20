@@ -8,7 +8,7 @@ dependencies:
   - python=3.12
   - pip:
       - -e .[dev]
-      - nismod-snail
+      - nismod-snail @ git+https://github.com/nismod/snail@v0.6.0
       - osmium
   - geopandas
   - hatchling
@@ -26,7 +26,10 @@ dependencies:
   - pdoc
   - plotly>=6
   - pre-commit
-  - pyarrow
+  - pyarrow<20
+  - click
+  - dask
+  - rioxarray
   - pypsa>=0.30,<0.31
   - pytest
   - scipy

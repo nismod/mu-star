@@ -2,9 +2,37 @@
 # These values are used by snakemake rules in the `workflow/` directory.
 
 metadata:
-  # Q: Do these paths need to be configurable (and therefore here) or rather hardcoded?
-  layer: "workflow/layer.csv"
-  hazard: "workflow/hazard.csv"
+  # TODO: see if these are better in workbook below - or conversely easier to
+  # manage and version a bunch of CSV text files than xlsx?
+  # Asset layers: one row per processed asset file, see docs/src/damages.md
+  layer: "config/layer.csv"
+  # Hazards: one row per peril/subperil data cube, see docs/src/damages.md
+  hazard: "config/hazard.csv"
+
+damage:
+  # Damage configuration workbook: asset types, hazards, vulnerability, costs
+  # and damage curves. Not committed; see example/config/ for the structure.
+  config: "config/damage/asset-type-cost-curves.xlsx"
+  # Number of Monte Carlo samples per asset/scenario
+  n_samples: 10000
+  # Quantiles to report, for damages per return period and for expected
+  # annual damages
+  quantiles: [0.05, 0.5, 0.95]
+  # Random seed, for reproducible samples
+  seed: 20261114
+  # Coefficient of variation of hazard intensity (0 for no hazard uncertainty)
+  # TODO - should this be defined in workbook?
+  hazard_cv: 0.0
+  # Standard deviation of multiplicative damage fraction noise (0 for none)
+  # TODO - also in workbook?
+  eta_sd: 0.0
+  # Projected CRS (metres) used to measure split lengths and areas.
+  # EPSG:32740 is UTM zone 40S, covering Mauritius (use 32741 for Rodrigues)
+  # TODO - use proj Geod for geodetic rather than reproject?
+  measure_crs: "EPSG:32740"
+  # Fail if an asset type in the data is missing from the damage config, or
+  # is vulnerable but missing curves or costs. Otherwise warn, and give NaN.
+  strict: true
 
 sensitivity:
   vars:
@@ -14,4 +42,3 @@ sensitivity:
     # - wind damage curve y shift (min & max?)
     # - rehabilitation cost multiplier (min & max?)
     # - etc.
-

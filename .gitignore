@@ -89,3 +89,6 @@ venv.bak/
 
 # PyPI configuration file
 .pypirc
+
+# Example workflow outputs
+example/results/
