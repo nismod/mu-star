@@ -44,6 +44,7 @@
   "attributes": {
     "long_name": "Coastal flood inundation depth",
     "units": "m",
+    "coordinates": "spatial_ref",
     "grid_mapping": "spatial_ref",
     "_FillValue": "AAAAAAAA+H8="
   },

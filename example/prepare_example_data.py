@@ -102,7 +102,7 @@ def prepare_coastal(source: Path) -> xr.Dataset:
     ds["epoch"].attrs["long_name"] = "Epoch (year); 2010 is the historical baseline"
     ds.attrs = {
         "title": "Coastal flood depth, WRI Aqueduct Floods (with subsidence), clipped to Port Louis",
-        "source": "Ward et al. (2020) Aqueduct Floods Methodology, CC-BY-4.0, via https://doi.org/10.5281/zenodo.23271097",
+        "source": "Ward et al., WRI Aqueduct Floods, CC-BY-4.0, via https://doi.org/10.5281/zenodo.23271097",
     }
     return with_geozarr_attrs(ds.rio.write_crs("EPSG:4326"))
 
@@ -120,10 +120,10 @@ def prepare_wind(source: Path) -> xr.Dataset:
     da.attrs = {"long_name": "Maximum 10-minute sustained wind speed", "units": "m/s"}
     ds = da.to_dataset()
     ds["return_period"].attrs["units"] = "years"
-    ds["gcm"].attrs["long_name"] = "Climate model; 'constant' is present climate, others are 2015-2050 SSP5-8.5"
+    ds["gcm"].attrs["long_name"] = "Climate model; 'constant' is present climate, others are epoch 2050 under RCP 8.5"
     ds.attrs = {
         "title": "Tropical cyclone wind speed return periods, STORM, clipped to Port Louis",
-        "source": "Bloemendaal et al. (2022) STORM climate change tropical cyclone wind speed return periods, "
+        "source": "Bloemendaal et al., STORM tropical cyclone wind speed return periods, "
         "CC0, via https://doi.org/10.5281/zenodo.23271097",
     }
     return with_geozarr_attrs(ds.rio.write_crs("EPSG:4326"))
@@ -148,8 +148,13 @@ def damage_config_tables() -> dict[str, pd.DataFrame]:
     )
     hazards = pd.DataFrame(
         [
-            ("coastal_aqueduct", "depth_m", "WRI Aqueduct Floods (2020) coastal flooding", "Coastal flood depth"),
-            ("wind_storm", "ws_10min", "Bloemendaal et al. (2022) STORM", "Tropical cyclone 10-minute wind speed"),
+            (
+                "coastal_aqueduct",
+                "depth_m",
+                "Ward et al., WRI Aqueduct Floods, coastal flooding",
+                "Coastal flood depth",
+            ),
+            ("wind_storm", "ws_10min", "Bloemendaal et al., STORM", "Tropical cyclone 10-minute wind speed"),
         ],
         columns=["hazard", "intensity_metric", "source", "description"],
     )
@@ -190,7 +195,7 @@ def damage_config_tables() -> dict[str, pd.DataFrame]:
         meta = damage_library.get_metadata(library_id)
         metric = "depth_m" if meta.hazard_type == "F" else "ws_10min"
         notes = f"{meta.exposed_element}; {meta.additional_characteristics or ''}; {meta.geographical_application}"
-        source = f"Nirandjan et al. physical vulnerability database, curve {library_id}, CC-BY-4.0, via snail"
+        source = f"Nirandjan et al. (2023) physical vulnerability database, curve {library_id}, CC-BY-4.0, via snail"
         curve_rows.append((curve_id, metric, source, notes))
         curve = damage_library.load_curve(library_id)
         for intensity, damage in zip(curve.intensity, curve.damage):
@@ -202,7 +207,7 @@ def damage_config_tables() -> dict[str, pd.DataFrame]:
             "README": [
                 "Example damage configuration for the mu-star direct damages workflow.",
                 "Same structure as the project workbook. Costs are illustrative and must not be used for analysis.",
-                "Damage curves are copied from the snail damage curve library (Nirandjan et al., CC-BY-4.0).",
+                "Damage curves are copied from the snail damage curve library (Nirandjan et al. (2023), CC-BY-4.0).",
                 "Written by example/prepare_example_data.py",
             ]
         }

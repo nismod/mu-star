@@ -22,6 +22,7 @@ Example:
 
 import json
 import logging
+import warnings
 
 import click
 import numpy as np
@@ -35,6 +36,9 @@ from damages.config import read_damage_config
 from damages.output import build_datasets, empty_arrays, insert_arrays
 from damages.plan import CALCULATED, NOT_CONFIGURED, NOT_VULNERABLE, AssetTypePlan, plan_asset_type
 from damages.quantity import split_quantity
+
+# Snakemake writes a .snakemake_timestamp file in directory outputs, which zarr reports when opening the store
+warnings.filterwarnings("ignore", message=r"Object at \.snakemake_timestamp is not recognized")
 
 
 @click.command()

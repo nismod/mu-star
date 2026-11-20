@@ -149,5 +149,14 @@ def with_geozarr_attrs(ds, dimensions: Sequence[str] = ("y", "x")):
     attrs = geozarr_attrs(tuple(ds.rio.transform()), (ds.sizes[y_dim], ds.sizes[x_dim]), crs, dimensions)
     # Keep any CF "spatial_ref" grid mapping too, for GDAL/rioxarray readers
     ds = ds.copy()
+    if "spatial_ref" in ds.data_vars:
+        ds = ds.set_coords("spatial_ref")
+    if "spatial_ref" in ds.coords:
+        # Zarr writers leave a grid mapping out of the "coordinates" attribute, so plain xarray
+        # readers would open spatial_ref as a data variable. List it explicitly.
+        for name in ds.data_vars:
+            variable = ds[name].variable
+            if "spatial_ref" in (variable.attrs.get("grid_mapping"), variable.encoding.get("grid_mapping")):
+                variable.attrs["coordinates"] = "spatial_ref"
     ds.attrs = {**ds.attrs, **attrs}
     return ds

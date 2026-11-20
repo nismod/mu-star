@@ -25,6 +25,7 @@ Example:
         --damage-config example/config/asset-type-cost-curves.xlsx
 """
 
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,6 +41,9 @@ from damages.geozarr import check_coords_match_grid, grid_from_geozarr_attrs
 from damages.metadata import TABLES, load_metadata_table
 from damages.plan import CALCULATED, NOT_CONFIGURED, NOT_VULNERABLE, plan_asset_type
 from damages.units import units_match
+
+# Snakemake writes a .snakemake_timestamp file in directory outputs, which zarr reports when opening the store
+warnings.filterwarnings("ignore", message=r"Object at \.snakemake_timestamp is not recognized")
 
 OK = "ok"
 MISSING = "missing"

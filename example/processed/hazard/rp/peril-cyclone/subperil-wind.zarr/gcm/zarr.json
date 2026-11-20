@@ -32,7 +32,7 @@
     }
   ],
   "attributes": {
-    "long_name": "Climate model; 'constant' is present climate, others are 2015-2050 SSP5-8.5"
+    "long_name": "Climate model; 'constant' is present climate, others are epoch 2050 under RCP 8.5"
   },
   "dimension_names": [
     "gcm"

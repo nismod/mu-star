@@ -36,6 +36,14 @@ def _dataset():
     return da.to_dataset(name="depth").rio.write_crs("EPSG:4326")
 
 
+def test_spatial_ref_is_not_a_data_variable_after_zarr_round_trip(tmp_path):
+    ds = with_geozarr_attrs(_dataset())
+    ds.to_zarr(tmp_path / "store.zarr", mode="w", consolidated=False)
+    back = xr.open_zarr(tmp_path / "store.zarr", consolidated=False)
+    assert "spatial_ref" not in back.data_vars
+    assert back.rio.crs.to_epsg() == 4326
+
+
 def test_with_geozarr_attrs_matches_coords():
     ds = with_geozarr_attrs(_dataset())
     grid = grid_from_geozarr_attrs(ds.attrs)
