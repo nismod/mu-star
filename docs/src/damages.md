@@ -186,6 +186,8 @@ the `asset_type` totals.
 ## Running
 
 ```shell
+# Report available layers and hazards, what will be calculated and what is missing
+snakemake -c1 damage_report
 # Check the damage configuration workbook
 snakemake -c1 data/results/damage/damage-config-report.txt
 # Damage to one layer from one hazard
@@ -193,6 +195,17 @@ snakemake -c1 data/results/damage/layer-road/rp/peril-flood/subperil-pluvial/dam
 # All layers and hazards, and the summary
 snakemake -c4 data/results/damage/summary.csv
 ```
+
+The damage report (`workflow/1-damage/damage_report.py`, written to
+`results/damage/report.md` under the data root) checks each layer file
+(required columns, asset types known to the workbook, geometry), each hazard
+store (variable, `return_period` dimension, GeoZarr grid attributes, hazard key
+in the workbook), and, for each layer, hazard and asset type, whether damage
+will be calculated (with which costs and curves), is zero because the asset
+type is not vulnerable, or is missing configuration, and why. It also lists
+which damage outputs exist already. It reads hazard metadata only, so it runs
+quickly; `snakemake --dry-run` shows exactly which jobs will run. Set
+`data_root` in the config to report on data elsewhere than `data/`.
 
 Each rule runs a script in `workflow/1-damage/`, which can also be run directly
 (see `--help`). Reusable functions are in the `damages` package, `src/damages`.

@@ -31,8 +31,9 @@ import xarray as xr
 import zarr
 
 from damages.calculate import RETURN_PERIOD, sample_direct_damages, stack_cases
-from damages.config import ConfigError, read_damage_config
+from damages.config import read_damage_config
 from damages.output import build_datasets, empty_arrays, insert_arrays
+from damages.plan import CALCULATED, NOT_CONFIGURED, NOT_VULNERABLE, AssetTypePlan, plan_asset_type
 from damages.quantity import split_quantity
 
 
@@ -96,28 +97,25 @@ def main(
         n_assets[asset_type] = len(assets_of_type)
         local_asset = np.searchsorted(assets_of_type, asset_index[split_pos])
 
-        vulnerable = config.is_vulnerable(asset_type, metric)
-        try:
-            if vulnerable is None:
-                raise ConfigError(f"{asset_type!r} has no vulnerability entry for {metric!r}")
-            cost = config.cost(asset_type) if vulnerable else None
-            if vulnerable:
-                curves, weights = config.curves_for(asset_type, metric)
-                if not curves:
-                    raise ConfigError(f"{asset_type!r} is vulnerable to {metric!r} but has no damage curves")
-                quantity = split_quantity(splits.iloc[split_pos], cost.unit)
-        except (ConfigError, KeyError, ValueError) as err:
+        plan = plan_asset_type(config, asset_type, metric)
+        status[asset_type] = plan.status
+        cost_units[asset_type] = plan.cost.unit.currency if plan.cost else ""
+        if plan.status == CALCULATED:
+            try:
+                quantity = split_quantity(splits.iloc[split_pos], plan.cost.unit)
+            except (KeyError, ValueError) as err:
+                plan = AssetTypePlan(asset_type, metric, NOT_CONFIGURED, str(err))
+                status[asset_type] = plan.status
+                cost_units[asset_type] = ""
+
+        if plan.status == NOT_CONFIGURED:
             if strict:
-                raise click.ClickException(str(err)) from err
-            logging.warning("Skipping %s, damage will be NaN: %s", asset_type, err)
-            status[asset_type] = "not_configured"
-            cost_units[asset_type] = ""
+                raise click.ClickException(f"{asset_type}: {plan.reason}")
+            logging.warning("Skipping %s, damage will be NaN: %s", asset_type, plan.reason)
             continue
 
-        if not vulnerable:
+        if plan.status == NOT_VULNERABLE:
             logging.info("%s is not vulnerable to %s, damage is zero", asset_type, metric)
-            status[asset_type] = "not_vulnerable"
-            cost_units[asset_type] = ""
             for key in arrays:
                 group = key.split("/")[0]
                 if group == "split":
@@ -128,6 +126,7 @@ def main(
                     arrays[key][t] = 0.0
             continue
 
+        cost, curves, weights = plan.cost, plan.curves, plan.weights
         logging.info(
             "%s: %d splits of %d assets, curves %s, cost %g %s",
             asset_type,
@@ -153,8 +152,6 @@ def main(
             eta_sd=eta_sd,
         )
         insert_arrays(arrays, result, split_pos, assets_of_type, t)
-        status[asset_type] = "calculated"
-        cost_units[asset_type] = f"{cost.unit.currency}"
         run_metadata[asset_type] = result.metadata
 
     datasets = build_datasets(

@@ -1,5 +1,8 @@
 # Configuration for the example data, merged over config/config.yaml:
 #   snakemake -c1 example/results/damage/summary.csv --configfile example/config.yaml
+# Data root for rules requested by name, e.g. damage_report
+data_root: "example"
+
 metadata:
   layer: "example/config/layer.csv"
   hazard: "example/config/hazard.csv"
