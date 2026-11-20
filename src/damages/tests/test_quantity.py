@@ -1,5 +1,6 @@
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
 from shapely.geometry import LineString, Point, box
 
@@ -139,3 +140,10 @@ def test_conservation_mismatches():
     assert result.rel_diff.tolist() == pytest.approx([1.0, 0.1])
     assert result.actual.tolist() == pytest.approx([0, 900])
     assert conservation_mismatches(expected, measure_splits(splits), rtol=1.0).empty
+
+
+def test_measure_splits_share_of_unsplit_asset():
+    # a polygon of 400 m2 of which only 200 m2 has a split: its share is a half, not one
+    totals = pd.Series({"a": 1000.0, "b": 400.0, "c": 0.0})
+    splits = measure_splits(_splits(), totals=totals)
+    assert splits.share.tolist() == pytest.approx([0.3, 0.7, 0.5, 1])

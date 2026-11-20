@@ -86,6 +86,7 @@ def measure_splits(
     splits: gpd.GeoDataFrame,
     asset_id: str = "asset_id",
     measure_crs=None,
+    totals: pd.Series | None = None,
 ) -> gpd.GeoDataFrame:
     """Add split number, geometry kind, length, area and share-of-asset columns to splits.
 
@@ -94,6 +95,12 @@ def measure_splits(
     parent asset's total length (lines) or area (polygons), or one over the
     number of splits (points, or degenerate geometries with zero measure).
     ``geom_kind`` is "point", "line", "polygon" or "other".
+
+    ``totals`` gives the length or area of each unsplit asset, indexed by
+    asset identifier (see :func:`asset_totals`). Pass it so that shares are
+    of the whole asset even if part of it has no split, as for a polygon
+    partly outside the grid; shares of such an asset sum to less than one.
+    Without it, shares are of the total over each asset's splits.
     """
     splits = splits.copy()
     splits[SPLIT_ID] = splits.groupby(asset_id, sort=False).cumcount().astype("int64")
@@ -121,6 +128,10 @@ def measure_splits(
     grouped = measure.groupby(splits[asset_id], sort=False)
     total = grouped.transform("sum")
     count = grouped.transform("size")
+    if totals is not None:
+        whole = pd.Series(splits[asset_id].map(totals).to_numpy(dtype=float), index=splits.index)
+        # fall back to the split total where the unsplit total is unknown or zero
+        total = whole.where(whole > 0, total)
     splits[SHARE] = np.where(total > 0, measure / total.where(total > 0, 1.0), 1.0 / count)
     return splits
 

@@ -1,11 +1,12 @@
 """Attribute hazard intensity values to each split.
 
 Reads splits (as written by ``damage_split.py``) and a hazard data cube, and
-writes a Zarr store with one variable, ``intensity``, with dimensions
+writes a Zarr store with ``intensity``, with dimensions
 ``(split, ...hazard dims)`` - for example ``(split, rcp, epoch,
 return_period)``. The ``split`` dimension is aligned with the rows of the split
 GeoParquet file and has ``asset_id``, ``split_id`` and ``asset_type``
-coordinates.
+coordinates. ``has_data``, with the hazard dimensions only, records whether
+the hazard has any data on its grid for each combination.
 
 Example:
 
@@ -56,6 +57,8 @@ def main(splits_path, hazard_path, variable, output_path):
         }
     )
     ds = intensity.to_dataset()
+    # whether the hazard has any data, anywhere on the grid, for each combination of other dimensions
+    ds["has_data"] = da.notnull().any(dim=[y_dim, x_dim]).compute()
     ds.attrs = {k: v for k, v in hazard.attrs.items() if not k.startswith(("spatial:", "proj:", "zarr_conventions"))}
     ds.to_zarr(output_path, mode="w", consolidated=False)
     logging.info("Wrote %s", output_path)

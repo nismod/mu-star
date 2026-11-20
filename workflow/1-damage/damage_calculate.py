@@ -69,7 +69,8 @@ def main(
 
     columns = [c for c in pq.read_schema(splits_path).names if c != "geometry"]
     splits = pd.read_parquet(splits_path, columns=columns)
-    intensity = xr.open_zarr(intensity_path, consolidated=False)["intensity"].load()
+    intensity_ds = xr.open_zarr(intensity_path, consolidated=False)
+    intensity = intensity_ds["intensity"].load()
     if (
         intensity.sizes["split"] != len(splits)
         or not (intensity.asset_id.values == splits.asset_id.astype(str).to_numpy()).all()
@@ -80,6 +81,13 @@ def main(
     values = stacked.values
     return_periods = stacked[RETURN_PERIOD].values.astype(float)
     case_index = stacked.indexes["case"]
+    # Cases (combinations of scenario dimensions) with no hazard data at all have NaN damage
+    if "has_data" in intensity_ds:
+        # stack_cases orders cases as the row-major product of case_dims
+        has_data = intensity_ds["has_data"].load().any(RETURN_PERIOD).transpose(*case_dims)
+        missing_case = ~has_data.values.astype(bool).reshape(len(case_index))
+    else:
+        missing_case = ~np.isfinite(values).any(axis=(0, 2))
 
     asset_ids, asset_index = np.unique(splits.asset_id.astype(str).to_numpy(), return_inverse=True)
     asset_types = sorted(splits.asset_type.astype(str).unique())
@@ -124,6 +132,10 @@ def main(
                     arrays[key][assets_of_type] = 0.0
                 else:
                     arrays[key][t] = 0.0
+            for key in arrays:
+                group = key.split("/")[0]
+                index = split_pos if group == "split" else assets_of_type if group == "asset" else [t]
+                arrays[key][np.ix_(index, np.flatnonzero(missing_case))] = np.nan
             continue
 
         cost, curves, weights = plan.cost, plan.curves, plan.weights
@@ -145,6 +157,7 @@ def main(
             weights,
             cost,
             n_assets=len(assets_of_type),
+            missing_case=missing_case,
             n_samples=n_samples,
             quantiles=quantiles,
             seed=seed,
