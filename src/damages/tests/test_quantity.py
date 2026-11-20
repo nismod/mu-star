@@ -2,11 +2,14 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
-from shapely.geometry import LineString, Point, box
+from shapely.geometry import LineString, Point, Polygon, box
+from shapely.geometry.polygon import orient
 
 from damages.quantity import (
     asset_totals,
     conservation_mismatches,
+    geodesic_measures,
+    measure_geometries,
     measure_splits,
     parse_cost_unit,
     split_quantity,
@@ -147,3 +150,51 @@ def test_measure_splits_share_of_unsplit_asset():
     totals = pd.Series({"a": 1000.0, "b": 400.0, "c": 0.0})
     splits = measure_splits(_splits(), totals=totals)
     assert splits.share.tolist() == pytest.approx([0.3, 0.7, 0.5, 1])
+
+
+HOLE = box(57.52, -20.28, 57.54, -20.26)
+OUTER = box(57.5, -20.3, 57.6, -20.2)
+
+
+def test_geodesic_measures():
+    geometry = gpd.GeoSeries(
+        [
+            LineString([(0, 0), (1, 0)]),  # one degree along the equator
+            OUTER,
+            Polygon(OUTER.exterior.coords, [HOLE.exterior.coords]),  # hole wound the same way as the exterior
+            orient(OUTER, -1.0),  # clockwise
+            Point(57.5, -20.2),
+            LineString(),
+        ],
+        crs="EPSG:4326",
+    )
+    length, area = geodesic_measures(geometry)
+    assert length.tolist() == pytest.approx([111_319.491, 0, 0, 0, 0, 0])
+    _, (outer_area, hole_area) = geodesic_measures(gpd.GeoSeries([OUTER, HOLE], crs="EPSG:4326"))
+    assert area.tolist() == pytest.approx([0, outer_area, outer_area - hole_area, outer_area, 0, 0])
+    assert outer_area == pytest.approx(115_668_102, rel=1e-6)
+
+
+def test_measure_geometries_planar_in_projected_metres():
+    geometry = gpd.GeoSeries([LineString([(0, 0), (300, 400)]), box(0, 0, 10, 20), Point(0, 0)], crs="EPSG:32740")
+    length, area = measure_geometries(geometry)
+    assert length.tolist() == [500, 0, 0]
+    assert area.tolist() == [0, 200, 0]
+
+
+@pytest.mark.parametrize("crs", ["EPSG:4326", "EPSG:2263"])  # degrees, and a projected CRS in US survey feet
+def test_measure_geometries_geodesic_otherwise(crs):
+    geometry = gpd.GeoSeries([LineString([(57.5, -20.3), (57.6, -20.2)]), OUTER], crs="EPSG:4326").to_crs(crs)
+    length, area = measure_geometries(geometry)
+    expected_length, expected_area = geodesic_measures(geometry)
+    assert length == pytest.approx(expected_length)
+    assert area == pytest.approx(expected_area)
+    assert length[0] == pytest.approx(15_340, rel=1e-2)  # about 0.1 degrees each way, near 20 S
+
+
+def test_measures_need_crs():
+    geometry = gpd.GeoSeries([LineString([(0, 0), (1, 0)])])
+    with pytest.raises(ValueError, match="CRS"):
+        measure_geometries(geometry)
+    with pytest.raises(ValueError, match="CRS"):
+        geodesic_measures(geometry)

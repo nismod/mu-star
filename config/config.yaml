@@ -28,10 +28,6 @@ damage:
   # Standard deviation of multiplicative damage fraction noise (0 for none)
   # TODO - also in workbook?
   eta_sd: 0.0
-  # Projected CRS (metres) used to measure split lengths and areas.
-  # EPSG:32740 is UTM zone 40S, covering Mauritius (use 32741 for Rodrigues)
-  # TODO - use proj Geod for geodetic rather than reproject?
-  measure_crs: "EPSG:32740"
   # Fail if an asset type in the data is missing from the damage config, or
   # is vulnerable but missing curves or costs. Otherwise warn, and give NaN.
   strict: true

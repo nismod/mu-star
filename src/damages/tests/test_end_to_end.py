@@ -98,7 +98,7 @@ def _pipeline(data: Path, workbook: Path, layer: str) -> str:
     asset_layer = data / "processed" / "asset" / f"layer-{layer}.gpq"
     split, intensity, damage = out / "split.gpq", out / "intensity.zarr", out / "damage.zarr"
     steps = {
-        "damage_split.py": ["--layer", asset_layer, "--hazard", hazard, "--measure-crs", syn.CRS, "--output", split],
+        "damage_split.py": ["--layer", asset_layer, "--hazard", hazard, "--output", split],
         "damage_intensity.py": ["--splits", split, "--hazard", hazard, "--variable", "depth", "--output", intensity],
         "damage_calculate.py": [
             *["--splits", split, "--intensity", intensity, "--damage-config", workbook, "--hazard", syn.HAZARD_KEY],
@@ -497,7 +497,6 @@ def test_snakemake_workflow(dataset, tmp_path):
         "damage:\n"
         f"  config: '{inputs['workbook']}'\n"
         f"  n_samples: {N_SAMPLES}\n"
-        f"  measure_crs: '{syn.CRS}'\n"
         "  strict: false\n"
     )
     target = data / "results" / "damage" / "summary.csv"

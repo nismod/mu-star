@@ -8,7 +8,8 @@ GeoParquet. Each split keeps its parent asset's attributes and gains:
 - ``split_id``: split number within the asset (0, 1, ...)
 - ``index_i``, ``index_j``: grid column and row (-1 if outside the grid)
 - ``geom_kind``: "point", "line", "polygon" or "other"
-- ``length_m``, ``area_m2``: measured in a projected CRS (zero for slivers)
+- ``length_m``, ``area_m2``: planar in a projected metre CRS, otherwise geodesic
+  (zero for slivers)
 - ``share``: fraction of the unsplit parent asset's length/area (1 for points)
 
 Example:
@@ -27,7 +28,7 @@ import zarr
 from snail.overlay import split_features
 
 from damages.geozarr import grid_from_geozarr_attrs
-from damages.quantity import asset_totals, conservation_mismatches, default_measure_crs, measure_splits
+from damages.quantity import asset_totals, conservation_mismatches, measure_splits
 
 REQUIRED_COLUMNS = ("asset_id", "asset_type")
 CONSERVATION_RTOL = 1e-3
@@ -38,13 +39,14 @@ N_WORST = 5
 @click.option("--layer", "layer_path", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--hazard", "hazard_path", required=True, type=click.Path(exists=True))
 @click.option("--output", "output_path", required=True, type=click.Path(dir_okay=False))
-@click.option("--measure-crs", default=None, help="Projected CRS for lengths and areas (default: UTM estimate)")
-def main(layer_path, hazard_path, output_path, measure_crs):
+def main(layer_path, hazard_path, output_path):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     features = gpd.read_parquet(layer_path)
     missing = [c for c in REQUIRED_COLUMNS if c not in features.columns]
     if missing:
         raise click.ClickException(f"{layer_path} is missing required columns {missing}")
+    if features.crs is None:
+        raise click.ClickException(f"{layer_path} has no CRS, so lengths and areas cannot be measured")
     if features.asset_id.duplicated().any():
         raise click.ClickException(f"{layer_path} has duplicate asset_id values")
     features = features[features.geometry.notna() & ~features.geometry.is_empty]
@@ -53,10 +55,8 @@ def main(layer_path, hazard_path, output_path, measure_crs):
     logging.info("Splitting %d features on %dx%d grid", len(features), grid.width, grid.height)
 
     splits = split_features(features, grid)
-    if measure_crs is None:
-        measure_crs = default_measure_crs(features)
-    totals = asset_totals(features, "asset_id", measure_crs)
-    splits = measure_splits(splits, asset_id="asset_id", measure_crs=measure_crs, totals=totals)
+    totals = asset_totals(features, "asset_id")
+    splits = measure_splits(splits, asset_id="asset_id", totals=totals)
     mismatches = conservation_mismatches(totals, splits, "asset_id", CONSERVATION_RTOL)
     if len(mismatches):
         worst = ", ".join(f"{i} ({r:.1%} off)" for i, r in mismatches.rel_diff.head(N_WORST).items())

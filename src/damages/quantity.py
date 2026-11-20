@@ -12,6 +12,10 @@ Costs in the damage configuration workbook have a ``cost_unit`` such as:
 
 The currency is the part before ``_per_``. Units are case-insensitive, but
 attribute names are matched exactly against asset data columns.
+
+Lengths and areas are measured in metres and square metres: planar if the
+data are in a projected CRS with metre units, otherwise geodesic, on the
+WGS84 ellipsoid (see :func:`measure_geometries`).
 """
 
 from dataclasses import dataclass
@@ -19,6 +23,11 @@ from dataclasses import dataclass
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import shapely
+from pyproj import Geod
+
+WGS84_GEOD = Geod(ellps="WGS84")
+GEOGRAPHIC_CRS = "EPSG:4326"
 
 LENGTH_UNITS = {"m": 1.0, "km": 1e-3}
 AREA_UNITS = {"m2": 1.0, "km2": 1e-6}
@@ -70,28 +79,66 @@ def parse_cost_unit(unit: str) -> CostUnit:
     return CostUnit(currency=currency.lower(), per=per if sep else None)
 
 
-def default_measure_crs(frame: gpd.GeoDataFrame):
-    """CRS in which to measure lengths and areas: an estimated UTM zone if ``frame`` is geographic."""
-    if frame.crs is not None and frame.crs.is_geographic:
-        return frame.estimate_utm_crs()
-    return frame.crs
-
-
 def geometry_kinds(geometry: gpd.GeoSeries) -> pd.Series:
     """Kind of each geometry: "point", "line", "polygon" or "other"."""
     return geometry.geom_type.map(GEOMETRY_KINDS).fillna("other")
 
 
+def is_metre_projected(crs) -> bool:
+    """Whether a CRS is projected, with all axes in metres, so planar measures are in metres."""
+    return crs.is_projected and all(axis.unit_name in ("metre", "meter") for axis in crs.axis_info)
+
+
+def measure_geometries(geometry: gpd.GeoSeries) -> tuple[np.ndarray, np.ndarray]:
+    """Length (lines) and area (polygons) of each geometry, in metres and square metres.
+
+    Measured planar if the CRS is projected with metre units (see
+    :func:`is_metre_projected`), otherwise geodesic (see :func:`geodesic_measures`).
+    Other geometry kinds, and empty geometries, have length and area 0.
+    """
+    if geometry.crs is None:
+        raise ValueError("Geometries need a CRS to measure lengths and areas")
+    if not is_metre_projected(geometry.crs):
+        return geodesic_measures(geometry)
+    kind = _measured_kinds(geometry)
+    length = np.where(kind == "line", geometry.length.to_numpy(), 0.0)
+    area = np.where(kind == "polygon", geometry.area.to_numpy(), 0.0)
+    return length, area
+
+
+def _measured_kinds(geometry: gpd.GeoSeries) -> np.ndarray:
+    return np.where(geometry.is_empty.to_numpy(), "other", geometry_kinds(geometry).to_numpy())
+
+
+def geodesic_measures(geometry: gpd.GeoSeries) -> tuple[np.ndarray, np.ndarray]:
+    """Geodesic length (lines) and area (polygons) of each geometry, in metres and square metres.
+
+    Other geometry kinds have length and area 0. Geometries must have a CRS.
+    """
+    if geometry.crs is None:
+        raise ValueError("Geometries need a CRS to measure geodesic lengths and areas")
+    kind = _measured_kinds(geometry)
+    # pyproj gives signed areas, and only subtracts holes from polygons that are
+    # oriented consistently: exteriors counter-clockwise, interiors clockwise
+    lonlat = shapely.orient_polygons(geometry.to_crs(GEOGRAPHIC_CRS).to_numpy(), exterior_cw=False)
+    length = np.zeros(len(lonlat))
+    area = np.zeros(len(lonlat))
+    for k in np.flatnonzero(kind == "line"):
+        length[k] = WGS84_GEOD.geometry_length(lonlat[k])
+    for k in np.flatnonzero(kind == "polygon"):
+        area[k] = abs(WGS84_GEOD.geometry_area_perimeter(lonlat[k])[0])
+    return length, area
+
+
 def measure_splits(
     splits: gpd.GeoDataFrame,
     asset_id: str = "asset_id",
-    measure_crs=None,
     totals: pd.Series | None = None,
 ) -> gpd.GeoDataFrame:
     """Add split number, geometry kind, length, area and share-of-asset columns to splits.
 
-    Lengths and areas are measured in ``measure_crs`` (metres), defaulting
-    to an estimated UTM zone. ``share`` is each split's fraction of its
+    Lengths and areas are in metres and square metres (see
+    :func:`measure_geometries`). ``share`` is each split's fraction of its
     parent asset's total length (lines) or area (polygons), or one over the
     number of splits (points, or degenerate geometries with zero measure).
     ``geom_kind`` is "point", "line", "polygon" or "other".
@@ -111,16 +158,11 @@ def measure_splits(
         splits[SHARE] = pd.Series(dtype="float64")
         return splits
 
-    if measure_crs is None:
-        measure_crs = default_measure_crs(splits)
-    projected = splits.geometry.to_crs(measure_crs) if splits.crs is not None else splits.geometry
-
     kind = geometry_kinds(splits.geometry).to_numpy()
     is_line = kind == "line"
     is_area = kind == "polygon"
     splits[GEOM_KIND] = kind
-    splits[LENGTH_M] = np.where(is_line, projected.length.to_numpy(), 0.0)
-    splits[AREA_M2] = np.where(is_area, projected.area.to_numpy(), 0.0)
+    splits[LENGTH_M], splits[AREA_M2] = measure_geometries(splits.geometry)
 
     measure = pd.Series(
         np.where(is_line, splits[LENGTH_M], np.where(is_area, splits[AREA_M2], 0.0)), index=splits.index
@@ -174,18 +216,15 @@ def split_quantity(splits: pd.DataFrame, unit: CostUnit) -> np.ndarray:
     return values * splits[SHARE].to_numpy(dtype=float)
 
 
-def asset_totals(features: gpd.GeoDataFrame, asset_id: str = "asset_id", measure_crs=None) -> pd.Series:
+def asset_totals(features: gpd.GeoDataFrame, asset_id: str = "asset_id") -> pd.Series:
     """Length (lines) or area (polygons) of each unsplit asset, in metres or square metres.
 
-    Points and other geometries have total 0. Measured in ``measure_crs``,
-    which should be the CRS used for :func:`measure_splits`.
+    Measured as for :func:`measure_splits` (see :func:`measure_geometries`).
+
+    Points and other geometries have total 0.
     """
-    if measure_crs is None:
-        measure_crs = default_measure_crs(features)
-    geometry = features.geometry.to_crs(measure_crs) if features.crs is not None else features.geometry
-    kind = geometry_kinds(geometry)
-    total = np.where(kind == "line", geometry.length, np.where(kind == "polygon", geometry.area, 0.0))
-    return pd.Series(total, index=features[asset_id].to_numpy(), name="total")
+    length, area = measure_geometries(features.geometry)
+    return pd.Series(length + area, index=features[asset_id].to_numpy(), name="total")
 
 
 def conservation_mismatches(

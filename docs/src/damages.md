@@ -17,7 +17,8 @@ For each asset layer and each hazard:
 1. **Split** each asset on the hazard grid, so each split (piece of a line or
    polygon, or a point) falls within one grid cell. Splits keep their parent
    asset's attributes, and their length (lines) or area (polygons) is measured
-   in a projected CRS.
+   in metres: planar if the assets are in a projected CRS with metre units,
+   otherwise geodesically, on the WGS84 ellipsoid.
 2. **Look up hazard intensity** for each split, from the grid cell it falls in,
    for every return period and every other hazard dimension (for example
    climate scenario, epoch or climate model). Splits outside the grid, or in

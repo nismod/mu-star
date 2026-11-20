@@ -114,14 +114,11 @@ rule split_layer:
     output:
         # columns: asset attributes, split_id, index_i, index_j, length_m, area_m2, share, geometry
         split = "{data}/results/damage/{layer}/rp/{peril}/{subperil}/split.gpq",
-    params:
-        measure_crs = config["damage"]["measure_crs"],
     shell:
         """
         python {input.script:q} \
             --layer {input.layer:q} \
             --hazard {input.hazard:q} \
-            --measure-crs {params.measure_crs:q} \
             --output {output.split:q}
         """
 
