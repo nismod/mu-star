@@ -37,7 +37,9 @@ import xarray as xr
 
 from damages.config import ConfigError, DamageConfig, read_damage_config, validate_damage_config
 from damages.geozarr import check_coords_match_grid, grid_from_geozarr_attrs
+from damages.metadata import TABLES, load_metadata_table
 from damages.plan import CALCULATED, NOT_CONFIGURED, NOT_VULNERABLE, plan_asset_type
+from damages.units import units_match
 
 OK = "ok"
 MISSING = "missing"
@@ -78,12 +80,10 @@ class HazardCheck:
         return f"{self.peril}/{self.subperil}"
 
 
-def read_table(path, key_columns) -> pd.DataFrame:
-    table = pd.read_csv(path, comment="#", dtype=str, skipinitialspace=True).dropna(how="all")
-    missing = set(key_columns) - set(table.columns)
-    if missing:
-        raise click.ClickException(f"{path} is missing columns {sorted(missing)}")
-    return table
+def _usable_rows(table: pd.DataFrame, required: list[str]) -> pd.DataFrame:
+    if any(c not in table.columns for c in required):
+        return table.iloc[0:0].reindex(columns=required)
+    return table.dropna(subset=required)
 
 
 def check_layer(name: str, path: Path, config: DamageConfig | None) -> LayerCheck:
@@ -179,8 +179,16 @@ def check_hazard(row, data_root: Path, config: DamageConfig | None) -> HazardChe
         check.status = INVALID
         check.problems.append(f"GeoZarr grid: {err}")
     units = da.attrs.get("units") or da.attrs.get("unit")
+    expected = config.metric_unit(check.metric) if config is not None and check.metric else None
     if not units:
-        check.problems.append(f"variable {row.variable!r} has no units attribute")
+        suffix = f" (workbook gives {expected!r} for {check.metric!r})" if expected else ""
+        check.problems.append(f"variable {row.variable!r} has no units attribute{suffix}")
+    elif expected and not units_match(units, expected):
+        check.status = INVALID
+        check.problems.append(
+            f"variable {row.variable!r} has units {str(units)!r}, "
+            f"but the workbook gives {expected!r} for {check.metric!r}"
+        )
     return check
 
 
@@ -251,8 +259,13 @@ def build_report(data_root: Path, layers_path: Path, hazards_path: Path, config_
             config_problems = [f"could not read workbook: {err}"]
             blocking += 1
 
-    layer_table = read_table(layers_path, ["layer", "path"])
-    hazard_table = read_table(hazards_path, ["peril", "subperil", "path", "variable", "hazard"])
+    layer_table, layer_problems = load_metadata_table(layers_path, "layer")
+    hazard_table, hazard_problems = load_metadata_table(hazards_path, "hazard")
+    metadata_problems = layer_problems + hazard_problems
+    blocking += len(metadata_problems)
+    # rows with blank required cells, or tables without the required columns, cannot be checked
+    layer_table = _usable_rows(layer_table, TABLES["layer"]["required"])
+    hazard_table = _usable_rows(hazard_table, TABLES["hazard"]["required"])
     layers = [check_layer(row.layer, data_root / row.path, config) for row in layer_table.itertuples()]
     hazards = [check_hazard(row, data_root, config) for row in hazard_table.itertuples()]
 
@@ -318,6 +331,7 @@ def build_report(data_root: Path, layers_path: Path, hazards_path: Path, config_
         f"- Asset type x hazard: {counts[CALCULATED]} will be calculated, {counts[NOT_VULNERABLE]} not vulnerable "
         f"(zero damage), {counts[NOT_CONFIGURED]} missing configuration (NaN damage, or an error if strict)",
         f"- Damage configuration problems: {len(config_problems)}",
+        f"- Layer and hazard table problems: {len(metadata_problems)}",
         "",
     ]
     blocking += sum(c.status != OK for c in layers) + sum(c.status != OK for c in hazards) + counts[NOT_CONFIGURED]
@@ -325,6 +339,11 @@ def build_report(data_root: Path, layers_path: Path, hazards_path: Path, config_
     lines += ["## Damage configuration", ""]
     lines += [f"- {p}" for p in config_problems] if config_problems else ["No problems found."]
     lines += [""]
+
+    if metadata_problems:
+        lines += ["## Layer and hazard table problems", ""]
+        lines += [f"- {p}" for p in metadata_problems]
+        lines += [""]
 
     lines += ["## Asset layers", ""]
     rows = []
@@ -364,10 +383,13 @@ def build_report(data_root: Path, layers_path: Path, hazards_path: Path, config_
         "Use `snakemake --dry-run` to see exactly which jobs snakemake will run.",
         "",
     ]
-    lines += _table(
-        ["layer", "hazard", "outputs", "asset types calculated", "not vulnerable", "missing configuration"],
-        combo_rows,
-    )
+    if combo_rows:
+        lines += _table(
+            ["layer", "hazard", "outputs", "asset types calculated", "not vulnerable", "missing configuration"],
+            combo_rows,
+        )
+    else:
+        lines += ["No layer and hazard combinations to calculate: add layers and hazards to the metadata tables.", ""]
     lines += detail
     return "\n".join(lines).rstrip() + "\n", blocking
 

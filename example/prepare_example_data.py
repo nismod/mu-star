@@ -140,8 +140,11 @@ def damage_config_tables() -> dict[str, pd.DataFrame]:
         columns=["asset_type", "sector", "description"],
     )
     hazard_metrics = pd.DataFrame(
-        [("depth_m", "Flood depth in metres"), ("ws_10min", "10-minute average surface wind speed, metres per second")],
-        columns=["intensity_metric", "description"],
+        [
+            ("depth_m", "Flood depth in metres", "m"),
+            ("ws_10min", "10-minute average surface wind speed, metres per second", "m/s"),
+        ],
+        columns=["intensity_metric", "description", "unit"],
     )
     hazards = pd.DataFrame(
         [

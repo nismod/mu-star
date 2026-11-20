@@ -5,7 +5,7 @@ curves. Each worksheet is a table; see the README sheet of the workbook and
 ``docs/src/damages.md`` for column definitions. Sheets used here:
 
 - ``asset-type`` (asset_type, sector, description)
-- ``hazard-metric`` (intensity_metric, description)
+- ``hazard-metric`` (intensity_metric, description, optional unit)
 - ``hazard`` (hazard, intensity_metric, source, description)
 - ``asset-type-hazard-vulnerability`` (asset_type, hazard_intensity_metric, vulnerable)
 - ``asset-type-cost`` (asset_type, cost_unit, cost_mean, cost_systemic_cv, cost_asset_cv, source)
@@ -40,8 +40,43 @@ SHEETS = {
 }
 
 
+FORMULA_HINT = (
+    "if these cells contain formulas, open the workbook in a spreadsheet application and save it, "
+    "so that the calculated values are stored"
+)
+
+_TRUE = {"1", "1.0", "true", "yes"}
+_FALSE = {"0", "0.0", "false", "no"}
+
+
 class ConfigError(ValueError):
     """Damage configuration is invalid or incomplete."""
+
+
+def parse_vulnerable(value) -> bool | None:
+    """Interpret a ``vulnerable`` cell: 1/0, True/False, "yes"/"no" or "true"/"false" (any case).
+
+    Returns None for blank cells and anything else.
+    """
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _TRUE:
+            return True
+        if text in _FALSE:
+            return False
+    return None
+
+
+def _blank(series: pd.Series) -> pd.Series:
+    return series.isna() | series.map(lambda v: isinstance(v, str) and not v.strip())
 
 
 @dataclass(frozen=True)
@@ -76,13 +111,27 @@ class DamageConfig:
         rows = v.loc[(v.asset_type == asset_type) & (v.hazard_intensity_metric == metric), "vulnerable"]
         if rows.empty:
             return None
-        return bool(rows.astype(float).max() > 0)
+        # entries that are not understood are ignored here; validate_damage_config reports them
+        values = [x for x in rows.map(parse_vulnerable) if x is not None]
+        if not values:
+            return None
+        return any(values)
+
+    def metric_unit(self, metric: str) -> str | None:
+        """Unit of a hazard intensity metric from the optional ``unit`` column of the hazard-metric sheet."""
+        table = self.hazard_metrics
+        if "unit" not in table.columns:
+            return None
+        units = table.loc[table.intensity_metric == metric, "unit"].dropna()
+        units = units[units.astype(str).str.strip() != ""]
+        return str(units.iloc[0]).strip() if len(units) else None
 
     def curve_weights(self, asset_type: str, metric: str) -> dict[str, float]:
         """Curve identifiers and relative weights for an asset type and metric."""
         ac = self.asset_curves
         rows = ac.loc[(ac.asset_type == asset_type) & (ac.hazard_intensity_metric == metric)]
-        return rows.groupby("curve_id", sort=False)["curve_weight"].sum().astype(float).to_dict()
+        weight = pd.to_numeric(rows["curve_weight"], errors="coerce")
+        return weight.groupby(rows["curve_id"], sort=False).sum().astype(float).to_dict()
 
     def curve(self, curve_id: str) -> PiecewiseLinearDamageCurve:
         """Piecewise linear damage curve built from the curve data sheet."""
@@ -154,16 +203,43 @@ def validate_damage_config(config: DamageConfig) -> list[str]:
     Returns a list of human-readable problems, empty if none were found.
     """
     problems = []
-    asset_types = set(config.asset_types.asset_type)
-    metrics = set(config.hazard_metrics.intensity_metric)
-    curve_ids = set(config.curves.curve_id)
+    asset_types = set(config.asset_types.asset_type.dropna())
+    metrics = set(config.hazard_metrics.intensity_metric.dropna())
+    curve_ids = set(config.curves.curve_id.dropna())
 
     def check_refs(frame, column, valid, sheet, target):
         for value in sorted(set(frame[column].dropna()) - valid):
             problems.append(f"{sheet}: {column} {value!r} not found in {target}")
 
-    if config.asset_types.asset_type.duplicated().any():
+    def check_blank(frame, columns, sheet):
+        for column in columns:
+            n_blank = int(_blank(frame[column]).sum())
+            if n_blank:
+                problems.append(f"{sheet}: {n_blank} rows have a blank {column} ({FORMULA_HINT})")
+
+    check_blank(config.asset_types, ["asset_type"], "asset-type")
+    check_blank(config.hazard_metrics, ["intensity_metric"], "hazard-metric")
+    check_blank(config.hazards, ["hazard", "intensity_metric"], "hazard")
+    check_blank(
+        config.vulnerability,
+        ["asset_type", "hazard_intensity_metric", "vulnerable"],
+        "asset-type-hazard-vulnerability",
+    )
+    check_blank(config.costs, ["asset_type"], "asset-type-cost")
+    check_blank(config.curves, ["curve_id", "hazard_intensity_metric"], "damage-curves")
+    check_blank(config.curve_data, ["curve_id"], "damage-curve-data")
+    check_blank(
+        config.asset_curves,
+        ["asset_type", "hazard_intensity_metric", "curve_id", "curve_weight"],
+        "asset-type-damage-curve",
+    )
+
+    if config.asset_types.asset_type.dropna().duplicated().any():
         problems.append("asset-type: duplicate asset_type values")
+    if config.costs.asset_type.dropna().duplicated().any():
+        problems.append("asset-type-cost: duplicate asset_type values")
+    if config.curves.curve_id.dropna().duplicated().any():
+        problems.append("damage-curves: duplicate curve_id values")
     check_refs(config.hazards, "intensity_metric", metrics, "hazard", "hazard-metric")
     check_refs(config.vulnerability, "asset_type", asset_types, "asset-type-hazard-vulnerability", "asset-type")
     check_refs(
@@ -175,6 +251,22 @@ def validate_damage_config(config: DamageConfig) -> list[str]:
     check_refs(config.asset_curves, "asset_type", asset_types, "asset-type-damage-curve", "asset-type")
     check_refs(config.asset_curves, "curve_id", curve_ids, "asset-type-damage-curve", "damage-curves")
 
+    vulnerability = config.vulnerability.assign(_parsed=config.vulnerability.vulnerable.map(parse_vulnerable)).dropna(
+        subset=["asset_type", "hazard_intensity_metric"]
+    )
+    unclear = vulnerability.loc[vulnerability._parsed.isna() & ~_blank(vulnerability.vulnerable)]
+    for row in unclear.itertuples():
+        problems.append(
+            f"asset-type-hazard-vulnerability: {row.asset_type} / {row.hazard_intensity_metric} has vulnerable "
+            f"{row.vulnerable!r}, which is not 1/0, true/false or yes/no"
+        )
+    for (asset_type, metric), group in vulnerability.groupby(["asset_type", "hazard_intensity_metric"], sort=False):
+        if group._parsed.dropna().nunique() > 1:
+            problems.append(
+                f"asset-type-hazard-vulnerability: {asset_type} / {metric} is listed {len(group)} times "
+                "with conflicting vulnerable values"
+            )
+
     curve_metric = config.curves.set_index("curve_id").hazard_intensity_metric.to_dict()
     for row in config.asset_curves.itertuples():
         if row.curve_id in curve_metric and curve_metric[row.curve_id] != row.hazard_intensity_metric:
@@ -182,7 +274,8 @@ def validate_damage_config(config: DamageConfig) -> list[str]:
                 f"asset-type-damage-curve: {row.asset_type} lists curve {row.curve_id!r} under "
                 f"{row.hazard_intensity_metric!r}, but the curve is for {curve_metric[row.curve_id]!r}"
             )
-        if pd.isna(row.curve_weight) or float(row.curve_weight) < 0:
+        weight = pd.to_numeric(row.curve_weight, errors="coerce")
+        if not pd.isna(row.curve_weight) and (pd.isna(weight) or weight < 0):
             problems.append(f"asset-type-damage-curve: {row.asset_type} / {row.curve_id} needs a non-negative weight")
 
     used_curves = set(config.asset_curves.curve_id.dropna())
@@ -201,7 +294,7 @@ def validate_damage_config(config: DamageConfig) -> list[str]:
         if intensity.duplicated().any():
             problems.append(f"damage-curve-data: curve {curve_id!r} has repeated intensity values")
 
-    vulnerable = config.vulnerability.loc[config.vulnerability.vulnerable.astype(float) > 0]
+    vulnerable = vulnerability.loc[vulnerability._parsed.map(lambda v: v is True)]
     for row in vulnerable.drop_duplicates(["asset_type", "hazard_intensity_metric"]).itertuples():
         weights = config.curve_weights(row.asset_type, row.hazard_intensity_metric)
         if not weights:
@@ -217,7 +310,11 @@ def validate_damage_config(config: DamageConfig) -> list[str]:
             problems.append(str(err))
 
     listed = set(zip(config.vulnerability.asset_type, config.vulnerability.hazard_intensity_metric))
-    for row in config.asset_curves.drop_duplicates(["asset_type", "hazard_intensity_metric"]).itertuples():
+    for row in (
+        config.asset_curves.dropna(subset=["asset_type", "hazard_intensity_metric"])
+        .drop_duplicates(["asset_type", "hazard_intensity_metric"])
+        .itertuples()
+    ):
         if (row.asset_type, row.hazard_intensity_metric) not in listed:
             problems.append(
                 f"asset-type-damage-curve: {row.asset_type} has curves for {row.hazard_intensity_metric} "

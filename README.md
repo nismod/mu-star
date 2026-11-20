@@ -255,8 +255,13 @@ The `example/` directory holds a small set of open data to run it on:
 snakemake -c2 example/results/damage/summary.csv --configfile example/config.yaml
 ```
 
-To see which layers and hazards are available, what will be calculated and
-what configuration is missing, run `snakemake -c1 damage_report`.
+To see which layers and hazards are available, what will be calculated and what
+configuration is missing, run `snakemake -c1 damage_report`, or equivalently
+with `pixi`:
+
+```shell
+pixi run snakemake -c1 data/results/damage/damage-config-report.txt
+```
 
 ### Testing
 

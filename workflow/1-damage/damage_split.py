@@ -7,7 +7,8 @@ GeoParquet. Each split keeps its parent asset's attributes and gains:
 
 - ``split_id``: split number within the asset (0, 1, ...)
 - ``index_i``, ``index_j``: grid column and row (-1 if outside the grid)
-- ``length_m``, ``area_m2``: measured in a projected CRS
+- ``geom_kind``: "point", "line", "polygon" or "other"
+- ``length_m``, ``area_m2``: measured in a projected CRS (zero for slivers)
 - ``share``: fraction of the parent asset's length/area (1 for points)
 
 Example:
@@ -26,9 +27,11 @@ import zarr
 from snail.overlay import split_features
 
 from damages.geozarr import grid_from_geozarr_attrs
-from damages.quantity import measure_splits
+from damages.quantity import asset_totals, conservation_mismatches, default_measure_crs, measure_splits
 
 REQUIRED_COLUMNS = ("asset_id", "asset_type")
+CONSERVATION_RTOL = 1e-3
+N_WORST = 5
 
 
 @click.command()
@@ -50,7 +53,20 @@ def main(layer_path, hazard_path, output_path, measure_crs):
     logging.info("Splitting %d features on %dx%d grid", len(features), grid.width, grid.height)
 
     splits = split_features(features, grid)
+    if measure_crs is None:
+        measure_crs = default_measure_crs(features)
     splits = measure_splits(splits, asset_id="asset_id", measure_crs=measure_crs)
+    mismatches = conservation_mismatches(
+        asset_totals(features, "asset_id", measure_crs), splits, "asset_id", CONSERVATION_RTOL
+    )
+    if len(mismatches):
+        worst = ", ".join(f"{i} ({r:.1%} off)" for i, r in mismatches.rel_diff.head(N_WORST).items())
+        logging.warning(
+            "%d assets have split lengths or areas differing from the unsplit asset by more than %.1f%%; worst: %s",
+            len(mismatches),
+            CONSERVATION_RTOL * 100,
+            worst,
+        )
     splits = splits.reset_index(drop=True)
     n_outside = int((splits.index_i < 0).sum())
     logging.info("Wrote %d splits (%d outside grid)", len(splits), n_outside)

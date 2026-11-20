@@ -66,13 +66,13 @@ rule collate_SWIO_RAFI_flooding:
             # There's no metadata or documentation, but from a histogram I
             # think the source is in centimetres
             da = da / 100
-            da.attrs["unit"] = "metres"
+            da.attrs["units"] = "m"
             da = da.assign_coords(return_period=rp)
             da = da.expand_dims({"scenario": np.array(['baseline'], dtype=object)})
             data.append(da)
 
         da = xr.concat(data, dim="return_period")
-        da.return_period.attrs["unit"] = "years"
+        da.return_period.attrs["units"] = "years"
 
         da = da.transpose("scenario", "return_period", "y", "x")
 

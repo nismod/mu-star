@@ -125,3 +125,25 @@ def summary_table(totals: xr.Dataset, **labels) -> pd.DataFrame:
     for i, (key, value) in enumerate(labels.items()):
         table.insert(i, key, value)
     return table
+
+
+EMPTY_SUMMARY_COLUMNS = [
+    "layer",
+    "peril",
+    "subperil",
+    "metric",
+    "asset_type",
+    "return_period",
+    "n_assets",
+    "status",
+    "currency",
+]
+
+
+def empty_summary_table() -> pd.DataFrame:
+    """Header-only summary table, for when there are no damage outputs to summarise.
+
+    Has the label, metric and asset type columns of :func:`summary_table`, but
+    no scenario dimension or quantile columns, as these are not known.
+    """
+    return pd.DataFrame(columns=EMPTY_SUMMARY_COLUMNS)

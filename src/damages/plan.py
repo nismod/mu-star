@@ -3,6 +3,8 @@
 Used by the damage calculation, to choose what to do for each asset type, and
 by the damage report, to show in advance what will be calculated and what
 configuration is missing.
+
+TODO - review this - is it entirely overdone, better handled by snakemake? and/or config parsing?
 """
 
 from dataclasses import dataclass, field
@@ -12,20 +14,11 @@ import pandas as pd
 from snail.damages import DamageCurve
 
 from damages.config import ConfigError, CostParameters, DamageConfig
+from damages.quantity import GEOMETRY_KINDS
 
 CALCULATED = "calculated"
 NOT_VULNERABLE = "not_vulnerable"
 NOT_CONFIGURED = "not_configured"
-
-GEOMETRY_KINDS = {
-    "Point": "point",
-    "MultiPoint": "point",
-    "LineString": "line",
-    "MultiLineString": "line",
-    "LinearRing": "line",
-    "Polygon": "polygon",
-    "MultiPolygon": "polygon",
-}
 
 
 @dataclass

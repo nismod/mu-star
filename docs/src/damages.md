@@ -80,7 +80,9 @@ lists the asset files to analyse, one row per file:
 | `sector`      | transport, energy, water or buildings                             |
 | `description` | free text                                                         |
 
-Each file must have a unique `asset_id` column and an `asset_type` column
+Layer names must be words (letters, digits and underscores) and unique, and
+`layer` and `path` must not be blank. A table with only a header is valid: the
+summary is then empty. Each file must have a unique `asset_id` column and an `asset_type` column
 whose values are listed in the damage configuration workbook. A file may hold
 several asset types and a mix of points, lines and polygons.
 
@@ -96,6 +98,12 @@ The hazard table (`config["metadata"]["hazard"]`, by default
 | `variable`    | name of the intensity variable in the store                       |
 | `hazard`      | key of the hazard on the `hazard` sheet of the damage workbook, which gives its intensity metric |
 | `description` | free text                                                         |
+
+`peril` and `subperil` may be any words (letters, digits and underscores),
+for example `flood`/`coastal` or `drought`/`meteorological`. Each
+(`peril`, `subperil`) pair must be unique, and `peril`, `subperil`, `path`,
+`variable` and `hazard` must not be blank. Problems in either table are
+reported together, and snakemake stops with the list before running anything.
 
 Each hazard is a separate Zarr store with explicit `y` and `x` coordinates, a
 `return_period` dimension (in years) and any number of other dimensions, which
@@ -127,7 +135,11 @@ vulnerability, costs and damage curves. Its README sheet describes each column.
 The sheets used are:
 
 - `asset-type`: all asset types, matching `asset_type` in the asset data
-- `hazard-metric`: hazard intensity metrics, with units
+- `hazard-metric`: hazard intensity metrics, with an optional `unit` column
+  (e.g. `m` for `depth_m`, `m/s` for `ws_10min`). If given, the damage report
+  checks it against the `units` attribute of each hazard variable, treating
+  common spellings as equal (`m`, `metre`, `meters`; `m/s`, `m s-1`,
+  `metres per second`), and reports a mismatch, or a variable without `units`
 - `hazard`: hazard datasets and their intensity metric
 - `asset-type-hazard-vulnerability`: whether each asset type is vulnerable to
   each intensity metric
@@ -139,7 +151,12 @@ The sheets used are:
 Damage curves from the
 [snail damage curve library](https://nismod.github.io/snail/) (Nirandjan et
 al.) can be copied into the workbook, as `example/prepare_example_data.py`
-does. Check the workbook with:
+does. Key cells (asset types, metrics, hazards, curve identifiers, `vulnerable`
+and `curve_weight`) must not be blank. Formula cells read as blank if the file
+was saved without calculated values, so open and save the workbook in a
+spreadsheet application first. `vulnerable` may be 1/0, true/false or yes/no.
+Duplicate asset types, curve identifiers, or conflicting vulnerability rows are
+reported. Check the workbook with:
 
 ```shell
 snakemake -c1 data/results/damage/damage-config-report.txt
@@ -151,8 +168,8 @@ For each layer and hazard, under
 `results/damage/layer-{layer}/rp/peril-{peril}/subperil-{subperil}/`:
 
 - `split.gpq`: split geometries (GeoParquet), stored once, with parent asset
-  attributes, `split_id`, grid indices `index_i`/`index_j`, `length_m`,
-  `area_m2` and `share`
+  attributes, `split_id`, grid indices `index_i`/`index_j`, `geom_kind`
+  (`point`, `line`, `polygon` or `other`), `length_m`, `area_m2` and `share`
 - `intensity.zarr`: `intensity` with dimensions `(split, ...hazard dims)`,
   aligned with the rows of `split.gpq`
 - `damage.zarr`, with groups:
@@ -163,6 +180,12 @@ For each layer and hazard, under
   - `asset_type`: totals over all assets of each type, with `n_assets`,
     `status` (`calculated`, `not_vulnerable` or `not_configured`) and
     `currency` coordinates
+
+Splits with zero length or area (slivers) have quantity, and so cost, zero;
+an asset type is only an error if its geometries are of the wrong kind for its
+cost unit. After splitting, `damage_split.py` compares each asset's total split
+length or area with the unsplit asset's (in the same CRS) and logs a warning
+if any differ by more than 0.1%.
 
 Asset types not vulnerable to a hazard have zero damage. Asset types missing
 from the workbook, or vulnerable but missing curves or costs, have NaN damage
@@ -204,8 +227,12 @@ in the workbook), and, for each layer, hazard and asset type, whether damage
 will be calculated (with which costs and curves), is zero because the asset
 type is not vulnerable, or is missing configuration, and why. It also lists
 which damage outputs exist already. It reads hazard metadata only, so it runs
-quickly; `snakemake --dry-run` shows exactly which jobs will run. Set
+quickly, and reports a missing workbook or empty tables rather than failing;
+`snakemake --dry-run` shows exactly which jobs will run. Set
 `data_root` in the config to report on data elsewhere than `data/`.
+
+With no layers or hazards, `summary.csv` is a header-only table (without
+scenario or quantile columns).
 
 Each rule runs a script in `workflow/1-damage/`, which can also be run directly
 (see `--help`). Reusable functions are in the `damages` package, `src/damages`.
