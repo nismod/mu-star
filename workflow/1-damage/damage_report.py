@@ -40,7 +40,7 @@ from damages.config import ConfigError, DamageConfig, read_damage_config, valida
 from damages.geozarr import check_coords_match_grid, grid_from_geozarr_attrs
 from damages.metadata import TABLES, load_metadata_table
 from damages.plan import CALCULATED, NOT_CONFIGURED, NOT_VULNERABLE, plan_asset_type
-from damages.units import units_match
+from damages.units import UnitError, units_match
 
 # Snakemake writes a .snakemake_timestamp file in directory outputs, which zarr reports when opening the store
 warnings.filterwarnings("ignore", message=r"Object at \.snakemake_timestamp is not recognized")
@@ -187,12 +187,19 @@ def check_hazard(row, data_root: Path, config: DamageConfig | None) -> HazardChe
     if not units:
         suffix = f" (workbook gives {expected!r} for {check.metric!r})" if expected else ""
         check.problems.append(f"variable {row.variable!r} has no units attribute{suffix}")
-    elif expected and not units_match(units, expected):
-        check.status = INVALID
-        check.problems.append(
-            f"variable {row.variable!r} has units {str(units)!r}, "
-            f"but the workbook gives {expected!r} for {check.metric!r}"
-        )
+    elif expected:
+        try:
+            matched = units_match(units, expected)
+        except UnitError as err:
+            check.status = INVALID
+            check.problems.append(f"variable {row.variable!r} units {str(units)!r} vs workbook {expected!r}: {err}")
+        else:
+            if not matched:
+                check.status = INVALID
+                check.problems.append(
+                    f"variable {row.variable!r} has units {str(units)!r}, "
+                    f"but the workbook gives {expected!r} for {check.metric!r}"
+                )
     return check
 
 

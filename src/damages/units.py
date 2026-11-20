@@ -1,35 +1,51 @@
-"""Compare unit strings, treating common spellings of the same unit as equal.
+"""Parse hazard intensity unit strings into a canonical symbol.
 
-TODO - drop this for stricter parsing. Maybe use pint (Python package) to outsource QUDT stuff?
+Parsing is strict: only units listed here are known, spellings are
+case-sensitive, and anything else raises ``UnitError`` rather than being
+compared as free text. Add a unit (and its accepted spellings) here when a new
+hazard metric needs one. If units ever need converting, not just comparing,
+consider pint instead.
 """
 
-import re
-
-_SYNONYMS = {
-    "m": {"m", "metre", "metres", "meter", "meters"},
+_SPELLINGS = {
+    "m": {"m", "metres"},
     "m/s": {
         "m/s",
-        "m s-1",
-        "m s^-1",
-        "m.s-1",
         "ms-1",
-        "ms^-1",
-        "m per s",
-        "metre per second",
         "metres per second",
-        "meter per second",
-        "meters per second",
     },
 }
-_CANONICAL = {spelling: unit for unit, spellings in _SYNONYMS.items() for spelling in spellings}
+_CANONICAL = {spelling: unit for unit, spellings in _SPELLINGS.items() for spelling in spellings}
 
 
-def normalise_unit(unit: str) -> str:
-    """Lower-case a unit, collapse whitespace and map known synonyms to one spelling (e.g. "Metres" to "m")."""
-    text = re.sub(r"\s+", " ", str(unit).strip().lower())
-    return _CANONICAL.get(text, text)
+class UnitError(ValueError):
+    """A unit string is not one of the known units."""
+
+
+def parse_unit(unit: str) -> str:
+    """Canonical symbol for a known unit, e.g. "metres" to "m".
+
+    Leading and trailing whitespace is ignored; case and inner spacing are not.
+
+    Raises
+    ------
+    UnitError
+        If the unit is not a known spelling of a known unit.
+    """
+    text = str(unit).strip()
+    try:
+        return _CANONICAL[text]
+    except KeyError:
+        known = ", ".join(repr(u) for u in _SPELLINGS)
+        raise UnitError(f"unknown unit {text!r}; known units are {known}") from None
 
 
 def units_match(a: str, b: str) -> bool:
-    """Whether two unit strings name the same unit, ignoring case, spacing and common synonyms."""
-    return normalise_unit(a) == normalise_unit(b)
+    """Whether two unit strings name the same known unit.
+
+    Raises
+    ------
+    UnitError
+        If either unit is not known.
+    """
+    return parse_unit(a) == parse_unit(b)

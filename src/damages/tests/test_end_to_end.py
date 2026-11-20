@@ -551,7 +551,7 @@ def test_report_units_mismatch(tmp_path):
     inputs = write_inputs(data, units="cm")
     result = report(data, inputs, layers=["line", "polygon", "point"])
     assert result.returncode == 0, result.stderr
-    assert "has units 'cm', but the workbook gives 'm' for 'depth_m'" in result.stdout
+    assert "units 'cm' vs workbook 'm': unknown unit 'cm'" in result.stdout
     assert report(data, inputs, "--strict", layers=["line", "polygon", "point"]).returncode != 0
     # a spelling of the same unit is not a mismatch
     fixed = write_inputs(tmp_path / "ok" / "data", units="metres")

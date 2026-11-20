@@ -149,9 +149,10 @@ The sheets used are:
 - `asset-type`: all asset types, matching `asset_type` in the asset data
 - `hazard-metric`: hazard intensity metrics, with an optional `unit` column
   (e.g. `m` for `depth_m`, `m/s` for `ws_10min`). If given, the damage report
-  checks it against the `units` attribute of each hazard variable, treating
-  common spellings as equal (`m`, `metre`, `meters`; `m/s`, `m s-1`,
-  `metres per second`), and reports a mismatch, or a variable without `units`
+  checks it against the `units` attribute of each hazard variable, accepting
+  known spellings (`m`, `metre`, `meters`; `m/s`, `m s-1`, `metres per second`;
+  case-sensitive), and reports a mismatch, an unknown unit, or a variable
+  without `units`
 - `hazard`: hazard datasets and their intensity metric
 - `asset-type-hazard-vulnerability`: whether each asset type is vulnerable to
   each intensity metric

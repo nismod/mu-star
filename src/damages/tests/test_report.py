@@ -134,7 +134,7 @@ def test_report_hazard_units(tmp_path):
     ds.to_zarr(store, mode="w", consolidated=False)
     wind = tmp_path / "processed" / "hazard" / "rp" / "peril-cyclone" / "subperil-wind.zarr"
     ds = xr.open_zarr(wind, consolidated=False).load()
-    ds["wind_speed"].attrs = {"unit": "Metres per second"}  # legacy name and synonym
+    ds["wind_speed"].attrs = {"unit": "metres per second"}  # legacy name and synonym
     ds.to_zarr(wind, mode="w", consolidated=False)
     layers = tmp_path / "layer.csv"
     layers.write_text("layer,path\n")
@@ -149,6 +149,6 @@ def test_report_hazard_units(tmp_path):
         EXAMPLE / "config" / "asset-type-cost-curves.xlsx",
     )
     assert result.returncode == 0, result.stderr
-    assert "has units 'cm', but the workbook gives 'm' for 'depth_m'" in result.stdout
-    assert "has units 'Metres per second'" not in result.stdout
+    assert "units 'cm' vs workbook 'm': unknown unit 'cm'" in result.stdout
+    assert "'metres per second'" not in result.stdout
     assert "no units attribute" not in result.stdout
