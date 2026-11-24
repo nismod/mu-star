@@ -29,8 +29,9 @@ dependencies = [
     "highspy",
     "matplotlib",
     "networkx",
-    # Monte Carlo direct damages are not yet released, install from the tag
-    "nismod-snail @ git+https://github.com/nismod/snail@v0.6.0",
+    # Branch feat/direct-damage-interface, for the unreleased simulate_direct_damages.
+    # Return to a release when one is available.
+    "nismod-snail @ git+https://github.com/nismod/snail@90f46f36a6896b376af32f6f0bcef9298eab91a8",
     "numpy>=1.26,<2",
     "openpyxl",
     "pandas>=2,<3",

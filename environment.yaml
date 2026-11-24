@@ -11,7 +11,9 @@ dependencies:
   - cmake
   - pip:
       - -e .[dev]
-      - nismod-snail @ git+https://github.com/nismod/snail@v0.6.0
+      # Branch feat/direct-damage-interface, for the unreleased simulate_direct_damages.
+      # Return to a release when one is available.
+      - nismod-snail @ git+https://github.com/nismod/snail@90f46f36a6896b376af32f6f0bcef9298eab91a8
       - osmium
   - geopandas
   - hatchling
