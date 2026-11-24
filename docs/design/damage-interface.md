@@ -1,6 +1,6 @@
 # Design: using a single-call snail interface for direct damages
 
-Status: proposal, for discussion. Nothing here is implemented yet.
+Status: proposal, for discussion. Section 1 is implemented; the rest is not.
 
 This responds to review on [#42](https://github.com/nismod/mu-star/pull/42) of
 the three `calculate_direct_damages` calls in `src/damages/calculate.py`. The
@@ -10,32 +10,59 @@ that takes arrays for one scenario combination and returns split, asset and
 total quantiles, plus optional total samples, all from one set of draws keyed
 by asset.
 
-This note covers what changes in mu-star: computing splits once per grid, and
-making one snail call per asset type and scenario combination.
+This note covers what changes in mu-star: splitting each layer once on all
+hazard grids, and making one snail call per asset type and scenario
+combination.
 
-## 1. Split once per layer and grid
+## 1. Split once per layer, on all grids (implemented)
 
-Today `split_layer` runs once per layer and hazard, so a layer is split again
-for every hazard, even when hazards share a grid (for example several flood
-scenarios or models on the same 1/120° grid).
+Previously `split_layer` ran once per layer and hazard, so a layer was split
+again for every hazard. An earlier proposal was an optional `grid` column in the
+hazard table, so hazards declared to share a grid would share splits. The
+maintainer's requirement is stronger: split each layer once on all hazard grids,
+so that a split is a consistent unit exposed to a single value of each hazard
+intensity, whatever the grid of that hazard. An asset that would be split in
+half on one grid, and at a different place on another, is split twice, into
+three pieces, and these final splits are used for attribution on every hazard.
+There is no `grid` column: grids are read from the hazard stores, and identical
+grids are detected rather than declared.
 
-Proposal:
+What was built:
 
-- Add an optional `grid` column to the hazard table. Hazards with the same
-  `grid` value share splits. It defaults to `{peril}-{subperil}`, so the
-  current behaviour is unchanged unless set.
-- Splits go to `results/damage/layer-{layer}/grid-{grid}/split.gpq`.
-  `intensity.zarr` and `damage.zarr` stay per hazard and refer to those splits.
-- `damage_split.py` records the grid definition (the GeoZarr `spatial:` and
-  `proj:` attributes) in the GeoParquet file metadata. `damage_intensity.py`
-  checks that each hazard's grid matches it, and fails with a clear message if
-  not, so a wrong `grid` value cannot silently mis-attribute intensities.
-- `damage_report.py` reports which hazards share each grid, and any mismatch.
+- `damages.split.split_on_grids(features, grids)` (a pure function). It
+  deduplicates grids (same CRS and shape, transform within a small tolerance),
+  then splits successively on each distinct grid with snail's `split_features`,
+  so the pieces are the common refinement of the grids. It then computes cell
+  indices on every distinct grid for every final piece, into columns
+  `index_i_g0`, `index_j_g0`, `index_i_g1`, ..., following snail's convention
+  (-1 outside the grid), keeps parent attributes and measures the splits with
+  `measure_splits`. It returns the splits and a list of grid definitions.
+- Grids differ in extent. Snail clips polygons to the grid and keeps the outside
+  part of lines (index -1, cut at gridlines beyond the grid), so splitting
+  successively on several grids would drop parts of polygons that lie outside
+  one grid but inside another. For each grid, only the part of each geometry
+  inside the grid's extent is split, and the part outside is kept whole (one
+  piece per connected part) for all geometry kinds. Nothing is ever dropped, and
+  shares of an asset's splits always sum to one. Points are never split.
+- One `results/damage/layer-{layer}/split.gpq` per layer, with all hazards in
+  the hazard table as inputs of `split_layer`. `intensity.zarr` and `damage.zarr`
+  stay per hazard, under `rp/peril-{peril}/subperil-{subperil}/`, and use the
+  layer's split file.
+- `damage_split.py` takes `--hazard` several times and records the distinct
+  grids in the GeoParquet schema metadata, under `mu_star:grids`: a JSON list of
+  `{"id", "crs" (WKT2), "shape" ([height, width]), "transform" ([a, b, c, d, e, f])}`.
+  `damage_intensity.py` finds the recorded grid matching the hazard's own grid
+  and looks up intensity with that grid's index columns. It fails with a clear
+  message if none matches, so a hazard that was not among those the layer was
+  split on cannot silently mis-attribute intensities.
+- `damage_report.py` reports the number of distinct grids and which hazards share
+  each.
 
-The `grid` value is user-declared rather than derived from the zarr
-attributes, because snakemake needs it when building the DAG, before the
-hazard stores necessarily exist. The check at the intensity step keeps it
-honest.
+Consequences. Adding or changing a hazard changes the inputs of `split_layer`,
+so the layer is re-split and all its downstream intensities and damages re-run.
+Misaligned grids make more splits (a line crossing a cell edge of each of `k`
+grids has up to `k` times as many pieces as on one), which costs time in the
+damage calculation but is what makes hazards consistent on one split.
 
 ## 2. One snail call per asset type and case
 
@@ -119,6 +146,6 @@ into chunks of assets or run in parallel without changing results.
 2. mu-star: switch `src/damages/calculate.py` to the new call, in a loop over
    asset types and cases; layer totals; incremental zarr writes. Pin snail to
    the branch commit while it is unreleased.
-3. mu-star: split once per grid (independent of 1 and 2, can go first).
+3. mu-star: split once on all grids (done; independent of 1 and 2).
 4. Re-run the benchmark at realistic sizes and update the measured numbers in
    `docs/src/damages.md`.

@@ -7,6 +7,7 @@ and the data root, checks:
 - each asset layer: file present, required columns, asset types, geometry
 - each hazard: store present, intensity variable, return periods, GeoZarr
   grid attributes, hazard key in the workbook
+- which hazards share a grid (each layer is split once on every distinct grid)
 - each layer and hazard combination, by asset type: whether damage will be
   calculated, is zero (not vulnerable) or will be missing, and why
 - which damage outputs already exist, and whether they are older than their
@@ -35,11 +36,14 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import xarray as xr
+from pyproj import CRS
+from snail.intersection import GridDefinition
 
 from damages.config import ConfigError, DamageConfig, read_damage_config, validate_damage_config
 from damages.geozarr import check_coords_match_grid, grid_from_geozarr_attrs
 from damages.metadata import TABLES, load_metadata_table
 from damages.plan import CALCULATED, NOT_CONFIGURED, NOT_VULNERABLE, plan_asset_type
+from damages.split import unique_grids
 from damages.units import UnitError, units_match
 
 # Snakemake writes a .snakemake_timestamp file in directory outputs, which zarr reports when opening the store
@@ -78,6 +82,7 @@ class HazardCheck:
     metric: str | None = None
     sizes: dict[str, int] = field(default_factory=dict)
     return_periods: list[float] = field(default_factory=list)
+    grid: GridDefinition | None = None
 
     @property
     def label(self) -> str:
@@ -175,6 +180,7 @@ def check_hazard(row, data_root: Path, config: DamageConfig | None) -> HazardChe
             check.problems.append("return periods must be unique and at least one year")
     try:
         grid = grid_from_geozarr_attrs(ds.attrs)
+        check.grid = grid
         y_dim, x_dim = ds.attrs.get("spatial:dimensions", ["y", "x"])
         check_coords_match_grid(ds[x_dim].values, ds[y_dim].values, grid)
         if {y_dim, x_dim} - set(da.dims):
@@ -204,16 +210,14 @@ def check_hazard(row, data_root: Path, config: DamageConfig | None) -> HazardChe
 
 
 def output_paths(data_root: Path, layer: str, hazard: HazardCheck) -> dict[str, Path]:
-    base = (
-        data_root
-        / "results"
-        / "damage"
-        / f"layer-{layer}"
-        / "rp"
-        / f"peril-{hazard.peril}"
-        / f"subperil-{hazard.subperil}"
-    )
-    return {name: base / name for name in ("split.gpq", "intensity.zarr", "damage.zarr")}
+    """Outputs of a layer: its split (for all hazards), and the intensity and damage for one hazard."""
+    base = data_root / "results" / "damage" / f"layer-{layer}"
+    hazard_base = base / "rp" / f"peril-{hazard.peril}" / f"subperil-{hazard.subperil}"
+    return {
+        "split.gpq": base / "split.gpq",
+        "intensity.zarr": hazard_base / "intensity.zarr",
+        "damage.zarr": hazard_base / "damage.zarr",
+    }
 
 
 def _mtime(path: Path) -> float:
@@ -239,6 +243,12 @@ def _table(header: list[str], rows: list[list]) -> list[str]:
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     lines += ["| " + " | ".join(cell(v) for v in row) + " |" for row in rows]
     return [*lines, ""]
+
+
+def _crs_name(crs) -> str:
+    crs = CRS.from_user_input(crs)
+    authority = crs.to_authority()
+    return ":".join(authority) if authority else crs.name
 
 
 def _fmt_weights(weights: dict[str, float]) -> str:
@@ -280,6 +290,11 @@ def build_report(data_root: Path, layers_path: Path, hazards_path: Path, config_
     layers = [check_layer(row.layer, data_root / row.path, config) for row in layer_table.itertuples()]
     hazards = [check_hazard(row, data_root, config) for row in hazard_table.itertuples()]
 
+    # Grids: hazards on the same grid share cells, and each layer is split once on every distinct grid
+    graded = [h for h in hazards if h.grid is not None]
+    unique, position = unique_grids([h.grid for h in graded])
+    grid_hazards = {k: [h.label for h, p in zip(graded, position) if p == k] for k in range(len(unique))}
+
     # Combinations
     combo_rows, detail = [], []
     counts = {CALCULATED: 0, NOT_VULNERABLE: 0, NOT_CONFIGURED: 0}
@@ -287,7 +302,8 @@ def build_report(data_root: Path, layers_path: Path, hazards_path: Path, config_
     for layer in layers:
         for hazard in hazards:
             outputs = output_paths(data_root, layer.name, hazard)
-            inputs = [layer.path, hazard.path / "zarr.json", config_path]
+            # the layer is split on the grids of all hazards, so any hazard changing re-runs it
+            inputs = [layer.path, *(h.path / "zarr.json" for h in hazards), config_path]
             if layer.status != OK or hazard.status != OK or config is None:
                 reasons = []
                 if layer.status != OK:
@@ -337,6 +353,7 @@ def build_report(data_root: Path, layers_path: Path, hazards_path: Path, config_
     lines += [
         f"- Layers: {sum(c.status == OK for c in layers)} of {len(layers)} available",
         f"- Hazards: {sum(c.status == OK for c in hazards)} of {len(hazards)} available",
+        f"- Distinct hazard grids: {len(unique)} (each layer is split once, on all of them)",
         f"- Layer x hazard damage outputs: {run_counts['done']} done, {run_counts['to run']} to run, "
         f"{run_counts['stale']} stale, {run_counts['blocked']} blocked",
         f"- Asset type x hazard: {counts[CALCULATED]} will be calculated, {counts[NOT_VULNERABLE]} not vulnerable "
@@ -388,9 +405,26 @@ def build_report(data_root: Path, layers_path: Path, hazards_path: Path, config_
         rows,
     )
 
+    lines += ["## Hazard grids", ""]
+    if unique:
+        rows = [
+            [
+                f"g{k}",
+                f"{grid.height} x {grid.width}",
+                f"{abs(grid.transform[0]):g} x {abs(grid.transform[4]):g}",
+                _crs_name(grid.crs),
+                ", ".join(grid_hazards[k]),
+            ]
+            for k, grid in enumerate(unique)
+        ]
+        lines += _table(["grid", "shape (rows x columns)", "cell size", "CRS", "hazards sharing the grid"], rows)
+    else:
+        lines += ["No hazard has a readable grid.", ""]
+
     lines += ["## Damage calculations", ""]
     lines += [
-        "Outputs are 'done' if `damage.zarr` exists and is newer than the layer, hazard and workbook files.",
+        "Outputs are 'done' if `damage.zarr` exists and is newer than the layer, workbook and every hazard file",
+        "(each layer is split on the grids of all hazards, so any hazard changing re-runs it).",
         "Use `snakemake --dry-run` to see exactly which jobs snakemake will run.",
         "",
     ]

@@ -1,7 +1,10 @@
 """Attribute hazard intensity values to each split.
 
-Reads splits (as written by ``damage_split.py``) and a hazard data cube, and
-writes a Zarr store with ``intensity``, with dimensions
+Reads splits (as written by ``damage_split.py``, on the grids of all hazards)
+and a hazard data cube. The splits' schema metadata lists the grids they were
+split on; the one matching the hazard's grid gives the index columns used to
+look up values. The script fails if none matches (the hazard was not among
+those the layer was split on). It writes a Zarr store with ``intensity``, with dimensions
 ``(split, ...hazard dims)`` - for example ``(split, rcp, epoch,
 return_period)``. The ``split`` dimension is aligned with the rows of the split
 GeoParquet file and has ``asset_id``, ``split_id`` and ``asset_type``
@@ -26,6 +29,7 @@ import xarray as xr
 
 from damages.geozarr import check_coords_match_grid, grid_from_geozarr_attrs
 from damages.intensity import SPLIT, split_intensity
+from damages.split import find_grid_id, index_columns, read_grids_metadata
 
 
 @click.command()
@@ -35,8 +39,6 @@ from damages.intensity import SPLIT, split_intensity
 @click.option("--output", "output_path", required=True, type=click.Path())
 def main(splits_path, hazard_path, variable, output_path):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    splits = pd.read_parquet(splits_path, columns=["asset_id", "split_id", "asset_type", "index_i", "index_j"])
-
     hazard = xr.open_zarr(hazard_path, consolidated=False)
     if variable not in hazard:
         raise click.ClickException(f"Variable {variable!r} not in {hazard_path}: {list(hazard.data_vars)}")
@@ -44,9 +46,22 @@ def main(splits_path, hazard_path, variable, output_path):
     y_dim, x_dim = hazard.attrs.get("spatial:dimensions", ["y", "x"])
     check_coords_match_grid(hazard[x_dim].values, hazard[y_dim].values, grid)
 
+    definitions = read_grids_metadata(splits_path)
+    grid_id = find_grid_id(definitions, grid)
+    if grid_id is None:
+        raise click.ClickException(
+            f"The grid of {hazard_path} (shape {(grid.height, grid.width)}, transform {tuple(grid.transform)}) "
+            f"matches none of the {len(definitions)} grids {splits_path} was split on: "
+            f"{[(d['id'], d['shape'], d['transform']) for d in definitions]}. "
+            "Re-run damage_split.py with this hazard included."
+        )
+    i_col, j_col = index_columns(grid_id)
+    logging.info("Hazard grid is %s in %s", grid_id, splits_path)
+    splits = pd.read_parquet(splits_path, columns=["asset_id", "split_id", "asset_type", i_col, j_col])
+
     da = hazard[variable]
     logging.info("Looking up %s %s for %d splits", variable, dict(da.sizes), len(splits))
-    intensity = split_intensity(da, splits, spatial_dims=(y_dim, x_dim))
+    intensity = split_intensity(da, splits, spatial_dims=(y_dim, x_dim), index_i=i_col, index_j=j_col)
     intensity = intensity.rename("intensity").astype("float32")
     intensity.attrs = {**da.attrs, "hazard_path": str(hazard_path), "hazard_variable": variable}
     intensity = intensity.assign_coords(

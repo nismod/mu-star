@@ -7,6 +7,10 @@ coordinates ``(u, v)``, metres east and south of the grid's top left corner, so
 that cell ``(i, j)`` (column, row) covers ``u`` in ``[100 i, 100 (i + 1)]`` and
 ``v`` in ``[100 j, 100 (j + 1)]``. No asset line lies on a cell edge.
 
+A second hazard, "offset", has the same cell size on a grid shifted 45 m east and 25 m south of the first, so
+every asset crossing cell edges of both grids is split at both. Layers are split once on both grids, and each
+split has the depth of the cell it lies in on each grid.
+
 Expected damages are calculated here, independently of the ``damages`` package:
 geometries are intersected with cell boxes using shapely and curves are
 evaluated with ``numpy.interp``.
@@ -25,6 +29,9 @@ X0, Y0, CELL, N = 500_000.0, 7_000_000.0, 100.0, 4
 EPOCHS = [2020, 2050, 2080]
 RETURN_PERIODS = [10, 100, 1000]
 HAZARD_KEY = "flood_synthetic"
+HAZARD_KEY_OFFSET = "flood_offset"
+# the offset grid's top left corner is this far east and south of the first grid's
+OFFSET_U, OFFSET_V = 45.0, 25.0
 METRIC = "depth_m"
 
 # Depth (m) at return period 10 in epoch 2020, by row (north to south) and column. One cell is NaN.
@@ -34,6 +41,15 @@ BASE_DEPTH = np.array(
         [0.0, 0.6, 1.2, np.nan],
         [0.2, 0.8, 0.0, 3.0],
         [0.0, 0.0, 0.5, 4.0],
+    ]
+)
+# the same for the offset grid, with a NaN cell elsewhere
+BASE_DEPTH_OFFSET = np.array(
+    [
+        [0.0, 0.0, 0.8, 1.6],
+        [0.4, 1.0, 0.0, 2.4],
+        [np.nan, 0.6, 1.4, 0.0],
+        [0.2, 0.0, 3.0, 5.0],
     ]
 )
 RP_FACTOR = [1.0, 1.5, 2.0]
@@ -57,24 +73,60 @@ NOT_VULNERABLE = "pylon_nv"
 UNKNOWN = "mystery_pipe"
 
 
+@dataclass(frozen=True)
+class Grid:
+    """A square grid of ``N`` x ``N`` cells with a top left corner, and the depth at return period 10 in 2020."""
+
+    x0: float
+    y0: float
+    base_depth: np.ndarray
+    key: str
+
+    @property
+    def box(self):
+        return box(self.x0, self.y0 - CELL * N, self.x0 + CELL * N, self.y0)
+
+    def cell_box(self, i: int, j: int):
+        return box(self.x0 + CELL * i, self.y0 - CELL * (j + 1), self.x0 + CELL * (i + 1), self.y0 - CELL * j)
+
+    def cell_of(self, geometry_point) -> tuple[int, int]:
+        """Grid cell (i, j) of a point, or (-1, -1) outside the grid."""
+        i = int(np.floor((geometry_point.x - self.x0) / CELL))
+        j = int(np.floor((self.y0 - geometry_point.y) / CELL))
+        return (i, j) if 0 <= i < N and 0 <= j < N else (-1, -1)
+
+    def depth_cube(self) -> np.ndarray:
+        """Depth with dimensions (epoch, return_period, y, x)."""
+        factor = np.asarray(EPOCH_FACTOR)[:, None, None, None] * np.asarray(RP_FACTOR)[None, :, None, None]
+        return factor * self.base_depth
+
+    def dataset(self, units: str = "m") -> xr.Dataset:
+        from damages.geozarr import with_geozarr_attrs
+
+        ds = xr.Dataset(
+            {"depth": (("epoch", "return_period", "y", "x"), self.depth_cube(), {"units": units})},
+            coords={
+                "epoch": EPOCHS,
+                "return_period": RETURN_PERIODS,
+                "y": self.y0 - CELL * (np.arange(N) + 0.5),
+                "x": self.x0 + CELL * (np.arange(N) + 0.5),
+            },
+        )
+        return with_geozarr_attrs(ds.rio.write_crs(CRS))
+
+
+GRID = Grid(X0, Y0, BASE_DEPTH, HAZARD_KEY)
+GRID_OFFSET = Grid(X0 + OFFSET_U, Y0 - OFFSET_V, BASE_DEPTH_OFFSET, HAZARD_KEY_OFFSET)
+GRIDS = [GRID, GRID_OFFSET]
+
+
 def depth_cube() -> np.ndarray:
-    """Depth with dimensions (epoch, return_period, y, x)."""
-    return np.asarray(EPOCH_FACTOR)[:, None, None, None] * np.asarray(RP_FACTOR)[None, :, None, None] * BASE_DEPTH
+    """Depth of the first grid with dimensions (epoch, return_period, y, x)."""
+    return GRID.depth_cube()
 
 
-def hazard_dataset(units: str = "m") -> xr.Dataset:
-    from damages.geozarr import with_geozarr_attrs
-
-    ds = xr.Dataset(
-        {"depth": (("epoch", "return_period", "y", "x"), depth_cube(), {"units": units})},
-        coords={
-            "epoch": EPOCHS,
-            "return_period": RETURN_PERIODS,
-            "y": Y0 - CELL * (np.arange(N) + 0.5),
-            "x": X0 + CELL * (np.arange(N) + 0.5),
-        },
-    )
-    return with_geozarr_attrs(ds.rio.write_crs(CRS))
+def hazard_dataset(units: str = "m", grid: Grid = GRID) -> xr.Dataset:
+    return grid.dataset(units)
 
 
 def _xy(u, v):
@@ -166,7 +218,7 @@ def workbook_tables() -> dict[str, pd.DataFrame]:
     return {
         "asset-type": pd.DataFrame({"asset_type": types}),
         "hazard-metric": pd.DataFrame({"intensity_metric": [METRIC], "unit": ["m"]}),
-        "hazard": pd.DataFrame({"hazard": [HAZARD_KEY], "intensity_metric": [METRIC]}),
+        "hazard": pd.DataFrame({"hazard": [HAZARD_KEY, HAZARD_KEY_OFFSET], "intensity_metric": [METRIC, METRIC]}),
         "asset-type-hazard-vulnerability": pd.DataFrame(
             {
                 "asset_type": types,
@@ -205,42 +257,41 @@ def write_workbook(path, tables=None) -> None:
 # Independent reference calculations
 
 
-def cell_of(geometry_point) -> tuple[int, int]:
-    """Grid cell (i, j) of a point, or (-1, -1) outside the grid."""
-    i = int(np.floor((geometry_point.x - X0) / CELL))
-    j = int(np.floor((Y0 - geometry_point.y) / CELL))
-    return (i, j) if 0 <= i < N and 0 <= j < N else (-1, -1)
+def _measure(geometry) -> float:
+    return geometry.length if geometry.geom_type in ("LineString", "MultiLineString") else geometry.area
 
 
-GRID_BOX = box(X0, Y0 - CELL * N, X0 + CELL * N, Y0)
+def pieces(geometry, grids: list[Grid] | None = None) -> list[tuple[tuple[tuple[int, int], ...], float]]:
+    """Parts of a geometry in each combination of cells: (cells, length or area).
 
-
-def pieces(geometry) -> list[tuple[int, int, float]]:
-    """Parts of a geometry in each cell: (i, j, length or area).
-
-    Points have measure 1. The part of a line outside the grid is kept, as (-1, -1). The part of a polygon
-    outside the grid is not: snail clips polygons to the grid, so it has no split.
+    ``cells`` has the (i, j) of the part on each grid, (-1, -1) where it is outside the grid. Points have measure
+    1. The parts of a line or polygon outside a grid are kept whole, as (-1, -1): they are not dropped, whatever
+    the geometry. Each grid is applied in turn, so pieces are the common refinement of the grids.
     """
-    if isinstance(geometry, Point):
-        return [(*cell_of(geometry), 1.0)]
-    measure = (lambda g: g.length) if isinstance(geometry, LineString) else (lambda g: g.area)
-    result = []
-    for j in range(N):
-        for i in range(N):
-            part = geometry.intersection(box(X0 + CELL * i, Y0 - CELL * (j + 1), X0 + CELL * (i + 1), Y0 - CELL * j))
-            if measure(part) > 1e-9:
-                result.append((i, j, measure(part)))
-    outside = geometry.difference(GRID_BOX)
-    if isinstance(geometry, LineString) and measure(outside) > 1e-9:
-        result.append((-1, -1, measure(outside)))
-    return result
+    grids = GRIDS if grids is None else grids
+    if geometry.geom_type == "Point":
+        return [(tuple(g.cell_of(geometry) for g in grids), 1.0)]
+    parts = [((), geometry)]
+    for grid in grids:
+        refined = []
+        for cells, part in parts:
+            for j in range(N):
+                for i in range(N):
+                    inside = part.intersection(grid.cell_box(i, j))
+                    if _measure(inside) > 1e-9:
+                        refined.append(((*cells, (i, j)), inside))
+            outside = part.difference(grid.box)
+            if _measure(outside) > 1e-9:
+                refined.append(((*cells, (-1, -1)), outside))
+        parts = refined
+    return [(cells, _measure(part)) for cells, part in parts]
 
 
 def whole(geometry) -> float:
-    """Length or area of the whole asset, including any part outside the grid (1 for a point)."""
-    if isinstance(geometry, Point):
+    """Length or area of the whole asset, including any part outside the grids (1 for a point)."""
+    if geometry.geom_type == "Point":
         return 1.0
-    return geometry.length if isinstance(geometry, LineString) else geometry.area
+    return _measure(geometry)
 
 
 def curve_fraction(curve: str, depth: np.ndarray) -> np.ndarray:
@@ -294,17 +345,22 @@ def _sum_by(splits, keys):
     return pd.DataFrame(rows)
 
 
-def expected_damages(layer: gpd.GeoDataFrame) -> Expected:
-    """Damage for every asset of a layer whose type is in ``COSTS``, from geometries and the depth grid."""
-    depth = np.nan_to_num(depth_cube(), nan=0.0)  # (epoch, rp, y, x), NaN is no flood
+def expected_damages(layer: gpd.GeoDataFrame, grid: Grid = GRID) -> Expected:
+    """Damage from hazard on ``grid`` for every asset of a layer whose type is in ``COSTS``.
+
+    Assets are split on all grids, as the workflow does, so there is a row for each combination of cells; the
+    depth of each is that of its cell on ``grid``. ``cells`` is the (i, j) on each of ``GRIDS``.
+    """
+    depth = np.nan_to_num(grid.depth_cube(), nan=0.0)  # (epoch, rp, y, x), NaN is no flood
+    which = GRIDS.index(grid)
     rows = []
     for asset in layer.itertuples():
         if asset.asset_type not in COSTS:
             continue
         unit, unit_cost, curve = COSTS[asset.asset_type]
-        parts = pieces(asset.geometry)
         total = whole(asset.geometry)  # shares are of the unsplit asset
-        for i, j, measure in parts:
+        for cells, measure in pieces(asset.geometry):
+            i, j = cells[which]
             per = unit.split("_per_")[-1] if "_per_" in unit else None
             quantity = {
                 None: measure / total,  # share of the asset
@@ -324,6 +380,7 @@ def expected_damages(layer: gpd.GeoDataFrame) -> Expected:
                     "asset_type": asset.asset_type,
                     "i": i,
                     "j": j,
+                    "cells": cells,
                     "measure": measure,
                     "share": measure / total,
                     "quantity": quantity,

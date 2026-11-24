@@ -1,7 +1,8 @@
 """End-to-end tests of the damage scripts on a tiny synthetic dataset with hand-checkable numbers.
 
-See ``synthetic.py`` for the dataset. Uncertainty is off (zero coefficients of variation), so every
-quantile equals the hand calculation exactly, apart from the float32 precision of intensity.
+See ``synthetic.py`` for the dataset, which has two hazards on different grids, so every layer is split on both.
+Uncertainty is off (zero coefficients of variation), so every quantile equals the hand calculation exactly,
+apart from the float32 precision of intensity.
 """
 
 import shutil
@@ -23,6 +24,8 @@ from damages.tests.conftest import REPO
 
 WORKFLOW = REPO / "workflow" / "1-damage"
 PERIL, SUBPERIL = "flood", "synthetic"
+SUBPERIL_OFFSET = "offset"
+HAZARDS = {SUBPERIL: syn.GRID, SUBPERIL_OFFSET: syn.GRID_OFFSET}  # subperil -> grid
 LAYER_NAMES = ["line", "polygon", "point", "mixed"]
 N_SAMPLES = 20
 RTOL = 1e-5  # intensity is stored as float32
@@ -40,6 +43,9 @@ def write_inputs(data: Path, units: str = "m") -> dict[str, Path]:
     (data / "processed" / "asset").mkdir(parents=True, exist_ok=True)
     hazard = data / "processed" / "hazard.zarr"
     syn.hazard_dataset(units).to_zarr(hazard, mode="w", consolidated=False)
+    syn.hazard_dataset(units, syn.GRID_OFFSET).to_zarr(
+        data / "processed" / "hazard_offset.zarr", mode="w", consolidated=False
+    )
     for name, layer in syn.layers().items():
         layer.to_parquet(data / "processed" / "asset" / f"layer-{name}.gpq")
     workbook = data.parent / "workbook.xlsx"
@@ -48,18 +54,26 @@ def write_inputs(data: Path, units: str = "m") -> dict[str, Path]:
     layers_csv.write_text("layer,path\n" + "".join(f"{n},processed/asset/layer-{n}.gpq\n" for n in LAYER_NAMES))
     hazards_csv = data.parent / "hazard.csv"
     hazards_csv.write_text(
-        f"peril,subperil,path,variable,hazard\n{PERIL},{SUBPERIL},processed/hazard.zarr,depth,{syn.HAZARD_KEY}\n"
+        "peril,subperil,path,variable,hazard\n"
+        f"{PERIL},{SUBPERIL},processed/hazard.zarr,depth,{syn.HAZARD_KEY}\n"
+        f"{PERIL},{SUBPERIL_OFFSET},processed/hazard_offset.zarr,depth,{syn.HAZARD_KEY_OFFSET}\n"
     )
     return {"workbook": workbook, "layers": layers_csv, "hazards": hazards_csv, "hazard_store": hazard}
 
 
-def output_dir(data: Path, layer: str) -> Path:
-    return data / "results" / "damage" / f"layer-{layer}" / "rp" / f"peril-{PERIL}" / f"subperil-{SUBPERIL}"
+def layer_dir(data: Path, layer: str) -> Path:
+    return data / "results" / "damage" / f"layer-{layer}"
+
+
+def output_dir(data: Path, layer: str, subperil: str = SUBPERIL) -> Path:
+    return layer_dir(data, layer) / "rp" / f"peril-{PERIL}" / f"subperil-{subperil}"
 
 
 @dataclass
 class Layer:
     name: str
+    subperil: str
+    grid: syn.Grid
     assets: gpd.GeoDataFrame  # input
     expected: syn.Expected
     split: gpd.GeoDataFrame
@@ -68,19 +82,28 @@ class Layer:
     asset_damage: xr.Dataset
     type_damage: xr.Dataset
 
+    @property
+    def grid_number(self) -> int:
+        return syn.GRIDS.index(self.grid)
+
+    @property
+    def index_columns(self) -> tuple[str, str]:
+        return f"index_i_g{self.grid_number}", f"index_j_g{self.grid_number}"
+
 
 @dataclass
 class Dataset:
     data: Path
     inputs: dict[str, Path]
-    layers: dict[str, Layer]
+    layers: dict[str, Layer]  # for the first hazard
+    layers_offset: dict[str, Layer]  # for the second
     summary: pd.DataFrame
     split_logs: dict[str, str]
 
     def damage_args(self, layer: str, output: Path, *extra) -> list:
         out = output_dir(self.data, layer)
         return [
-            "--splits", out / "split.gpq",
+            "--splits", layer_dir(self.data, layer) / "split.gpq",
             "--intensity", out / "intensity.zarr",
             "--damage-config", self.inputs["workbook"],
             "--hazard", syn.HAZARD_KEY,
@@ -91,26 +114,46 @@ class Dataset:
 
 
 def _pipeline(data: Path, workbook: Path, layer: str) -> str:
-    """Run split, intensity and calculate for a layer. Returns the log of the split step."""
-    out = output_dir(data, layer)
-    out.mkdir(parents=True, exist_ok=True)
-    hazard = data / "processed" / "hazard.zarr"
+    """Run split on both hazards, then intensity and calculate for each. Returns the log of the split step."""
     asset_layer = data / "processed" / "asset" / f"layer-{layer}.gpq"
-    split, intensity, damage = out / "split.gpq", out / "intensity.zarr", out / "damage.zarr"
-    steps = {
-        "damage_split.py": ["--layer", asset_layer, "--hazard", hazard, "--output", split],
-        "damage_intensity.py": ["--splits", split, "--hazard", hazard, "--variable", "depth", "--output", intensity],
-        "damage_calculate.py": [
-            *["--splits", split, "--intensity", intensity, "--damage-config", workbook, "--hazard", syn.HAZARD_KEY],
-            *["--n-samples", N_SAMPLES, "--seed", 1, "--output", damage],
-        ],
-    }
-    logs = {}
-    for script, args in steps.items():
-        result = run_script(script, *args)
-        assert result.returncode == 0, f"{script} on {layer}: {result.stderr}"
-        logs[script] = result.stderr
-    return logs["damage_split.py"]
+    split = layer_dir(data, layer) / "split.gpq"
+    split.parent.mkdir(parents=True, exist_ok=True)
+    stores = {SUBPERIL: data / "processed" / "hazard.zarr", SUBPERIL_OFFSET: data / "processed" / "hazard_offset.zarr"}
+    result = run_script(
+        "damage_split.py",
+        "--layer",
+        asset_layer,
+        *[a for h in stores.values() for a in ("--hazard", h)],
+        "--output",
+        split,
+    )
+    assert result.returncode == 0, f"damage_split.py on {layer}: {result.stderr}"
+    split_log = result.stderr
+    for subperil, hazard in stores.items():
+        out = output_dir(data, layer, subperil)
+        out.mkdir(parents=True, exist_ok=True)
+        intensity, damage = out / "intensity.zarr", out / "damage.zarr"
+        key = syn.HAZARD_KEY if subperil == SUBPERIL else syn.HAZARD_KEY_OFFSET
+        steps = {
+            "damage_intensity.py": [
+                "--splits",
+                split,
+                "--hazard",
+                hazard,
+                "--variable",
+                "depth",
+                "--output",
+                intensity,
+            ],
+            "damage_calculate.py": [
+                *["--splits", split, "--intensity", intensity, "--damage-config", workbook, "--hazard", key],
+                *["--n-samples", N_SAMPLES, "--seed", 1, "--output", damage],
+            ],
+        }
+        for script, args in steps.items():
+            result = run_script(script, *args)
+            assert result.returncode == 0, f"{script} on {layer} {subperil}: {result.stderr}"
+    return split_log
 
 
 @pytest.fixture(scope="module")
@@ -120,32 +163,46 @@ def dataset(tmp_path_factory) -> Dataset:
     inputs = write_inputs(data)
     with ThreadPoolExecutor(len(LAYER_NAMES)) as pool:
         split_logs = dict(zip(LAYER_NAMES, pool.map(lambda x: _pipeline(data, inputs["workbook"], x), LAYER_NAMES)))
-    paths = [output_dir(data, layer) / "damage.zarr" for layer in LAYER_NAMES]
+    paths = [output_dir(data, layer, subperil) / "damage.zarr" for layer in LAYER_NAMES for subperil in HAZARDS]
     summary_path = data / "results" / "damage" / "summary.csv"
     args = [a for p in paths for a in ("--damage", p)]
     result = run_script("damage_summary.py", *args, "--output", summary_path)
     assert result.returncode == 0, result.stderr
 
-    layers = {}
-    for name, assets in syn.layers().items():
-        out = output_dir(data, name)
-        group = lambda g: xr.open_zarr(out / "damage.zarr", group=g, consolidated=False).load()  # noqa: E731
-        layers[name] = Layer(
-            name=name,
-            assets=assets,
-            expected=syn.expected_damages(assets),
-            split=gpd.read_parquet(out / "split.gpq"),
-            intensity=xr.open_zarr(out / "intensity.zarr", consolidated=False)["intensity"].load(),
-            split_damage=group("split"),
-            asset_damage=group("asset"),
-            type_damage=group("asset_type"),
-        )
-    return Dataset(data, inputs, layers, pd.read_csv(summary_path), split_logs)
+    def load(subperil, grid):
+        layers = {}
+        for name, assets in syn.layers().items():
+            out = output_dir(data, name, subperil)
+            group = lambda g: xr.open_zarr(out / "damage.zarr", group=g, consolidated=False).load()  # noqa: E731
+            layers[name] = Layer(
+                name=name,
+                subperil=subperil,
+                grid=grid,
+                assets=assets,
+                expected=syn.expected_damages(assets, grid),
+                split=gpd.read_parquet(layer_dir(data, name) / "split.gpq"),
+                intensity=xr.open_zarr(out / "intensity.zarr", consolidated=False)["intensity"].load(),
+                split_damage=group("split"),
+                asset_damage=group("asset"),
+                type_damage=group("asset_type"),
+            )
+        return layers
+
+    return Dataset(
+        data,
+        inputs,
+        load(SUBPERIL, syn.GRID),
+        load(SUBPERIL_OFFSET, syn.GRID_OFFSET),
+        pd.read_csv(summary_path),
+        split_logs,
+    )
 
 
-@pytest.fixture(params=LAYER_NAMES)
+@pytest.fixture(params=[(h, n) for h in HAZARDS for n in LAYER_NAMES], ids=lambda p: f"{p[0]}-{p[1]}")
 def layer(request, dataset) -> Layer:
-    return dataset.layers[request.param]
+    """Each layer, with the damage from each hazard. Both hazards use the same split file."""
+    subperil, name = request.param
+    return (dataset.layers if subperil == SUBPERIL else dataset.layers_offset)[name]
 
 
 def assert_quantiles_equal(actual: xr.DataArray, expected) -> None:
@@ -160,16 +217,20 @@ def split_rows(layer: Layer, calculated_only=True) -> list[int]:
     return [k for k, t in enumerate(layer.split.asset_type) if t in types]
 
 
+def split_cells(split: gpd.GeoDataFrame) -> list[tuple[tuple[int, int], ...]]:
+    """The (i, j) of each split on every grid."""
+    n = len(syn.GRIDS)
+    return [
+        tuple((int(row[f"index_i_g{g}"]), int(row[f"index_j_g{g}"])) for g in range(n)) for _, row in split.iterrows()
+    ]
+
+
 def expected_split_row(layer: Layer, k: int) -> pd.Series:
     row = layer.split.iloc[k]
-    match = layer.expected.splits[
-        (layer.expected.splits.asset_id == row.asset_id)
-        & (layer.expected.splits.i == row.index_i)
-        & (layer.expected.splits.j == row.index_j)
-    ]
-    assert len(match) == 1, (
-        f"expected exactly one hand-calculated piece for {row.asset_id} in cell {row.index_i, row.index_j}"
-    )
+    cells = split_cells(layer.split.iloc[[k]])[0]
+    expected = layer.expected.splits
+    match = expected[(expected.asset_id == row.asset_id) & (expected.cells == cells)]
+    assert len(match) == 1, f"expected exactly one hand-calculated piece for {row.asset_id} in cells {cells}"
     return match.iloc[0]
 
 
@@ -221,9 +282,8 @@ def test_splits_conserve_length_area_and_share(layer):
     split = layer.split
     for asset in layer.assets.itertuples():
         rows = split[split.asset_id == asset.asset_id]
-        # shares are of the unsplit asset: less than one for a polygon partly outside the grid
-        in_grid_share = sum(m for _, _, m in syn.pieces(asset.geometry)) / syn.whole(asset.geometry)
-        assert rows.share.sum() == pytest.approx(in_grid_share)
+        # nothing is dropped, so shares are of the unsplit asset and add up to one
+        assert rows.share.sum() == pytest.approx(1.0)
         # lengths and areas, from the column and from the split geometries
         if asset.geometry.geom_type == "LineString":
             assert rows.length_m.sum() == pytest.approx(asset.geometry.length)
@@ -231,9 +291,8 @@ def test_splits_conserve_length_area_and_share(layer):
             assert (rows.geom_kind == "line").all()
             assert (rows.area_m2 == 0).all()
         elif asset.geometry.geom_type == "Polygon":
-            in_grid = asset.geometry.intersection(syn.GRID_BOX).area
-            assert rows.area_m2.sum() == pytest.approx(in_grid)
-            assert rows.geometry.area.sum() == pytest.approx(in_grid)
+            assert rows.area_m2.sum() == pytest.approx(asset.geometry.area)
+            assert rows.geometry.area.sum() == pytest.approx(asset.geometry.area)
             assert (rows.geom_kind == "polygon").all()
             assert (rows.length_m == 0).all()
         else:
@@ -242,32 +301,74 @@ def test_splits_conserve_length_area_and_share(layer):
 
 
 def test_splits_match_hand_calculated_pieces(layer):
-    assert not layer.split.duplicated(["asset_id", "index_i", "index_j"]).any()
+    """Splits are the common refinement of both grids: one per combination of cells, with the hand-measured size."""
+    split = layer.split
+    split_cells_by_row = pd.Series(split_cells(split), index=split.index)
+    assert not pd.DataFrame({"a": split.asset_id, "c": split_cells_by_row.astype(str)}).duplicated().any()
     for asset_id, geometry in layer.assets.set_index("asset_id").geometry.items():
-        pieces = {(i, j): m for i, j, m in syn.pieces(geometry)}
-        rows = layer.split[layer.split.asset_id == asset_id]
-        assert {(r.index_i, r.index_j) for r in rows.itertuples()} == set(pieces)
-        for r in rows.itertuples():
+        pieces = dict(syn.pieces(geometry))
+        mask = (split.asset_id == asset_id).to_numpy()
+        rows = split[mask]
+        assert set(split_cells_by_row[mask]) == set(pieces)
+        for cells, r in zip(split_cells_by_row[mask], rows.itertuples()):
             measure = {"line": r.length_m, "polygon": r.area_m2}.get(r.geom_kind, 1.0)
-            assert measure == pytest.approx(pieces[(r.index_i, r.index_j)])
-            assert r.share == pytest.approx(pieces[(r.index_i, r.index_j)] / syn.whole(geometry))
+            assert measure == pytest.approx(pieces[cells])
+            assert r.share == pytest.approx(pieces[cells] / syn.whole(geometry))
 
 
-def test_conservation_warning_only_for_clipped_polygon(dataset):
-    # B3 is 60 m x 50 m in the grid and 40 m x 50 m outside it, and snail drops the part outside the grid
+def test_each_split_is_in_one_cell_of_each_grid(dataset):
+    """Check against the split geometries, not only the index columns."""
+    for name, layer in dataset.layers.items():
+        for g, grid in enumerate(syn.GRIDS):
+            for row in layer.split.itertuples():
+                i, j = getattr(row, f"index_i_g{g}"), getattr(row, f"index_j_g{g}")
+                if i < 0:
+                    assert j < 0
+                    shared = row.geometry.intersection(grid.box)  # touching the edge is not being inside
+                    assert (shared.area if row.geom_kind == "polygon" else shared.length) == pytest.approx(0, abs=1e-6)
+                else:
+                    assert grid.cell_box(i, j).buffer(1e-6).contains(row.geometry), (name, row.asset_id, g, i, j)
+
+
+def test_no_conservation_warnings_since_nothing_is_dropped(dataset):
+    # B3 is 60 m x 50 m in the grid and 40 m x 50 m outside it, and its outside part is kept as a split
     polygon = dataset.layers["polygon"].split
-    assert polygon[polygon.asset_id == "B3"].area_m2.sum() == pytest.approx(3000)
-    assert (
-        "2 assets have split lengths or areas differing from the unsplit asset by more than 0.1%"
-        in (dataset.split_logs["polygon"])
-    )
-    assert "B3 (40.0% off)" in dataset.split_logs["polygon"]
-    assert "R3 (60.0% off)" in dataset.split_logs["polygon"]
-    # R3's shares are of the whole reservoir, so only the 40% inside the grid can be damaged
-    assert polygon[polygon.asset_id == "R3"].share.sum() == pytest.approx(0.4)
-    # lines keep their part outside the grid, so there is nothing to report for them
-    for name in ("line", "point", "mixed"):
+    b3 = polygon[polygon.asset_id == "B3"]
+    assert b3.area_m2.sum() == pytest.approx(5000)
+    outside = b3[b3.index_i_g0 < 0]
+    assert outside.area_m2.sum() == pytest.approx(2000)
+    # R3's shares are of the whole reservoir: the 40% inside the first grid can be damaged by it, 60% cannot
+    r3 = polygon[polygon.asset_id == "R3"]
+    assert r3[r3.index_i_g0 >= 0].share.sum() == pytest.approx(0.4)
+    assert r3[r3.index_i_g0 < 0].share.sum() == pytest.approx(0.6)
+    for name in LAYER_NAMES:
         assert "differing from the unsplit asset" not in dataset.split_logs[name]
+
+
+def test_grids_in_split_metadata(dataset):
+    """The split file records both grids, which are told apart by the index columns."""
+    import json
+
+    import pyarrow.parquet as pq
+
+    for name in LAYER_NAMES:
+        path = layer_dir(dataset.data, name) / "split.gpq"
+        metadata = pq.read_schema(path).metadata
+        grids = json.loads(metadata[b"mu_star:grids"])
+        assert [g["id"] for g in grids] == ["g0", "g1"]
+        assert [g["shape"] for g in grids] == [[syn.N, syn.N]] * 2
+        assert [g["transform"][2] for g in grids] == [syn.X0, syn.X0 + syn.OFFSET_U]
+        assert [g["transform"][5] for g in grids] == [syn.Y0, syn.Y0 - syn.OFFSET_V]
+        assert b"geo" in metadata  # still GeoParquet
+
+
+def test_split_count_is_common_refinement(dataset):
+    # L1 runs along v = 50 from u = 20 to 380: cuts at 100, 200, 300 on the first grid and at 45, 145, 245, 345 on the
+    # second, in v = 25 to 125 (a different row of that grid). 7 cuts, so 8 pieces
+    split = dataset.layers["line"].split
+    assert (split.asset_id == "L1").sum() == 8
+    # a point is one split, however many grids
+    assert (dataset.layers["point"].split.asset_id == "S1").sum() == 1
 
 
 def test_outputs_align_with_split_rows(layer):
@@ -292,15 +393,16 @@ def test_outputs_align_with_split_rows(layer):
 
 
 def test_intensity_is_depth_of_cell(layer):
-    depth = syn.depth_cube()
+    depth = layer.grid.depth_cube()
     assert layer.intensity.dims == ("split", "epoch", "return_period")
     assert layer.intensity.attrs["units"] == "m"
     for k, row in enumerate(layer.split.itertuples()):
-        if row.index_i < 0:
-            assert row.index_j < 0
+        i, j = getattr(row, layer.index_columns[0]), getattr(row, layer.index_columns[1])
+        if i < 0:
+            assert j < 0
             assert np.isnan(layer.intensity[k]).all()
         else:
-            np.testing.assert_allclose(layer.intensity[k], depth[:, :, row.index_j, row.index_i], rtol=1e-6)
+            np.testing.assert_allclose(layer.intensity[k], depth[:, :, j, i], rtol=1e-6)
 
 
 # Damage
@@ -369,7 +471,7 @@ def test_nan_and_outside_grid_splits_have_zero_damage(dataset):
     zero(points, "S3")  # in the NaN cell
     zero(points, "S4")  # outside the grid
     zero(lines, "L3")  # in the NaN cell
-    zero(lines, "L4", lambda row: row.index_i < 0)  # the part outside the grid
+    zero(lines, "L4", lambda row: row.index_i_g0 < 0)  # the part outside the grid
     # so the damage to S3, S4 and L3 is zero, and L4 is damaged only by its part in the 0.5 m cell
     assets = lines.asset_damage.sel(epoch=2020, return_period=10, quantile=0.5).damage_cost
     assert float(assets.sel(asset=list(lines.asset_damage.asset_id.values).index("L3"))) == 0
@@ -432,7 +534,8 @@ def test_unknown_type_is_nan_and_not_configured(dataset):
     assert int(total.n_assets) == 1
     assert total.damage_cost.isnull().all() and total.ead.isnull().all()
     k = np.flatnonzero(mixed.split_damage.asset_type.values == syn.UNKNOWN)
-    assert len(k) == 1
+    # M5 runs along v = 380 from u = 20 to 80, crossing the offset grid's edge at u = 45
+    assert len(k) == 2
     for var in ("damage_fraction", "damage_cost", "ead"):
         assert mixed.split_damage[var].isel(split=k).isnull().all()
     a = np.flatnonzero(mixed.asset_damage.asset_type.values == syn.UNKNOWN)
@@ -454,23 +557,24 @@ def test_strict_fails_on_unknown_type(dataset, tmp_path):
 # Summary
 
 
-def check_summary(summary: pd.DataFrame, layers: dict[str, Layer]) -> None:
+def check_summary(summary: pd.DataFrame, dataset: Dataset) -> None:
     assert set(summary.layer) == set(LAYER_NAMES)
-    assert set(summary.peril) == {PERIL} and set(summary.subperil) == {SUBPERIL}
+    assert set(summary.peril) == {PERIL} and set(summary.subperil) == set(HAZARDS)
     assert (summary.q_5 == summary.q_50).where(summary.q_5.notna(), True).all()
     assert (summary.q_50 == summary.q_95).where(summary.q_50.notna(), True).all()
-    for name, layer in layers.items():
-        rows = summary[summary.layer == name]
-        for asset_type, expected in layer.expected.asset_types.set_index("asset_type").iterrows():
-            mine = rows[rows.asset_type == asset_type]
-            assert (mine.status == "calculated").all()
-            assert (mine.currency == "usd").all()
-            for e, epoch in enumerate(syn.EPOCHS):
-                ead = mine[(mine.metric == "ead") & (mine.epoch == epoch)]
-                np.testing.assert_allclose(ead.q_50.to_numpy(), [expected.ead[e]], rtol=RTOL)
-                for k, rp in enumerate(syn.RETURN_PERIODS):
-                    cost = mine[(mine.metric == "damage_cost") & (mine.epoch == epoch) & (mine.return_period == rp)]
-                    np.testing.assert_allclose(cost.q_50.to_numpy(), [expected.cost[e, k]], rtol=RTOL)
+    for layers in (dataset.layers, dataset.layers_offset):
+        for name, layer in layers.items():
+            rows = summary[(summary.layer == name) & (summary.subperil == layer.subperil)]
+            for asset_type, expected in layer.expected.asset_types.set_index("asset_type").iterrows():
+                mine = rows[rows.asset_type == asset_type]
+                assert (mine.status == "calculated").all()
+                assert (mine.currency == "usd").all()
+                for e, epoch in enumerate(syn.EPOCHS):
+                    ead = mine[(mine.metric == "ead") & (mine.epoch == epoch)]
+                    np.testing.assert_allclose(ead.q_50.to_numpy(), [expected.ead[e]], rtol=RTOL)
+                    for k, rp in enumerate(syn.RETURN_PERIODS):
+                        cost = mine[(mine.metric == "damage_cost") & (mine.epoch == epoch) & (mine.return_period == rp)]
+                        np.testing.assert_allclose(cost.q_50.to_numpy(), [expected.cost[e, k]], rtol=RTOL)
     mixed = summary[summary.layer == "mixed"]
     assert set(mixed[mixed.asset_type == syn.UNKNOWN].status) == {"not_configured"}
     assert mixed[mixed.asset_type == syn.UNKNOWN].q_50.isna().all()
@@ -478,7 +582,7 @@ def check_summary(summary: pd.DataFrame, layers: dict[str, Layer]) -> None:
 
 
 def test_summary(dataset):
-    check_summary(dataset.summary, dataset.layers)
+    check_summary(dataset.summary, dataset)
 
 
 @pytest.mark.integration
@@ -503,10 +607,13 @@ def test_snakemake_workflow(dataset, tmp_path):
     subprocess.run(
         ["snakemake", "--cores", "2", "--nolock", str(target), "--configfile", str(config)], cwd=REPO, check=True
     )
+    for name in LAYER_NAMES:
+        assert (layer_dir(data, name) / "split.gpq").exists()
+        assert not list(layer_dir(data, name).glob("rp/*/*/split.gpq"))
     summary = pd.read_csv(target)
-    check_summary(summary, dataset.layers)
+    check_summary(summary, dataset)
     # and the scripts, run directly, agree with snakemake on every number
-    key = ["layer", "asset_type", "metric", "epoch", "return_period"]
+    key = ["layer", "subperil", "asset_type", "metric", "epoch", "return_period"]
     left = summary.sort_values(key, ignore_index=True)
     right = dataset.summary.sort_values(key, ignore_index=True)
     pd.testing.assert_frame_equal(left, right)
@@ -535,8 +642,12 @@ def test_report_unknown_asset_type(dataset):
     assert result.returncode == 0, result.stderr
     assert f"asset types not in workbook 'asset-type' sheet: {syn.UNKNOWN}" in result.stdout
     assert "Layers: 4 of 4 available" in result.stdout
-    # 4 layers x 1 hazard, by asset type: line 2, polygon 2, point 1 and mixed 3 calculated
-    assert "8 will be calculated, 1 not vulnerable (zero damage), 1 missing configuration" in result.stdout
+    # 4 layers x 2 hazards, by asset type: line 2, polygon 2, point 1 and mixed 3 calculated, in each
+    assert "16 will be calculated, 2 not vulnerable (zero damage), 2 missing configuration" in result.stdout
+    # the two hazards are on different grids, and each layer is split once on both
+    assert "Distinct hazard grids: 2" in result.stdout
+    assert "| g0 | 4 x 4 | 100 x 100 | EPSG:32740 | flood/synthetic |" in result.stdout
+    assert "| g1 | 4 x 4 | 100 x 100 | EPSG:32740 | flood/offset |" in result.stdout
     assert f"| {syn.UNKNOWN} | 1 | not_configured |" in result.stdout
     assert f"| {syn.NOT_VULNERABLE} | 1 | not_vulnerable |" in result.stdout
     assert report(dataset.data, dataset.inputs, "--strict").returncode != 0

@@ -8,7 +8,9 @@ root, so the workflow runs on it with:
 snakemake -c2 example/results/damage/summary.csv --configfile example/config.yaml
 ```
 
-Results are written to `example/results/` (not committed).
+Results are written to `example/results/` (not committed). Each layer is split
+once, on the grids of both hazards (`results/damage/layer-*/split.gpq`), and the
+intensity and damage of each hazard use those splits.
 
 ## Contents
 

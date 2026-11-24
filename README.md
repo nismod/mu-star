@@ -241,8 +241,8 @@ limitations.
 
 ### Direct damages
 
-The direct damages workflow (`workflow/1-damage/`) splits asset layers on
-hazard grids, looks up hazard intensity and samples damages with
+The direct damages workflow (`workflow/1-damage/`) splits asset layers once on
+the grids of all hazards, looks up hazard intensity and samples damages with
 [snail](https://github.com/nismod/snail), using the asset types, damage curves
 and costs in a damage configuration workbook.
 

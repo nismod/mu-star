@@ -7,10 +7,15 @@ and hazards in the hazard metadata table (config["metadata"]["hazard"]). Asset
 types, vulnerability, damage curves and costs come from the damage
 configuration workbook (config["damage"]["config"]).
 
-For each layer and hazard:
-    split_layer      -> results/damage/{layer}/rp/{peril}/{subperil}/split.gpq
+For each layer, once for all hazards:
+    split_layer      -> results/damage/{layer}/split.gpq
+Then for each layer and hazard:
     hazard_intensity -> results/damage/{layer}/rp/{peril}/{subperil}/intensity.zarr
     damage           -> results/damage/{layer}/rp/{peril}/{subperil}/damage.zarr
+Adding or changing a hazard (or its grid) changes the inputs of split_layer, so
+snakemake re-splits every layer, and re-runs all their downstream intensities and
+damages.
+
 Then, across all layers and hazards:
     damage_summary   -> results/damage/summary.csv
 
@@ -48,6 +53,10 @@ def layer_path(wildcards):
 
 def hazard_path(wildcards):
     return f"{wildcards.data}/{hazard_metadata(wildcards).path}"
+
+
+def all_hazard_paths(wildcards):
+    return [f"{wildcards.data}/{path}" for path in DAMAGE_HAZARDS.path]
 
 
 rule validate_damage_config:
@@ -101,32 +110,37 @@ rule damage_report:
 
 rule split_layer:
     """
-    Split vector assets on the hazard grid, defined by GeoZarr attributes of
-    the hazard data cube.
+    Split vector assets once on the grids of all hazards, defined by GeoZarr
+    attributes of the hazard data cubes, so that each split lies within one
+    cell of every grid. Adding or changing a hazard re-splits the layer.
 
     Test with:
-    snakemake -c1 example/results/damage/layer-road/rp/peril-flood/subperil-coastal/split.gpq --configfile example/config.yaml
+    snakemake -c1 example/results/damage/layer-road/split.gpq --configfile example/config.yaml
     """
     input:
         layer = layer_path,
-        hazard = hazard_path,
+        hazards = all_hazard_paths,
         script = "workflow/1-damage/damage_split.py",
     output:
-        # columns: asset attributes, split_id, index_i, index_j, length_m, area_m2, share, geometry
-        split = "{data}/results/damage/{layer}/rp/{peril}/{subperil}/split.gpq",
+        # columns: asset attributes, split_id, index_i_g<k>, index_j_g<k> for each distinct hazard grid,
+        # length_m, area_m2, share, geometry. Grids are in the file metadata, key mu_star:grids
+        split = "{data}/results/damage/{layer}/split.gpq",
+    params:
+        hazards = lambda wildcards, input: " ".join(f"--hazard '{path}'" for path in input.hazards),
     shell:
         """
         python {input.script:q} \
             --layer {input.layer:q} \
-            --hazard {input.hazard:q} \
+            {params.hazards} \
             --output {output.split:q}
         """
 
 
 rule hazard_intensity:
     """
-    Look up hazard intensity for each split, for all non-spatial hazard
-    dimensions (e.g. return period, epoch, climate scenario).
+    Look up hazard intensity for each split of the layer, on this hazard's
+    grid, for all non-spatial hazard dimensions (e.g. return period, epoch,
+    climate scenario).
 
     Test with:
     snakemake -c1 example/results/damage/layer-road/rp/peril-flood/subperil-coastal/intensity.zarr --configfile example/config.yaml

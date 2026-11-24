@@ -12,17 +12,33 @@ assets on hazard grids and sample damages under uncertainty.
 
 ## Method
 
-For each asset layer and each hazard:
+For each asset layer:
 
-1. **Split** each asset on the hazard grid, so each split (piece of a line or
-   polygon, or a point) falls within one grid cell. Splits keep their parent
-   asset's attributes, and their length (lines) or area (polygons) is measured
-   in metres: planar if the assets are in a projected CRS with metre units,
+1. **Split** each asset once, on the grids of all hazards. Each asset is split
+   on each distinct grid in turn, so the splits (pieces of a line or polygon,
+   or a point) are the common refinement of all the grids: each lies within one
+   cell of every grid, and so is exposed to a single value of each hazard
+   intensity. An asset that would be split in half at one place on one grid and
+   at another place on another grid is split twice, into three pieces. Hazards
+   whose grids are identical (same CRS, shape and transform) share one grid,
+   and do not split assets further. Splits keep their parent asset's
+   attributes, and their length (lines) or area (polygons) is measured in
+   metres: planar if the assets are in a projected CRS with metre units,
    otherwise geodesically, on the WGS84 ellipsoid.
-2. **Look up hazard intensity** for each split, from the grid cell it falls in,
-   for every return period and every other hazard dimension (for example
-   climate scenario, epoch or climate model). Splits outside the grid, or in
-   cells with no data, are taken to have zero intensity.
+
+   Grids differ in extent. Only the part of an asset inside a grid is split on
+   that grid; the part outside is kept as one piece (for each connected part),
+   with cell index -1 on that grid, and is split on any other grid that covers
+   it. Nothing is dropped, for lines, polygons or points, so the shares of an
+   asset's splits always add up to one.
+
+Then for each hazard:
+
+2. **Look up hazard intensity** for each split, from the grid cell it falls in
+   on the hazard's own grid, for every return period and every other hazard
+   dimension (for example climate scenario, epoch or climate model). Splits
+   outside the hazard's grid, or in cells with no data, are taken to have zero
+   intensity.
 3. **Calculate damages** for each asset type in the layer. The damage
    configuration workbook gives whether the asset type is vulnerable to the
    hazard's intensity metric, the damage curves to use (with weights) and the
@@ -178,15 +194,29 @@ snakemake -c1 data/results/damage/damage-config-report.txt
 
 ## Outputs
 
-For each layer and hazard, under
+For each layer, once for all hazards, under `results/damage/layer-{layer}/`:
+
+- `split.gpq`: split geometries (GeoParquet), with parent asset attributes,
+  `split_id`, `geom_kind` (`point`, `line`, `polygon` or `other`), `length_m`,
+  `area_m2`, `share` and, for each distinct hazard grid `g0`, `g1`, ...,
+  columns `index_i_g0`, `index_j_g0`, `index_i_g1`, ... giving the grid column
+  and row of the split (-1 if it is outside that grid; a split lies in cell
+  `i`, `j` if its midpoint or centroid does, with cells open at their
+  right and bottom edges, as in snail). `share` is the split's fraction of
+  the whole, unsplit asset, and adds up to one for each asset. A split outside
+  a hazard's grid has zero intensity for it, so whole-asset costs (`mur`)
+  only damage the share of an asset inside the grid.
+
+  The grids are recorded in the file's schema metadata, under the key
+  `mu_star:grids`, as a JSON list with one object per distinct grid:
+  `{"id": "g0", "crs": "<WKT2>", "shape": [height, width], "transform":
+  [a, b, c, d, e, f]}`. The transform is in the same order as GeoZarr's
+  `spatial:transform`. `damage_intensity.py` finds the grid that matches a
+  hazard's own, and stops with an error if none does.
+
+Then for each hazard, under
 `results/damage/layer-{layer}/rp/peril-{peril}/subperil-{subperil}/`:
 
-- `split.gpq`: split geometries (GeoParquet), stored once, with parent asset
-  attributes, `split_id`, grid indices `index_i`/`index_j`, `geom_kind`
-  (`point`, `line`, `polygon` or `other`), `length_m`, `area_m2` and `share`.
-  `share` is the split's fraction of the whole, unsplit asset. Polygons are
-  clipped to the hazard grid, so the shares of a polygon partly outside the
-  grid add up to less than one, and only the part inside can be damaged.
 - `intensity.zarr`: `intensity` with dimensions `(split, ...hazard dims)`,
   aligned with the rows of `split.gpq`, and `has_data`, with the hazard
   dimensions only, which records whether the hazard has any data on its grid
@@ -204,7 +234,7 @@ Splits with zero length or area (slivers) have quantity, and so cost, zero;
 an asset type is only an error if its geometries are of the wrong kind for its
 cost unit. After splitting, `damage_split.py` compares each asset's total split
 length or area with the unsplit asset's (in the same CRS) and logs a warning
-if any differ by more than 0.1%.
+if any differ by more than 0.1%, which should not happen since nothing is dropped.
 
 Asset types not vulnerable to a hazard have zero damage. Asset types missing
 from the workbook, or vulnerable but missing curves or costs, have NaN damage
@@ -234,6 +264,8 @@ the `asset_type` totals.
 snakemake -c1 damage_report
 # Check the damage configuration workbook
 snakemake -c1 data/results/damage/damage-config-report.txt
+# Split one layer on the grids of all hazards
+snakemake -c1 data/results/damage/layer-road/split.gpq
 # Damage to one layer from one hazard
 snakemake -c1 data/results/damage/layer-road/rp/peril-flood/subperil-pluvial/damage.zarr
 # All layers and hazards, and the summary
@@ -244,7 +276,8 @@ The damage report (`workflow/1-damage/damage_report.py`, written to
 `results/damage/report.md` under the data root) checks each layer file
 (required columns, asset types known to the workbook, geometry), each hazard
 store (variable, `return_period` dimension, GeoZarr grid attributes, hazard key
-in the workbook), and, for each layer, hazard and asset type, whether damage
+in the workbook), which hazards share a grid (the number of distinct grids is the
+number each layer is split on), and, for each layer, hazard and asset type, whether damage
 will be calculated (with which costs and curves), is zero because the asset
 type is not vulnerable, or is missing configuration, and why. It also lists
 which damage outputs exist already. It reads hazard metadata only, so it runs
@@ -254,6 +287,12 @@ quickly, and reports a missing workbook or empty tables rather than failing;
 
 With no layers or hazards, `summary.csv` is a header-only table (without
 scenario or quantile columns).
+
+Because each layer is split on the grids of all hazards, adding a hazard to the
+hazard table, or changing a hazard store, re-splits every layer, and so re-runs
+the intensity and damage calculations for every hazard of those layers, not only
+the new one. Hazards on a grid already in use do not make splits any finer, but
+still change the inputs, so still re-split the layer (to the same result).
 
 Each rule runs a script in `workflow/1-damage/`, which can also be run directly
 (see `--help`). Reusable functions are in the `damages` package, `src/damages`.
@@ -273,7 +312,12 @@ snakemake -c2 example/results/damage/summary.csv --configfile example/config.yam
 
 ## Limitations and next steps
 
-- Splits are recalculated for each hazard, even if hazards share a grid.
+- Splitting on all grids multiplies the number of splits when hazard grids are
+  misaligned: a line crossing a cell edge of each of several grids is cut at all
+  of them, so layers split on many different grids have more splits (and so
+  slower damage calculations) than on any one. Hazards that share a grid add
+  nothing. The splitting itself is also repeated on every layer when any hazard
+  changes.
 - Hazard intensity is the value of the cell a split falls in; there is no
   sub-grid information.
 - Per-split damages are calculated by a separate snail call from per-asset
