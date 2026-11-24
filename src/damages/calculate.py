@@ -1,34 +1,32 @@
-"""Sample direct damages for one asset type, over hazard scenarios.
+"""Sample direct damages for one asset type, one scenario combination at a time.
 
-This wraps :func:`snail.damages.calculate_direct_damages`, which works on a
-table of splits with one column per intensity case (here, return period) and
-an optional scenario column. Here we take intensities as an array with
-dimensions ``(split, case, return_period)``, where ``case`` enumerates the
-combinations of any other hazard dimensions (climate scenario, epoch, GCM...).
+Hazard intensity comes as an array with dimensions ``(split, case,
+return_period)``, where ``case`` enumerates the combinations of any other
+hazard dimensions (climate scenario, epoch, GCM...), see :func:`stack_cases`.
+:func:`simulate_asset_type` makes one call to
+:func:`snail.damages.simulate_direct_damages` per case, which samples damages
+once and summarises them per split, per asset and in total, from the same
+samples, and can return the total samples so that totals can be added up
+across asset types.
 
-Three calls to snail are made, each with the same seed:
+Random draws in snail are keyed rather than drawn in sequence:
 
-1. per split, damage fraction (unit quantity and cost, no cost uncertainty)
-2. per split, damage cost and expected annual damage (EAD)
-3. per asset, damage cost and EAD, with totals across all assets passed in
-
-Passing every case as a snail "scenario" means curve choice and systemic cost
-draws are shared across cases, so differences between scenarios are not
-confounded by those draws. Hazard, damage-noise and asset cost draws are
-independent between assets (or splits, in calls 1 and 2) and cases.
-
-Marginal per-split quantiles are reported; per-split quantiles do not sum to
-per-asset quantiles.
+- each asset's local draws (hazard, damage noise and asset cost factors) depend
+  only on the seed and the asset's key. Keys are a 64-bit hash of the asset id
+  (:func:`asset_keys`), so an asset gets the same draws in every case (common
+  random numbers across scenarios), in every run, and whatever the order of
+  assets or layers, or which other assets are computed
+- curve choice and systemic cost draws depend on the seed and, optionally, a
+  systemic key (:func:`systemic_key`). With no key, they are shared by every
+  call with the same seed: all cases, asset types, layers and hazards
 """
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Any
+from collections.abc import Iterator, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 import xarray as xr
-from snail.damages import DamageCurve, calculate_direct_damages
+from snail.damages import DamageCurve, DirectDamageArrays, simulate_direct_damages
 
 from damages.config import CostParameters
 
@@ -36,96 +34,47 @@ CASE = "case"
 RETURN_PERIOD = "return_period"
 QUANTILE = "quantile"
 
+SHARED = "shared"
+INDEPENDENT = "independent"
+SYSTEMIC_DRAWS = (SHARED, INDEPENDENT)
 
-@dataclass
-class DamageArrays:
-    """Quantile arrays for one asset type. The last dimension is ``quantile``.
 
-    - ``split_fraction``, ``split_cost``: (split, case, return_period, quantile)
-    - ``split_ead``: (split, case, quantile)
-    - ``asset_cost``: (asset, case, return_period, quantile)
-    - ``asset_ead``: (asset, case, quantile)
-    - ``total_cost``: (case, return_period, quantile)
-    - ``total_ead``: (case, quantile)
+def _hash_strings(values) -> np.ndarray:
+    """Stable 64-bit hashes of strings: pandas' SipHash of the UTF-8 text, with its default key."""
+    return pd.util.hash_array(np.asarray(values, dtype=str).astype(object))
+
+
+def asset_keys(asset_ids: Sequence) -> np.ndarray:
+    """Keys of snail's per-asset random draws: a 64-bit hash of each asset id, as a string.
+
+    Uses :func:`pandas.util.hash_array`, so keys depend only on the ids, not on their order, the
+    other assets, the case, the layer or the run. Ids must be unique; a collision of two distinct
+    ids (probability about ``n**2 / 2**65``) makes snail raise an error.
     """
-
-    split_fraction: np.ndarray
-    split_cost: np.ndarray
-    split_ead: np.ndarray
-    asset_cost: np.ndarray
-    asset_ead: np.ndarray
-    total_cost: np.ndarray
-    total_ead: np.ndarray
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def filled(cls, n_split, n_asset, n_case, n_rp, n_q, value=np.nan, metadata=None):
-        return cls(
-            split_fraction=np.full((n_split, n_case, n_rp, n_q), value),
-            split_cost=np.full((n_split, n_case, n_rp, n_q), value),
-            split_ead=np.full((n_split, n_case, n_q), value),
-            asset_cost=np.full((n_asset, n_case, n_rp, n_q), value),
-            asset_ead=np.full((n_asset, n_case, n_q), value),
-            total_cost=np.full((n_case, n_rp, n_q), value),
-            total_ead=np.full((n_case, n_q), value),
-            metadata=metadata or {},
-        )
+    return _hash_strings(asset_ids)
 
 
-def quantile_columns(quantiles: Sequence[float]) -> list[str]:
-    """Names snail gives to quantile summary columns."""
-    return [f"q_{(q * 100)}".removesuffix(".0") for q in quantiles]
+def systemic_key(asset_type: str) -> int:
+    """Key of snail's curve choice and systemic cost draws for an asset type: a 64-bit hash of its name.
+
+    Used with ``systemic_draws = "independent"``, so each asset type gets its own, independent,
+    curve choice and systemic cost draws, the same in every case, layer, hazard and run.
+    """
+    return int(_hash_strings([asset_type])[0])
 
 
-def clean_intensity(intensity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Replace missing or negative intensity with zero, flagging missing cases.
+def clean_intensity(intensity: np.ndarray) -> np.ndarray:
+    """Replace missing (NaN) or negative intensity with zero, as float64.
 
-    A case is missing if it has no finite values at all, for example a
-    combination of scenario and epoch that is not present in the hazard data.
-    Otherwise, missing values (e.g. outside the hazard grid, or no data) are
-    taken to mean no hazard.
-
-    Returns the cleaned array and a boolean ``(case,)`` array of missing cases.
+    Used within a case that has hazard data, where a missing value (for example outside the hazard
+    grid, or a cell with no data) means no hazard. Cases with no data at all are not computed, see
+    :func:`simulate_asset_type`.
     """
     intensity = np.asarray(intensity, dtype=float)
-    missing_case = ~np.isfinite(intensity).any(axis=(0, 2))
-    cleaned = np.where(np.isfinite(intensity) & (intensity > 0), intensity, 0.0)
-    return cleaned, missing_case
+    return np.where(np.isfinite(intensity) & (intensity > 0), intensity, 0.0)
 
 
-def _long_frame(intensity, entity, quantity, cost_mean, keep, rp_columns):
-    """Long table of (entity, case) rows with one intensity column per RP."""
-    split_idx, case_idx = np.nonzero(keep)
-    frame = pd.DataFrame(
-        {
-            "entity": entity[split_idx],
-            "case": case_idx,
-            "quantity": quantity[split_idx],
-            "cost_mean": cost_mean,
-        }
-    )
-    values = intensity[split_idx, case_idx, :]
-    for k, column in enumerate(rp_columns):
-        frame[column] = values[:, k]
-    return frame
-
-
-def _fill(target, frame, quantile_cols, rp_values=None):
-    """Write snail quantile summaries into an array indexed by entity/case[/rp]."""
-    if frame is None or frame.empty:
-        return
-    entity = frame["entity"].to_numpy()
-    case = frame["case"].to_numpy()
-    values = frame[quantile_cols].to_numpy(dtype=float)
-    if rp_values is None:
-        target[entity, case, :] = values
-    else:
-        rp_pos = {rp: k for k, rp in enumerate(rp_values)}
-        rp_idx = np.asarray([rp_pos[v] for v in frame["intensity_case"]])
-        target[entity, case, rp_idx, :] = values
-
-
-def sample_direct_damages(
+def simulate_asset_type(
     intensity: np.ndarray,
     asset_index: np.ndarray,
     quantity: np.ndarray,
@@ -134,155 +83,93 @@ def sample_direct_damages(
     curve_weights: Mapping[str, float],
     cost: CostParameters,
     *,
-    n_assets: int | None = None,
-    missing_case: np.ndarray | None = None,
+    keys: np.ndarray,
+    has_data: np.ndarray | None = None,
     n_samples: int = 1000,
     quantiles: Sequence[float] = (0.05, 0.5, 0.95),
-    seed: int | None = None,
+    seed: int = 0,
     hazard_cv: float = 0.0,
     eta_sd: float = 0.0,
-) -> DamageArrays:
-    """Sample damages for splits of assets of one type.
+    systemic_key: int | None = None,
+) -> Iterator[tuple[int, DirectDamageArrays | None]]:
+    """Sample damages to the splits of assets of one type, one case at a time.
+
+    Makes one call to :func:`snail.damages.simulate_direct_damages` per case, with split, asset and
+    total levels and ``keep_total_samples=True``, and yields ``(case, result)`` as each is done, so
+    that the caller can write results and add up total samples without holding every case.
 
     Parameters
     ----------
     intensity : numpy.ndarray
-        Hazard intensity with dimensions ``(split, case, return_period)``.
-        Missing values are treated as described in :func:`clean_intensity`.
+        Hazard intensity with dimensions ``(split, case, return_period)``. Within a case with data,
+        NaN or negative intensity is taken to be zero (no hazard), see :func:`clean_intensity`.
     asset_index : numpy.ndarray
-        Integer position of each split's parent asset, in ``[0, n_assets)``.
+        Integer position of each split's parent asset, in ``[0, len(keys))``.
     quantity : numpy.ndarray
         Quantity of each split in the units of ``cost.mean``.
     return_periods : sequence of float
-        Return period, in years, of each position along the last axis of
-        ``intensity``.
-    missing_case : numpy.ndarray, optional
-        Boolean ``(case,)`` array flagging cases with no hazard data, whose
-        damages are NaN. By default, cases where no split has a finite value.
+        Return period, in years, of each position along the last axis of ``intensity``.
     curves, curve_weights
         Damage curves and their relative weights, keyed by curve identifier.
     cost : CostParameters
         Rehabilitation cost per unit quantity, with uncertainty.
+    keys : numpy.ndarray
+        Key of each asset's random draws, one per asset, see :func:`asset_keys`.
+    has_data : numpy.ndarray, optional
+        Boolean ``(case,)`` array, False for cases with no hazard data at all (for example a
+        scenario with no baseline epoch). These are not computed, and yield None. By default, every
+        case has data.
+    n_samples, quantiles, seed, hazard_cv, eta_sd
+        Passed to snail. ``seed`` is an integer in ``[0, 2**64)``.
+    systemic_key : int, optional
+        Key of the curve choice and systemic cost draws. None shares them with every other call with
+        the same seed.
 
-    Returns
-    -------
-    DamageArrays
-        Quantiles of damage. Missing cases are NaN. Splits and assets with zero
-        intensity in every return period of a case are zero (if all curves
-        have zero damage at zero intensity) or sampled.
+    Yields
+    ------
+    tuple of (int, DirectDamageArrays or None)
+        The case, and snail's result: ``split_fraction``, ``split_cost`` ``(split, return_period,
+        quantile)``, ``split_ead`` ``(split, quantile)``, ``asset_cost``, ``asset_ead``,
+        ``total_cost``, ``total_ead`` and ``total_samples`` ``(sample, return_period)``. None for
+        cases without data.
     """
-    intensity, inferred_missing = clean_intensity(intensity)
-    missing_case = inferred_missing if missing_case is None else np.asarray(missing_case, dtype=bool)
+    intensity = np.asarray(intensity)
+    if intensity.ndim != 3:
+        raise ValueError("intensity must have dimensions (split, case, return_period)")
     n_split, n_case, n_rp = intensity.shape
-    asset_index = np.asarray(asset_index, dtype=int)
+    asset_index = np.asarray(asset_index)
     quantity = np.asarray(quantity, dtype=float)
     if asset_index.shape != (n_split,) or quantity.shape != (n_split,):
         raise ValueError("asset_index and quantity must have one value per split")
     if len(return_periods) != n_rp:
         raise ValueError("return_periods must have one value per intensity return period")
-    if n_assets is None:
-        n_assets = int(asset_index.max()) + 1 if n_split else 0
-    quantiles = list(quantiles)
-    qcols = quantile_columns(quantiles)
-    n_q = len(quantiles)
-    rp_values = [float(rp) for rp in return_periods]
-    rp_columns = [f"rp_{k}" for k in range(n_rp)]
-    intensity_columns = dict(zip(rp_values, rp_columns))
-    rp_map = dict(zip(rp_values, rp_values))
-
-    out = DamageArrays.filled(n_split, n_assets, n_case, n_rp, n_q, value=0.0)
-
-    # Skip rows that are certain to have zero damage, if curves allow
-    zero_at_zero = all(float(np.max(curve.damage_fraction(np.zeros(1)))) == 0.0 for curve in curves.values())
-    active = ~missing_case[None, :] & (
-        (intensity > 0).any(axis=2) if zero_at_zero else np.ones((n_split, n_case), dtype=bool)
-    )
-    asset_active = np.zeros((n_assets, n_case), dtype=bool)
-    np.logical_or.at(asset_active, asset_index, active)
-
+    has_data = np.ones(n_case, dtype=bool) if has_data is None else np.asarray(has_data, dtype=bool)
+    if has_data.shape != (n_case,):
+        raise ValueError("has_data must have one value per case")
+    names = list(curves)
     common = dict(
-        asset_id="entity",
-        quantity="quantity",
-        scenario="case",
-        intensity_columns=intensity_columns,
+        curves=[curves[name] for name in names],
+        curve_weights=[curve_weights[name] for name in names],
+        cost_mean=cost.mean,
+        cost_systemic_cv=cost.systemic_cv,
+        cost_asset_cv=cost.asset_cv,
         hazard_cv=hazard_cv,
-        curves=dict(curves),
-        curve_weights=dict(curve_weights),
         eta_sd=eta_sd,
         n_samples=n_samples,
+        quantiles=list(quantiles),
+        return_periods=np.asarray(return_periods, dtype=float),
         seed=seed,
+        asset_keys=keys,
+        systemic_key=systemic_key,
+        n_assets=len(keys),
+        levels=("split", "asset", "total"),
+        keep_total_samples=True,
     )
-    metadata: dict[str, Any] = {}
-
-    if active.any():
-        split_entity = np.arange(n_split)
-        # snail reports quantiles per ``asset_id`` group, and a quantile of a sum is
-        # not the sum of quantiles. So each output level needs its own call, with
-        # the entity column set to the level we want summarised:
-        #   1. entity = split, quantity = cost = 1, no cost CV: damage fraction only,
-        #      without cost uncertainty mixed in.
-        #   2. entity = split: cost and EAD for each split on its own.
-        #   3. entity = asset: the splits of an asset share local draws (hazard,
-        #      damage noise, unit cost) and their samples are summed before taking
-        #      quantiles. ``aggregate_assets`` also sums samples across assets for
-        #      the totals.
-        # Every call uses the same seed, so curve choices and systemic cost draws
-        # match across calls. Local draws do not, so per-split results agree with
-        # per-asset results in distribution, but not sample by sample.
-
-        # 1. damage fraction per split
-        frame = _long_frame(intensity, split_entity, np.ones(n_split), 1.0, active, rp_columns)
-        result = calculate_direct_damages(frame, cost_mean=1.0, quantiles=quantiles, **common)
-        _fill(out.split_fraction, result.quantiles, qcols, rp_values)
-
-        # 2. damage cost and EAD per split
-        frame = _long_frame(intensity, split_entity, quantity, cost.mean, active, rp_columns)
-        result = calculate_direct_damages(
-            frame,
-            cost_mean=cost.mean,
-            cost_asset_cv=cost.asset_cv,
-            cost_systemic_cv=cost.systemic_cv,
-            quantiles=quantiles,
-            return_periods=rp_map,
-            ead_quantiles=quantiles,
-            **common,
-        )
-        _fill(out.split_cost, result.quantiles, qcols, rp_values)
-        _fill(out.split_ead, result.ead_quantiles, qcols)
-
-        # 3. damage cost and EAD per asset, with totals
-        keep = asset_active[asset_index]
-        frame = _long_frame(intensity, asset_index, quantity, cost.mean, keep, rp_columns)
-        result = calculate_direct_damages(
-            frame,
-            cost_mean=cost.mean,
-            cost_asset_cv=cost.asset_cv,
-            cost_systemic_cv=cost.systemic_cv,
-            quantiles=quantiles,
-            return_periods=rp_map,
-            ead_quantiles=quantiles,
-            aggregate_assets=True,
-            **common,
-        )
-        _fill(out.asset_cost, result.quantiles, qcols, rp_values)
-        _fill(out.asset_ead, result.ead_quantiles, qcols)
-        if result.total_quantiles is not None:
-            for row in result.total_quantiles.itertuples(index=False):
-                row = row._asdict()
-                out.total_cost[row["case"], rp_values.index(row["intensity_case"]), :] = [row[c] for c in qcols]
-        if result.total_ead_quantiles is not None:
-            for row in result.total_ead_quantiles.itertuples(index=False):
-                row = row._asdict()
-                out.total_ead[row["case"], :] = [row[c] for c in qcols]
-        metadata = {k: v for k, v in result.metadata.items() if k not in ("intensity_columns", "return_periods")}
-
-    for name in ("split_fraction", "split_cost", "split_ead", "asset_cost", "asset_ead"):
-        getattr(out, name)[:, missing_case, ...] = np.nan
-    out.total_cost[missing_case] = np.nan
-    out.total_ead[missing_case] = np.nan
-    metadata["n_active_split_cases"] = int(active.sum())
-    out.metadata = metadata
-    return out
+    for case in range(n_case):
+        if not has_data[case]:
+            yield case, None
+            continue
+        yield case, simulate_direct_damages(clean_intensity(intensity[:, case, :]), asset_index, quantity, **common)
 
 
 def stack_cases(intensity: xr.DataArray, split_dim: str = "split") -> tuple[xr.DataArray, list[str]]:
@@ -299,10 +186,3 @@ def stack_cases(intensity: xr.DataArray, split_dim: str = "split") -> tuple[xr.D
     else:
         stacked = intensity.stack({CASE: case_dims})
     return stacked.transpose(split_dim, CASE, RETURN_PERIOD), case_dims
-
-
-def unstack_cases(data: xr.DataArray | xr.Dataset, case_dims: Sequence[str]):
-    """Reverse :func:`stack_cases` on a result with a ``case`` dimension."""
-    if not case_dims:
-        return data.isel({CASE: 0}, drop=True)
-    return data.unstack(CASE)

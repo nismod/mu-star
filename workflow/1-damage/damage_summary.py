@@ -1,13 +1,16 @@
-"""Summarise direct damage totals by asset type, across layers and hazards.
+"""Summarise direct damage totals by asset type and layer, across layers and hazards.
 
-Reads the ``asset_type`` group of each damage Zarr store and writes one long
-table, with layer, peril and subperil labels parsed from each input path
-(``.../{layer}/rp/{peril}/{subperil}/damage.zarr``).
+Reads the ``asset_type`` and ``layer`` groups of each damage Zarr store and
+writes one long table, with layer, peril and subperil labels parsed from each
+input path (``.../{layer}/rp/{peril}/{subperil}/damage.zarr``). The ``level``
+column is "asset_type" for totals over all assets of one type, and "layer"
+(with an empty ``asset_type``) for totals over all assets of the layer.
 
 With no inputs, writes an empty table with a header only.
 
-Quantiles are of totals over all assets of each type. Quantiles of different
-asset types cannot be added together to find quantiles of a layer total.
+Quantiles are of totals. Quantiles of different asset types do not add up to
+quantiles of the layer total: layer totals are summed sample by sample before
+taking quantiles.
 
 Example:
 
@@ -48,7 +51,8 @@ def main(damage_paths, output_path):
     tables = []
     for path in damage_paths:
         totals = xr.open_zarr(path, group="asset_type", consolidated=False).load()
-        tables.append(summary_table(totals, **labels_from_path(path)))
+        layer_totals = xr.open_zarr(path, group="layer", consolidated=False).load()
+        tables.append(summary_table(totals, layer_totals, **labels_from_path(path)))
     if tables:
         table = pd.concat(tables, ignore_index=True)
     else:

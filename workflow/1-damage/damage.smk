@@ -168,7 +168,7 @@ rule damage:
     """
     Determine damage fractions wrought upon a given split layer, then calculate
     the resulting rehabilitation costs and expected annual damages, for splits,
-    assets and totals by asset type.
+    assets, totals by asset type and layer totals.
 
     Test with:
     snakemake -c1 example/results/damage/layer-road/rp/peril-flood/subperil-coastal/damage.zarr --configfile example/config.yaml
@@ -179,8 +179,8 @@ rule damage:
         intensity = rules.hazard_intensity.output.intensity,
         script = "workflow/1-damage/damage_calculate.py",
     output:
-        # groups: split, asset, asset_type
-        # dimensions: (split|asset|asset_type, ...hazard_dims, return_period, quantile)
+        # groups: split, asset, asset_type, layer
+        # dimensions: ([split|asset|asset_type], ...hazard_dims, return_period, quantile)
         damage = directory("{data}/results/damage/{layer}/rp/{peril}/{subperil}/damage.zarr"),
     params:
         hazard = lambda wildcards: hazard_metadata(wildcards).hazard,
@@ -189,6 +189,7 @@ rule damage:
         seed = config["damage"]["seed"],
         hazard_cv = config["damage"]["hazard_cv"],
         eta_sd = config["damage"]["eta_sd"],
+        systemic_draws = config["damage"].get("systemic_draws", "shared"),
         strict = "--strict" if config["damage"].get("strict", False) else "--no-strict",
     shell:
         """
@@ -202,6 +203,7 @@ rule damage:
             --seed {params.seed} \
             --hazard-cv {params.hazard_cv} \
             --eta-sd {params.eta_sd} \
+            --systemic-draws {params.systemic_draws:q} \
             {params.strict} \
             --output {output.damage:q}
         """
@@ -217,7 +219,7 @@ def all_damage_outputs(wildcards):
 
 rule damage_summary:
     """
-    Summarise total damages by asset type, across all layers and hazards.
+    Summarise total damages by asset type and by layer, across all layers and hazards.
 
     Test with:
     snakemake -c1 example/results/damage/summary.csv --configfile example/config.yaml

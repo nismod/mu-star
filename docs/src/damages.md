@@ -47,8 +47,11 @@ Then for each hazard:
 ### Uncertainty
 
 Damages are sampled from specified distributions (see
-`snail.damages.calculate_direct_damages` for details) and summarised by
-quantiles. In each sample:
+`snail.damages.simulate_direct_damages` for details) and summarised by
+quantiles. For each asset type and each combination of scenario dimensions
+(a "case", for example one climate scenario and epoch), one snail call samples
+damages for every return period, and summarises them per split, per asset and
+in total over the asset type. In each sample:
 
 - one damage curve is chosen for each asset type, with probability in
   proportion to its weight in the workbook
@@ -59,30 +62,57 @@ quantiles. In each sample:
 - optionally (`hazard_cv`, `eta_sd` in `config/config.yaml`) hazard
   intensity and damage fraction are perturbed for each asset
 
-Curve choice and systemic cost draws are shared across all hazard scenarios, so
-differences between scenarios (e.g. epochs) are not confounded by them.
+Split, asset, asset type and layer results come from the same samples: in
+each sample, the damages to an asset's splits add up to the damage to the
+asset, assets add up to the asset type total, and asset types add up to the
+layer total. Quantiles are then taken at each level. Quantiles do not add up:
+the median damage to an asset is not the sum of median damages to its splits,
+and the median layer total is not the sum of the medians of each asset type.
 
-One random seed (`damage.seed` in `config/config.yaml`) is used for every snail
-call, across all asset types, layers and hazards, so results are reproducible.
-Because of this, the systemic cost multiplier and curve choice draws are the
-same across asset types, layers and hazards: systemic cost uncertainty is
-economy-wide and perfectly correlated between asset types. Per-asset draws are
-independent.
+Random draws are keyed, not drawn in sequence. One random seed
+(`damage.seed` in `config/config.yaml`) is used for every snail call, across
+all asset types, layers and hazards, so results are reproducible. Then:
+
+- each asset's own draws (hazard, damage noise and cost factors) are keyed by
+  a 64-bit hash of its `asset_id` (`pandas.util.hash_array` of the id as a
+  string). They are independent between assets, and do not depend on the
+  order of assets, on which other assets are in the layer, or on the order of
+  layers
+- the same asset gets the same draws in every case (common random numbers
+  across scenarios), so differences between scenarios (e.g. epochs) reflect
+  the hazard, not sampling noise
+- curve choice and systemic cost draws are set by `damage.systemic_draws`.
+  With `"shared"` (the default) they are the same for every asset type, layer
+  and hazard: systemic cost uncertainty is economy-wide and perfectly
+  correlated between asset types. With `"independent"` each asset type gets
+  its own draws, keyed by a hash of the asset type name, independent of other
+  asset types (but still the same across cases, layers and hazards). Layer
+  totals are usually wider (more uncertain) with shared draws than with
+  independent ones. Which is
+  right is a modelling choice; zero-uncertainty results are the same either
+  way
+
+These random streams differ from earlier versions of this workflow (three
+calls to `snail.damages.calculate_direct_damages` per asset type, with draws
+in sequence), so sampled results differ from earlier runs. They are
+statistically equivalent; results with no uncertainty are unchanged.
 
 With two or more weighted curves for an asset type and no other uncertainty,
 quantiles of damage fraction are just values from one curve or the other. When
 weights are near equal (e.g. 50/50), the median can switch between curves as the
 seed changes, so compare the 5% and 95% quantiles, not only the median.
 
-Quantiles of damage are reported for each split, each asset, and for the total
-over all assets of each type. Quantiles do not add up: the median damage to an
-asset is not the sum of median damages to its splits, and the median total
-damage to a layer can't be found by adding medians of each asset type.
+Layer totals add up, sample by sample, the total damage of each asset type in
+the layer, then take quantiles and EAD. Asset types that are not vulnerable add
+zero. If any asset type of the layer is missing configuration, or if asset
+types are costed in different currencies, the layer total is NaN, and the
+`layer` group's attributes say why.
 
 EAD assumes damage varies linearly with the log of annual exceedance
 probability between return periods, takes damage at the rarest return period
 for rarer events, and takes no damage for events more frequent than the most
-frequent return period available.
+frequent return period available. EAD is integrated per sample, then
+summarised by quantiles.
 
 ### Costs and quantities
 
@@ -225,10 +255,23 @@ Then for each hazard, under
   - `split`: `damage_fraction`, `damage_cost` and `ead`, with dimensions
     `(split, ...scenario dims, return_period, quantile)` (no `return_period`
     for `ead`), and `asset_id`, `split_id` and `asset_type` coordinates
-  - `asset`: `damage_cost` and `ead`, with dimensions `(asset, ...)`
+  - `asset`: `damage_cost` and `ead`, with dimensions `(asset, ...)`, and
+    `asset_id`, `asset_type` and `n_splits` coordinates
   - `asset_type`: totals over all assets of each type, with `n_assets`,
     `status` (`calculated`, `not_vulnerable` or `not_configured`) and
     `currency` coordinates
+  - `layer`: totals over all assets of the layer, with dimensions
+    `(...scenario dims, return_period, quantile)`, and attributes `status`,
+    `reason` (why the totals are NaN, if they are), `currency`, `n_assets`,
+    `asset_types`, `asset_types_calculated`, `asset_types_not_vulnerable` and
+    `asset_types_not_configured`
+
+  The root group's attributes record the hazard, the scenario dimensions,
+  `n_samples`, `seed` (drawn at random, and recorded, if none is given),
+  `systemic_draws` and snail's metadata for each asset type (including its
+  draw scheme). Damage variables are float32. They are chunked in pieces of
+  50,000 splits or assets, whole along the other dimensions. String
+  coordinates are stored as variable-length strings.
 
 Splits with zero length or area (slivers) have quantity, and so cost, zero;
 an asset type is only an error if its geometries are of the wrong kind for its
@@ -255,7 +298,10 @@ assets.ead.sel(quantile=0.5, rcp="rcp8p5", epoch=2050)
 ```
 
 Across all layers and hazards, `results/damage/summary.csv` is a long table of
-the `asset_type` totals.
+the `asset_type` and `layer` totals. Its `level` column is `asset_type` for
+the total over the assets of one type, named in the `asset_type` column, and
+`layer` for the total over every asset of the layer, with an empty
+`asset_type`. Don't add up rows of both levels.
 
 ## Running
 
@@ -299,7 +345,8 @@ Each rule runs a script in `workflow/1-damage/`, which can also be run directly
 
 Configuration options are in the `damage` section of `config/config.yaml`,
 including the number of samples (`n_samples`, default 10,000), quantiles
-(default 5%, 50% and 95%) and random seed.
+(default 5%, 50% and 95%), random seed and `systemic_draws` (`"shared"` or
+`"independent"`, see [Uncertainty](#uncertainty)).
 
 ### Example
 
@@ -320,17 +367,25 @@ snakemake -c2 example/results/damage/summary.csv --configfile example/config.yam
   changes.
 - Hazard intensity is the value of the cell a split falls in; there is no
   sub-grid information.
-- Per-split damages are calculated by a separate snail call from per-asset
-  damages (marginal quantiles of each). Splits with zero intensity in all return
-  periods are skipped when curves have zero damage at zero intensity. Measured
-  sampling cost:
-  - time grows with the number of exposed splits × scenario combinations, about
-    18 ms each at 10,000 samples
-  - a 10,000-segment road layer (about 100,000 splits, 5% flooded, 12 scenario
-    combinations × 9 return periods) took about 30 minutes and 2 GB
-  - outputs are held in memory as dense arrays, so layers above about 450,000
-    splits with 12 scenario combinations need more than 8 GB
-  - hazards that affect every split (e.g. wind) are far slower than floods
-- Layer totals across asset types need snail to sample several asset types
-  (with their own curves and costs) in one call, or to return samples.
+- Splits with zero intensity in all return periods of a case are skipped by
+  snail, when curves have zero damage at zero intensity, so time grows with the
+  number of exposed splits × scenario combinations. Measured on a 4-core cloud
+  container, at 10,000 samples with cost uncertainty, 12 scenario combinations
+  × 9 return periods and two road asset types (two weighted curves each):
+  - 100,000 synthetic line splits (20,000 assets), 5% flooded: about 110 s and 1.0 GB
+    peak memory (previously about 30 minutes and 2 GB for 101,795 real road
+    splits at 5%)
+  - 500,000 synthetic line splits (100,000 assets), 2% flooded: about 260 s
+    and 2.4 GB (previously more than 8 GB)
+  - memory no longer grows with the size of the outputs, which are written to
+    the Zarr store as each asset type and scenario combination is done. It
+    grows with the hazard intensity, held in memory for the layer as float32
+    (splits × scenario combinations × return periods), and with snail's
+    results for one asset type and case. Writing re-reads and re-writes each
+    50,000-split chunk once per asset type and case, which takes a few hundred
+    MB of the peak
+  - hazards that affect every split (e.g. wind) are far slower than floods:
+    their time is mostly in sorting samples for quantiles
+- Layer totals are per hazard. Totals across layers or hazards would need the
+  layer total samples to be kept (`n_samples` × return periods per case).
 - Impairment curves (loss of function) are not yet used.

@@ -1,6 +1,9 @@
 # Design: using a single-call snail interface for direct damages
 
-Status: proposal, for discussion. Section 1 is implemented; the rest is not.
+Status: implemented. Sections 1 to 4 are implemented, with snail pinned to
+commit `90f46f3` of its `feat/direct-damage-interface` branch until
+`simulate_direct_damages` is released. Deviations and additions are noted in
+each section, and in [section 6](#6-as-built).
 
 This responds to review on [#42](https://github.com/nismod/mu-star/pull/42) of
 the three `calculate_direct_damages` calls in `src/damages/calculate.py`. The
@@ -64,7 +67,7 @@ Misaligned grids make more splits (a line crossing a cell edge of each of `k`
 grids has up to `k` times as many pieces as on one), which costs time in the
 damage calculation but is what makes hazards consistent on one split.
 
-## 2. One snail call per asset type and case
+## 2. One snail call per asset type and case (implemented)
 
 `sample_direct_damages` in `src/damages/calculate.py` becomes a thin loop:
 
@@ -105,7 +108,7 @@ What changes in results:
   agreement (open question 1 in the snail note).
 - **Split, asset and total results are consistent sample by sample.**
 
-## 3. Layer totals and the summary
+## 3. Layer totals and the summary (implemented)
 
 Because total samples from different calls share curve-choice and systemic
 draws at each sample index, they can be added:
@@ -122,7 +125,7 @@ Totals across layers or hazards could be added the same way later, by keeping
 the per-case layer total samples (`n_samples × n_return_period` floats per
 case, small).
 
-## 4. Memory: write as we go
+## 4. Memory: write as we go (implemented)
 
 With one call per (asset type, case), outputs no longer need to be held as
 dense arrays for the whole layer:
@@ -139,7 +142,7 @@ splits at 2% exposure in 458 s and 1.9 GB, where the current code exceeds 8 GB.
 Because snail's draws are keyed by asset, the damage step can later be split
 into chunks of assets or run in parallel without changing results.
 
-## 5. Order of work
+## 5. Order of work (done, apart from a snail release)
 
 1. snail: implement `simulate_direct_damages`, keyed draws, helpers and tests
    on `feat/direct-damage-interface`; agree the open questions first.
@@ -149,3 +152,63 @@ into chunks of assets or run in parallel without changing results.
 3. mu-star: split once on all grids (done; independent of 1 and 2).
 4. Re-run the benchmark at realistic sizes and update the measured numbers in
    `docs/src/damages.md`.
+
+## 6. As built
+
+Section 2. `damages.calculate.simulate_asset_type` is a generator over cases
+for one asset type, yielding snail's `DirectDamageArrays` for each case (None
+for cases with no hazard data, from `has_data` in `intensity.zarr`, which are
+not computed and stay NaN at every level). Within a case with data, NaN or
+negative intensity is zero. Asset keys are `pandas.util.hash_array` of the
+asset id as a string (`damages.calculate.asset_keys`), so draws are stable
+across cases, runs and the order of assets or layers. Common random numbers
+across cases were accepted. `--seed` defaults to a random seed, which is
+recorded.
+
+Addition: `damage.systemic_draws` in `config/config.yaml` (`"shared"`, the
+default, or `"independent"`), passed as `--systemic-draws` and recorded in the
+root attributes of `damage.zarr`. `"independent"` passes snail a
+`systemic_key` hashed from the asset type name, so each asset type gets its
+own curve choice and systemic cost draws.
+
+Section 3. The `layer` group has `damage_cost (scenario dims..., return_period,
+quantile)` and `ead (scenario dims..., quantile)`, with attributes listing the
+asset types calculated, not vulnerable (adding zero) and not configured.
+Additions: the layer total is NaN, with a `reason` attribute, if any asset type
+is not configured or if asset types are costed in different currencies. The
+summary table has a `level` column, `asset_type` or `layer`, with an empty
+`asset_type` for layer rows, and the layer's `status`, `currency` and total
+`n_assets`.
+
+Section 4. `damages.output.DamageStore` creates every group up front, float32
+and NaN-filled, chunked by 50,000 splits or assets and whole along scenario,
+return period and quantile dimensions, then writes each (asset type, case)
+result into place (slices for contiguous positions, orthogonal selection
+otherwise). String coordinates are variable-length strings (object arrays in
+xarray), which zarr v3 stores as `string` without a warning. Deviation: hazard
+intensity is read once for the layer, as float32 (`splits × cases × return
+periods`, 43 MB for 100,000 splits and 108 cases), not one case at a time,
+because the loop is over asset types, then cases. Because chunks are whole
+along the scenario dimensions, each case's write re-reads and re-writes the
+chunks holding that asset type's splits. This was about 10 s of a 110 s run
+and a few hundred MB of peak memory in the benchmark below; chunks of one case
+each would avoid it, at the cost of more, smaller chunks when reading all
+scenarios of a split.
+
+Measured, on a 4-core cloud container, 10,000 samples, cost uncertainty, 12
+cases × 9 return periods, two road asset types with two weighted curves each
+(synthetic inputs):
+
+| Splits | Exposed | Time | Peak RSS |
+|---|---|---|---|
+| 100,000 | 5% | 110 s | 1.0 GB |
+| 500,000 | 2% | 261 s | 2.4 GB |
+
+Before: 29 minutes and 2 GB for 101,795 real road splits at 5%, and more than
+8 GB for 500,000 splits (the `chunked_calculate.py` prototype: 458 s and 1.9 GB
+at 2%). About 90% of the time is in snail, mostly sorting
+samples for quantiles.
+
+Not done: `pixi.lock` still pins snail `v0.6.0`, as `pixi lock` could not reach
+the conda-PyPI name mapping from the environment it was run in. Re-lock with
+network access.

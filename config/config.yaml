@@ -19,9 +19,17 @@ damage:
   # annual damages
   quantiles: [0.05, 0.5, 0.95]
   # Random seed, used for every snail call (all asset types, layers and hazards), so
-  # results are reproducible. The systemic cost and curve choice draws are then the
-  # same across asset types, layers and hazards; per-asset draws are independent.
+  # results are reproducible. Per-asset draws (hazard, damage noise, asset cost) are
+  # keyed by a hash of the asset id: each asset gets the same draws in every scenario
+  # combination, and different assets get independent draws.
   seed: 20261114
+  # Curve choice and systemic cost draws:
+  # - "shared": the same for every asset type, layer and hazard, so systemic cost
+  #   uncertainty is economy-wide (perfectly correlated between asset types)
+  # - "independent": each asset type gets its own draws (keyed by a hash of the asset
+  #   type name), independent of other asset types, but still the same across
+  #   scenario combinations, layers and hazards
+  systemic_draws: "shared"
   # Coefficient of variation of hazard intensity (0 for no hazard uncertainty)
   # TODO - should this be defined in workbook?
   hazard_cv: 0.0

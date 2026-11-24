@@ -81,6 +81,7 @@ class Layer:
     split_damage: xr.Dataset
     asset_damage: xr.Dataset
     type_damage: xr.Dataset
+    layer_damage: xr.Dataset
 
     @property
     def grid_number(self) -> int:
@@ -185,6 +186,7 @@ def dataset(tmp_path_factory) -> Dataset:
                 split_damage=group("split"),
                 asset_damage=group("asset"),
                 type_damage=group("asset_type"),
+                layer_damage=group("layer"),
             )
         return layers
 
@@ -445,6 +447,35 @@ def test_asset_type_totals_are_sums_over_assets(layer):
         assert_quantiles_equal(totals.ead, row.ead)
 
 
+def test_layer_totals_are_sums_of_asset_type_totals(layer):
+    """With no uncertainty, every quantile of the layer total is the hand-calculated sum over asset types."""
+    totals = layer.layer_damage
+    assert totals.damage_cost.dims == DIMS
+    assert totals.ead.dims == ("epoch", "quantile")
+    expected = layer.expected.asset_types
+    types = set(layer.assets.asset_type)
+    assert totals.attrs["asset_types"] == sorted(types)
+    assert totals.attrs["asset_types_calculated"] == sorted(types & set(syn.COSTS))
+    assert int(totals.attrs["n_assets"]) == len(layer.assets)
+    if layer.name == "mixed":
+        assert totals.attrs["status"] == "not_configured"
+        assert totals.attrs["asset_types_not_configured"] == [syn.UNKNOWN]
+        assert totals.attrs["asset_types_not_vulnerable"] == [syn.NOT_VULNERABLE]
+        assert syn.UNKNOWN in totals.attrs["reason"]
+        assert totals.damage_cost.isnull().all() and totals.ead.isnull().all()
+        return
+    assert totals.attrs["status"] == "calculated" and totals.attrs["currency"] == "usd"
+    assert totals.attrs["asset_types_not_configured"] == []
+    epochs = slice(0, 2)  # 2080 has no data
+    assert_quantiles_equal(totals.damage_cost.isel(epoch=epochs), np.sum(np.stack(expected.cost), axis=0)[epochs])
+    assert_quantiles_equal(totals.ead.isel(epoch=epochs), np.sum(np.stack(expected.ead), axis=0)[epochs])
+    # and the sum of the asset type totals in the output
+    calculated = layer.type_damage.sel(asset_type=sorted(types & set(syn.COSTS)))
+    xr.testing.assert_allclose(
+        totals.damage_cost.isel(epoch=epochs), calculated.damage_cost.isel(epoch=epochs).sum("asset_type"), rtol=RTOL
+    )
+
+
 def test_all_nan_epoch_gives_nan(layer):
     for name, group in [("split", layer.split_damage), ("asset", layer.asset_damage)]:
         calculated = group.asset_type.isin(list(syn.COSTS)).values
@@ -455,6 +486,10 @@ def test_all_nan_epoch_gives_nan(layer):
     totals = layer.type_damage.sel(asset_type=[t for t in layer.type_damage.asset_type.values if t in syn.COSTS])
     assert totals.damage_cost.sel(epoch=2080).isnull().all()
     assert totals.ead.sel(epoch=2080).isnull().all()
+    for var in ("damage_cost", "ead"):
+        assert layer.layer_damage[var].sel(epoch=2080).isnull().all()
+        if layer.name != "mixed":  # mixed has an asset type that is not configured, so its layer totals are NaN
+            assert layer.layer_damage[var].sel(epoch=[2020, 2050]).notnull().all()
 
 
 def test_nan_and_outside_grid_splits_have_zero_damage(dataset):
@@ -549,9 +584,142 @@ def test_strict_fails_on_unknown_type(dataset, tmp_path):
     assert result.returncode != 0
     assert syn.UNKNOWN in result.stderr
     assert "not listed in the workbook" in result.stderr
+    # every asset type is checked before anything is sampled or written
+    assert not (tmp_path / "strict.zarr").exists()
     # layers whose asset types are all configured are fine under --strict
     result = run_script("damage_calculate.py", *dataset.damage_args("line", tmp_path / "line.zarr", "--strict"))
     assert result.returncode == 0, result.stderr
+
+
+# Uncertainty and systemic draws
+
+
+def uncertain_workbook(path: Path) -> Path:
+    tables = syn.workbook_tables()
+    tables["asset-type-cost"] = tables["asset-type-cost"].assign(cost_systemic_cv=0.2, cost_asset_cv=0.3)
+    syn.write_workbook(path, tables)
+    return path
+
+
+def direct_total_samples(dataset: Dataset, layer: str, workbook: Path, n_samples: int, seed: int, independent: bool):
+    """Total damage samples ``(epoch, asset_type) -> (sample, return_period)`` of the line layer, by calling snail's
+    ``simulate_direct_damages`` directly, once per asset type and epoch, with the documented keys."""
+    from snail.damages import simulate_direct_damages
+
+    from damages.config import read_damage_config
+    from damages.quantity import split_quantity
+
+    config = read_damage_config(workbook)
+    split = pd.read_parquet(layer_dir(dataset.data, layer) / "split.gpq", columns=None).drop(columns="geometry")
+    intensity = xr.open_zarr(output_dir(dataset.data, layer) / "intensity.zarr", consolidated=False)["intensity"]
+    intensity = intensity.load().transpose("split", "epoch", "return_period").values
+    samples = {}
+    for asset_type in sorted(set(split.asset_type)):
+        rows = np.flatnonzero(split.asset_type == asset_type)
+        ids, asset_index = np.unique(split.asset_id.iloc[rows].astype(str), return_inverse=True)
+        cost = config.cost(asset_type)
+        curves, weights = config.curves_for(asset_type, syn.METRIC)
+        for e in range(2):  # 2080 has no data
+            values = intensity[rows, e]
+            result = simulate_direct_damages(
+                np.where(np.isfinite(values), values, 0.0),
+                asset_index,
+                split_quantity(split.iloc[rows], cost.unit),
+                curves=list(curves.values()),
+                curve_weights=[weights[k] for k in curves],
+                cost_mean=cost.mean,
+                cost_systemic_cv=cost.systemic_cv,
+                cost_asset_cv=cost.asset_cv,
+                n_samples=n_samples,
+                return_periods=syn.RETURN_PERIODS,
+                seed=seed,
+                asset_keys=pd.util.hash_array(ids.astype(object)),
+                systemic_key=int(pd.util.hash_array(np.array([asset_type], dtype=object))[0]) if independent else None,
+                levels=(),
+                keep_total_samples=True,
+            )
+            samples[e, asset_type] = result.total_samples
+    return samples
+
+
+@pytest.fixture(scope="module")
+def uncertain(dataset, tmp_path_factory):
+    """The line layer (two asset types) with cost uncertainty, with shared and independent systemic draws."""
+    tmp = tmp_path_factory.mktemp("uncertain")
+    workbook = uncertain_workbook(tmp / "workbook.xlsx")
+    outputs = {}
+    for mode in ("shared", "independent"):
+        args = dataset.damage_args("line", tmp / f"{mode}.zarr", "--systemic-draws", mode, "--seed", 3)
+        args[args.index("--damage-config") + 1] = workbook
+        args[args.index("--n-samples") + 1] = 400
+        result = run_script("damage_calculate.py", *args)
+        assert result.returncode == 0, result.stderr
+        outputs[mode] = {g: xr.open_zarr(tmp / f"{mode}.zarr", group=g, consolidated=False).load() for g in GROUPS}
+    return workbook, outputs
+
+
+GROUPS = ("split", "asset", "asset_type", "layer")
+
+
+@pytest.mark.parametrize("mode", ["shared", "independent"])
+def test_layer_totals_sum_samples_across_asset_types(dataset, uncertain, mode):
+    """Layer totals are quantiles of the sum of asset type total samples, not sums of quantiles."""
+    from snail.damages import expected_annual_damage, summarise_samples
+
+    workbook, outputs = uncertain
+    out = outputs[mode]
+    assert out["layer"].attrs["asset_types_calculated"] == ["canal", "road_line"]
+    samples = direct_total_samples(dataset, "line", workbook, 400, 3, independent=mode == "independent")
+    quantiles = out["layer"]["quantile"].values
+    for e in range(2):
+        layer_samples = samples[e, "canal"] + samples[e, "road_line"]
+        layer = out["layer"].isel(epoch=e)
+        np.testing.assert_allclose(layer.damage_cost.values, summarise_samples(layer_samples.T, quantiles), rtol=1e-6)
+        np.testing.assert_allclose(
+            layer.ead.values,
+            summarise_samples(expected_annual_damage(layer_samples, syn.RETURN_PERIODS), quantiles),
+            rtol=1e-6,
+        )
+        for asset_type in ("canal", "road_line"):
+            totals = out["asset_type"].sel(asset_type=asset_type).isel(epoch=e)
+            np.testing.assert_allclose(
+                totals.damage_cost.values, summarise_samples(samples[e, asset_type].T, quantiles), rtol=1e-6
+            )
+        # with uncertainty, the layer's quantiles are not the sums of the asset types'
+        summed = out["asset_type"].damage_cost.isel(epoch=e).sum("asset_type")
+        assert not np.allclose(layer.damage_cost.sel(quantile=[0.05, 0.95]), summed.sel(quantile=[0.05, 0.95]))
+    assert out["layer"].damage_cost.sel(epoch=2080).isnull().all()
+
+
+def test_systemic_draws_change_totals(uncertain):
+    _, outputs = uncertain
+    shared, independent = outputs["shared"], outputs["independent"]
+    for group in ("asset_type", "layer"):
+        assert not np.allclose(
+            shared[group].damage_cost.sel(epoch=2020).values, independent[group].damage_cost.sel(epoch=2020).values
+        )
+    # independent systemic draws spread less: the 5-95% range of the layer total is narrower
+    width = {
+        mode: (out["layer"].ead.sel(quantile=0.95) - out["layer"].ead.sel(quantile=0.05)).sel(epoch=2020).item()
+        for mode, out in outputs.items()
+    }
+    assert width["independent"] < width["shared"]
+    # damage fractions carry no cost uncertainty, so are the same either way
+    xr.testing.assert_equal(shared["split"].damage_fraction, independent["split"].damage_fraction)
+
+
+def test_systemic_draws_do_not_change_zero_uncertainty_results(dataset, tmp_path):
+    path = tmp_path / "independent.zarr"
+    result = run_script("damage_calculate.py", *dataset.damage_args("line", path, "--systemic-draws", "independent"))
+    assert result.returncode == 0, result.stderr
+    layer = dataset.layers["line"]
+    expected = {"split": layer.split_damage, "asset": layer.asset_damage, "asset_type": layer.type_damage}
+    expected["layer"] = layer.layer_damage
+    for group, ds in expected.items():
+        xr.testing.assert_equal(xr.open_zarr(path, group=group, consolidated=False).load(), ds)
+    import zarr
+
+    assert zarr.open_group(path, mode="r").attrs["systemic_draws"] == "independent"
 
 
 # Summary
@@ -575,6 +743,23 @@ def check_summary(summary: pd.DataFrame, dataset: Dataset) -> None:
                     for k, rp in enumerate(syn.RETURN_PERIODS):
                         cost = mine[(mine.metric == "damage_cost") & (mine.epoch == epoch) & (mine.return_period == rp)]
                         np.testing.assert_allclose(cost.q_50.to_numpy(), [expected.cost[e, k]], rtol=RTOL)
+    assert set(summary.level) == {"asset_type", "layer"}
+    assert summary[summary.level == "layer"].asset_type.isna().all()
+    assert summary[summary.level == "asset_type"].asset_type.notna().all()
+    for layers in (dataset.layers, dataset.layers_offset):
+        for name, layer in layers.items():
+            rows = summary[(summary.layer == name) & (summary.subperil == layer.subperil) & (summary.level == "layer")]
+            assert len(rows) == len(syn.EPOCHS) * (len(syn.RETURN_PERIODS) + 1)
+            assert (rows.n_assets == len(layer.assets)).all()
+            if name == "mixed":
+                assert (rows.status == "not_configured").all() and rows.q_50.isna().all()
+                continue
+            assert (rows.status == "calculated").all() and (rows.currency == "usd").all()
+            expected = layer.expected.asset_types
+            ead = rows[(rows.metric == "ead") & (rows.epoch == 2020)]
+            np.testing.assert_allclose(ead.q_50.to_numpy(), [np.sum(np.stack(expected.ead), axis=0)[0]], rtol=RTOL)
+            cost = rows[(rows.metric == "damage_cost") & (rows.epoch == 2050)].sort_values("return_period")
+            np.testing.assert_allclose(cost.q_50.to_numpy(), np.sum(np.stack(expected.cost), axis=0)[1], rtol=RTOL)
     mixed = summary[summary.layer == "mixed"]
     assert set(mixed[mixed.asset_type == syn.UNKNOWN].status) == {"not_configured"}
     assert mixed[mixed.asset_type == syn.UNKNOWN].q_50.isna().all()
