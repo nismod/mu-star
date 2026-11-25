@@ -4,7 +4,7 @@ This module implements the catchment water allocation model using official Pywr 
 
 ## Requirements
 - Python 3.12+
-- `pywr` and `pandas`
+- `pywr`, `glpk`, and `pandas` (declared in `environment.yaml` and `pyproject.toml`)
 
 ## Input Files (`src/water/data/`)
 Place the following CSV files in `src/water/data/` (ignored by Git):

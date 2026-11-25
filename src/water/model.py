@@ -329,8 +329,11 @@ def build_simplified_model(base_dir):
     return basins, schema
 
 
-def run_simplified():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+def run_simplified(base_dir=None):
+    if base_dir is None:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+    else:
+        base_dir = os.fspath(base_dir)
     basins, schema = build_simplified_model(base_dir)
     json_path = os.path.join(base_dir, "Pywr_simplified_model.json")
     with open(json_path, "w", encoding="utf-8") as f:
@@ -370,8 +373,10 @@ def run_simplified():
     out_dir = os.path.join(base_dir, "outputs")
     os.makedirs(out_dir, exist_ok=True)
     out_csv = os.path.join(out_dir, "simplified_water_balance_summary.csv")
-    pd.DataFrame(rows).to_csv(out_csv, index=False, encoding="utf-8-sig")
+    summary_df = pd.DataFrame(rows)
+    summary_df.to_csv(out_csv, index=False, encoding="utf-8-sig")
     print(f"Solved {len(basins)} basins -> {out_csv}")
+    return summary_df
 
 
 if __name__ == "__main__":
