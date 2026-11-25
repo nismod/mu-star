@@ -99,7 +99,7 @@ energy:
     # the network (inferred.transmission_voltage_kv, 66 kV), times its
     # circuits: 149-AL1/24-ST1A, the 150 mm2 conductor in the annual report
     # (p. 61), 53.7 MVA at 66 kV; 243-AL1/39-ST1A, PyPSA-Earth's type for
-    # 132 kV, 73.7 MVA at 66 kV. Placeholders until CEB gives ratings.
+    # 132 kV, 73.7 MVA at 66 kV. Defaults until CEB gives its ratings.
     line_types:
       66: 149-AL1/24-ST1A 110.0
       132: 243-AL1/39-ST1A 110.0

@@ -203,6 +203,24 @@ Add `-n` to a command to list the jobs it would run without running them.
 With the pack in place, the network commands have nothing to do, while the
 demand and criticality commands also need the incoming folder.
 
+### Criticality settings
+
+The criticality rule reads its settings from `criticality` in
+`config/energy/energy.yaml`:
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `max_radial_line_voltage_kv` | 35 | Lines above it are transmission lines, run meshed and solved by power flow; lines at or below it are distribution lines, left out of the power flow. Keep it between the two voltages (see "Criticality" above). |
+| `island_carriers` | thermal, hydro | Plants that keep supply going in a part of the network cut off from the rest. |
+| `line_circuits` | `Power Transmission/ceb_line_circuits.csv` | Each CEB line's route, design voltage and circuits, for the power flow. Optional. |
+| `substation_names` | `Substation/ceb_substation_names.csv` | The substations' names. Optional. |
+| `line_types` | 149-AL1/24-ST1A for lines built for 66 kV, 243-AL1/39-ST1A for 132 kV | The PyPSA line type of one circuit, which sets a line's rating in the power flow. |
+| `s_max_pu` | 1.0 | The share of a line's rating that the power flow can use after a failure. |
+
+`line_limits_peak_mw` in `criticality.csv` gives the unmet demand that line
+ratings add to a failure; it is zero for every failure with the current
+ratings.
+
 ## Outputs
 
 - `data/processed/energy/<model_data>/networks/<network>/`, one folder per
@@ -251,9 +269,13 @@ criticality results.
   between its plants. An island with no power asset at all gets a placeholder
   substation on its roads.
 - Rooftop solar and plants with no location yet are left out.
-- The voltages and capacities in the networks are placeholders. The
-  criticality analysis, the only part that runs a power flow, rates lines by
-  standard line types, which are placeholders too until CEB provides ratings.
+- The voltages and capacities in the networks are defaults, which data from
+  CEB would replace. The power flow, the only part that rates lines, rates
+  them by standard line types until CEB provides its ratings.
+- The rule does not model switching: a failed substation cuts off its whole
+  service area until the repair, even where an operator could restore supply
+  sooner through another route. In 2024, an interruption to CEB's customers
+  lasted 1.8 to 3.2 hours on average, by region (annual report, p. 66).
 - The criticality analysis fails one component at a time. The unmet demand
   when a hazard damages several components at once is not the sum of the
   single-failure values: a substation fed by two lines keeps its supply when
