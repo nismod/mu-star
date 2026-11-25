@@ -32,6 +32,7 @@ dependencies = [
     "pandas>=2,<3",
     "pyarrow",
     "pypsa>=0.30,<0.31",
+    "pywr",
     "pyyaml",
     "rasterio",
     "rioxarray",
@@ -60,7 +61,7 @@ source = "vcs"
 include = ["/src"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mu_star", "src/transport", "src/energy"]
+packages = ["src/mu_star", "src/transport", "src/energy", "src/water"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

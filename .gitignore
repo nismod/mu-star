@@ -89,3 +89,7 @@ venv.bak/
 
 # PyPI configuration file
 .pypirc
+
+# Water model outputs and generated JSON
+src/water/outputs/
+src/water/*.json

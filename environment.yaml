@@ -11,6 +11,7 @@ dependencies:
       - nismod-snail
       - osmium
   - geopandas
+  - glpk
   - hatchling
   - highspy
   - jupyter
@@ -29,6 +30,7 @@ dependencies:
   - pyarrow
   - pypsa>=0.30,<0.31
   - pytest
+  - pywr
   - scipy
   - shapely
   - bioconda::snakemake
