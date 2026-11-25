@@ -1,4 +1,4 @@
-"""Write the N-1 criticality tables of inferred-provided by power flow (see energy.criticality)."""
+"""Write the N-1 criticality tables of inferred-provided (see energy.criticality)."""
 
 import logging
 from pathlib import Path
@@ -11,6 +11,7 @@ from energy.criticality import DEFAULT_ISLAND_CARRIERS, DEFAULT_MAX_RADIAL_LINE_
 @click.command()
 @click.option("--network", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--substation-weights", "substation_weights", required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--node-weights", "node_weights", required=True, type=click.Path(exists=True, path_type=Path))
 @click.option("--demand-levels", "demand_levels", required=True, type=click.Path(exists=True, path_type=Path))
 @click.option("--output-dir", "output_dir", required=True, type=click.Path(file_okay=False, path_type=Path))
 @click.option("--line-circuits", "line_circuits", type=click.Path(exists=True, path_type=Path))
@@ -28,13 +29,15 @@ from energy.criticality import DEFAULT_ISLAND_CARRIERS, DEFAULT_MAX_RADIAL_LINE_
     type=float,
     default=DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV,
     show_default=True,
-    help="Lines above this voltage enter the power flow; lines at or below it are distribution lines.",
+    help="Lines above this voltage are run meshed and solved by power flow; lines at or below it are distribution "
+    "lines, run radially and failed by connectivity.",
 )
 @click.option("--s-max-pu", "s_max_pu", type=float, default=1.0, show_default=True)
 @click.option("--island-carrier", "island_carriers", multiple=True, default=DEFAULT_ISLAND_CARRIERS, show_default=True)
 def main(
     network,
     substation_weights,
+    node_weights,
     demand_levels,
     output_dir,
     line_circuits,
@@ -50,6 +53,7 @@ def main(
     outputs = build_criticality(
         network_path=network,
         substation_weights_path=substation_weights,
+        node_weights_path=node_weights,
         demand_levels_path=demand_levels,
         output_dir=output_dir,
         line_circuits_path=line_circuits,

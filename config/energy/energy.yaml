@@ -71,17 +71,18 @@ energy:
     weight_population: 0.4
 
   criticality:
-    # Unmet demand when each substation, transmission line or plant of
-    # inferred-provided fails (workflow/2-losses/energy.smk).
-    # Lines above this voltage are run meshed and make up the network of the
-    # power flow; lines at or below it are distribution lines, run radially
-    # (each fed from one substation), and are left out of the power flow.
-    # The demand step also uses it, to find each substation's area along the
-    # distribution lines.
+    # Unmet demand when each component of inferred-provided fails
+    # (build_energy_criticality in workflow/2-losses/energy.smk): substations,
+    # transmission lines and plants by power flow, and distribution lines by
+    # connectivity. Lines above this voltage are run meshed and make up the
+    # network of the power flow; lines at or below it are distribution lines,
+    # run radially (each fed from one substation). The demand step also uses
+    # it, to find each substation's area along the distribution lines.
     # Keep it between the voltage of the distribution lines (11 kV in the
     # estimated network) and that of the transmission lines (66 kV). Below the
     # distribution lines, it moves them into the power flow, run meshed and
-    # without the transformers between voltages; the rule stops with an error.
+    # without the transformers between voltages, for more than 100,000
+    # core-hours; the rule stops with an error and the demand step warns.
     # IEC 60038:2009+AMD1:2021 (IEC standard voltages) lists three-phase
     # systems above 1 kV and up to 35 kV, such as 11, 22 and 33 kV, in
     # Table 3, apart from those above 35 kV (Table 4). PyPSA-Earth builds its

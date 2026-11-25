@@ -208,13 +208,17 @@ def test_unmet_demand_of_a_failure_is_the_rise_in_the_total():
 
 
 def _inputs(tmp_path):
-    """Write the network, circuits, names, weights and demand levels; return them as build_criticality arguments."""
+    """Write the network, circuits, names, weights and demand levels; return them as build_criticality arguments.
+
+    Each supply point is a node of its own service area, so the 11 kV road line between A and B joins two areas.
+    """
     _network().export_to_netcdf(tmp_path / "network.nc")
     _circuits().reset_index().to_csv(tmp_path / "circuits.csv", index=False)
     pd.DataFrame({"substation": ["SUB_A"], "name": ["Alpha"]}).to_csv(tmp_path / "names.csv", index=False)
     shares = [10 / 60, 20 / 60, 30 / 60, 0.5, 0.5]
     weights = pd.DataFrame({"bus_id": ISLANDS.index, "island": ISLANDS.to_numpy(), "service_weight": shares})
     weights.to_csv(tmp_path / "weights.csv", index=False)
+    weights.assign(area_bus_id=ISLANDS.index).to_csv(tmp_path / "nodes.csv", index=False)
     levels = pd.DataFrame(
         {
             "level": ["peak", "peak", "average", "average"],
@@ -227,11 +231,12 @@ def _inputs(tmp_path):
     return {
         "network_path": tmp_path / "network.nc",
         "substation_weights_path": tmp_path / "weights.csv",
+        "node_weights_path": tmp_path / "nodes.csv",
         "demand_levels_path": tmp_path / "levels.csv",
     }
 
 
-def test_build_criticality_writes_the_tables(tmp_path):
+def test_build_criticality_writes_one_table_by_power_flow_and_connectivity(tmp_path):
     inputs = _inputs(tmp_path)
 
     outputs = build_criticality(
@@ -250,12 +255,24 @@ def test_build_criticality_writes_the_tables(tmp_path):
         "unmet_mwh_per_day",
         "unmet_peak_mw",
         "line_limits_peak_mw",
+        "in_service",
+        "method",
     ]
-    assert summary["asset_type"].value_counts().to_dict() == {"plant": 4, "substation": 3, "line": 2}
+    assert summary.groupby(["asset_type", "method"]).size().to_dict() == {
+        ("distribution_line", "connectivity"): 1,
+        ("line", "power_flow"): 2,
+        ("plant", "power_flow"): 4,
+        ("substation", "power_flow"): 3,
+    }
     assert summary.at["SUB_A", "name"] == "Alpha"
     # Losing B - C cuts off C: 30 MW at peak and 20 MW at average demand.
     assert summary.at["R2", "unmet_peak_mw"] == pytest.approx(30.0)
     assert summary.at["R2", "unmet_mwh_per_day"] == pytest.approx(24 * 20.0)
+    # The road line between two areas is open, so it cuts off nothing; the power flow does not rate it.
+    road = summary.loc["road_ab"]
+    assert (road["unmet_peak_mw"], road["in_service"]) == (0.0, False)
+    assert math.isnan(road["line_limits_peak_mw"])
+    assert summary.loc[summary["method"].eq("power_flow"), "in_service"].all()
     by_area = pd.read_csv(outputs.by_area)
     assert list(by_area.columns) == ["asset_id", "area_bus_id", "unmet_mwh_per_day", "unmet_peak_mw"]
     metadata = json.loads(outputs.metadata.read_text())
