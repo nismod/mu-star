@@ -11,12 +11,15 @@ from energy.paths import results_name
 CRITICALITY = ENERGY.get("criticality", {})
 # Optional tables, as paths in the incoming folder.
 CRITICALITY_TABLES = {
-    name: f"{INCOMING_DIR}/{CRITICALITY[name]}"
-    for name in ("line_circuits", "substation_names")
-    if CRITICALITY.get(name)
+    name: f"{INCOMING_DIR}/{CRITICALITY[name]}" for name in ("line_circuits", "substation_names") if CRITICALITY.get(name)
 }
 # Results of the model-data pack: 20261012-model-data gives 20261012-results.
 CRITICALITY_DIR = f"{{data}}/results/energy/{results_name(ENERGY)}/criticality/{INFERRED_PROVIDED_NAME}"
+
+
+def criticality_table_options(wildcards, input):
+    """Return the command-line options that pass the optional tables."""
+    return " ".join(f"--{name.replace('_', '-')} {shlex.quote(input[name])}" for name in CRITICALITY_TABLES)
 
 
 rule build_energy_criticality:
@@ -41,9 +44,7 @@ rule build_energy_criticality:
         metadata=f"{CRITICALITY_DIR}/metadata.json",
     params:
         output_dir=CRITICALITY_DIR,
-        tables=lambda wildcards, input: " ".join(
-            f"--{name.replace('_', '-')} {shlex.quote(input[name])}" for name in CRITICALITY_TABLES
-        ),
+        tables=criticality_table_options,
         line_types=" ".join(
             f"--line-type {int(kv)} {shlex.quote(str(line_type))}"
             for kv, line_type in CRITICALITY.get("line_types", {}).items()
@@ -52,7 +53,7 @@ rule build_energy_criticality:
         s_max_pu=CRITICALITY.get("s_max_pu", 1.0),
         island_carriers=" ".join(
             f"--island-carrier {shlex.quote(str(carrier))}"
-            for carrier in CRITICALITY.get("island_carriers", ["thermal", "hydro"])
+            for carrier in CRITICALITY.get("island_carriers", [])
         ),
     shell:
         """

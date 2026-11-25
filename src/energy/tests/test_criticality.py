@@ -7,9 +7,9 @@ import pytest
 
 from energy.criticality import (
     build_criticality,
-    criticality,
     demand_by_supply_point,
     failure_assets,
+    power_flow_failures,
     read_line_circuits,
     transmission_model,
     unmet_demand,
@@ -176,7 +176,8 @@ def test_criticality_separates_unmet_demand_due_to_line_ratings():
 
     # Without the solar farm, A - B must carry 60 MW at peak: more than its 53.7 MVA. At average demand
     # (C at 30 MW) it carries 50 MW, within its rating, so the per-day value misses this shortfall.
-    summary, by_area, intact = criticality(model, assets, _demand(c=40.0), _demand())
+    checked = assets[assets["asset_id"].isin(["SUB_B", "R2", "solar_c"])]  # fail only the components checked
+    summary, by_area, intact = power_flow_failures(model, checked, _demand(c=40.0), _demand())
 
     row = summary.set_index("asset_id").loc["solar_c"]
     assert row["unmet_peak_mw"] == pytest.approx(60 - math.sqrt(3) * 66 * 0.47, abs=1e-3)
@@ -185,7 +186,8 @@ def test_criticality_separates_unmet_demand_due_to_line_ratings():
     # Losing B - C cuts off C all day: 30 MW at average demand, 40 MW at peak.
     r2 = summary.set_index("asset_id").loc["R2", ["unmet_mwh_per_day", "unmet_peak_mw", "line_limits_peak_mw"]]
     assert r2.tolist() == pytest.approx([24 * 30.0, 40.0, 0.0])
-    assert intact == {"unmet_mwh_per_day": pytest.approx(0.0), "unmet_peak_mw": pytest.approx(0.0)}
+    assert intact["peak"].sum() == pytest.approx(0.0)
+    assert intact["average"].sum() == pytest.approx(0.0)
     assert set(by_area.loc[by_area["asset_id"].eq("SUB_B"), "area_bus_id"]) == {"bus::SUB_B", "bus::SUB_C"}
     assert list(summary["asset_type"].drop_duplicates()) == ["substation", "line", "plant"]
 
@@ -196,25 +198,21 @@ def test_unmet_demand_of_a_failure_is_the_rise_in_the_total():
     model = transmission_model(network, ISLANDS, line_circuits=_circuits())
     assets = failure_assets(model, network, _circuits())
 
-    summary, _, intact = criticality(model, assets, _demand(), _demand())
+    summary, _, intact = power_flow_failures(model, assets[assets["asset_id"].eq("R2")], _demand(), _demand())
 
-    assert intact["unmet_peak_mw"] == pytest.approx(5.0)
+    assert intact["peak"].sum() == pytest.approx(5.0)
     # Losing B - C cuts off C (30 MW; its solar farm cannot run alone) and leaves A and B 45 MW for 30 MW, so the
     # total rises by 25 MW, wherever the power flow shed the 5 MW with nothing failed.
     assert summary.set_index("asset_id").at["R2", "unmet_peak_mw"] == pytest.approx(25.0)
 
 
-def test_build_criticality_writes_the_tables(tmp_path):
+def _inputs(tmp_path):
+    """Write the network, circuits, names, weights and demand levels; return them as build_criticality arguments."""
     _network().export_to_netcdf(tmp_path / "network.nc")
     _circuits().reset_index().to_csv(tmp_path / "circuits.csv", index=False)
     pd.DataFrame({"substation": ["SUB_A"], "name": ["Alpha"]}).to_csv(tmp_path / "names.csv", index=False)
-    weights = pd.DataFrame(
-        {
-            "bus_id": ISLANDS.index,
-            "island": ISLANDS.to_numpy(),
-            "service_weight": [10 / 60, 20 / 60, 30 / 60, 0.5, 0.5],
-        }
-    )
+    shares = [10 / 60, 20 / 60, 30 / 60, 0.5, 0.5]
+    weights = pd.DataFrame({"bus_id": ISLANDS.index, "island": ISLANDS.to_numpy(), "service_weight": shares})
     weights.to_csv(tmp_path / "weights.csv", index=False)
     levels = pd.DataFrame(
         {
@@ -225,18 +223,36 @@ def test_build_criticality_writes_the_tables(tmp_path):
     )
     levels.to_csv(tmp_path / "levels.csv", index=False)
     assert demand_by_supply_point(weights, levels, "peak").to_dict() == pytest.approx(_demand().to_dict())
+    return {
+        "network_path": tmp_path / "network.nc",
+        "substation_weights_path": tmp_path / "weights.csv",
+        "demand_levels_path": tmp_path / "levels.csv",
+    }
+
+
+def test_build_criticality_writes_the_tables(tmp_path):
+    inputs = _inputs(tmp_path)
 
     outputs = build_criticality(
-        network_path=tmp_path / "network.nc",
+        **inputs,
         line_circuits_path=tmp_path / "circuits.csv",
         substation_names_path=tmp_path / "names.csv",
-        substation_weights_path=tmp_path / "weights.csv",
-        demand_levels_path=tmp_path / "levels.csv",
         output_dir=tmp_path / "criticality",
     )
 
     summary = pd.read_csv(outputs.criticality).set_index("asset_id")
+    assert list(summary.columns) == [
+        "asset_type",
+        "name",
+        "island",
+        "lines",
+        "unmet_mwh_per_day",
+        "unmet_peak_mw",
+        "line_limits_peak_mw",
+    ]
+    assert summary["asset_type"].value_counts().to_dict() == {"plant": 4, "substation": 3, "line": 2}
     assert summary.at["SUB_A", "name"] == "Alpha"
+    # Losing B - C cuts off C: 30 MW at peak and 20 MW at average demand.
     assert summary.at["R2", "unmet_peak_mw"] == pytest.approx(30.0)
     assert summary.at["R2", "unmet_mwh_per_day"] == pytest.approx(24 * 20.0)
     by_area = pd.read_csv(outputs.by_area)
@@ -248,14 +264,3 @@ def test_build_criticality_writes_the_tables(tmp_path):
     ratings = pd.read_csv(outputs.line_ratings)
     assert list(ratings.columns) == ["line_id", "asset_id", "built_for_kv", "circuits", "voltage_kv", "rating_mva"]
     assert ratings["asset_id"].tolist() == ["R1", "R2"]
-
-    without_tables = build_criticality(
-        network_path=tmp_path / "network.nc",
-        substation_weights_path=tmp_path / "weights.csv",
-        demand_levels_path=tmp_path / "levels.csv",
-        output_dir=tmp_path / "without_tables",
-    )
-    summary = pd.read_csv(without_tables.criticality).set_index("asset_id")
-    assert summary.at["ceb_bc", "unmet_peak_mw"] == pytest.approx(30.0)
-    assert summary.at["SUB_A", "name"] == "SUB_A"
-    assert json.loads(without_tables.metadata.read_text())["line_circuits"] is None

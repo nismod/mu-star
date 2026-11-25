@@ -43,6 +43,8 @@ import pypsa
 # IEC 60038 lists three-phase systems up to 35 kV apart from those above it; see config/energy/energy.yaml.
 DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV = 35.0
 DEFAULT_LINE_TYPES = {66: "149-AL1/24-ST1A 110.0", 132: "243-AL1/39-ST1A 110.0"}
+# Plants that keep supply going in a part of the network cut off from the rest. Solar and wind farms disconnect when
+# the grid is lost.
 DEFAULT_ISLAND_CARRIERS = ("thermal", "hydro")
 SHED_COST = 10_000.0  # per MWh; plants cost nothing, so demand is shed only when it cannot be supplied
 UNLIMITED_MVA = 1e6
@@ -50,6 +52,7 @@ MIN_REACTANCE_OHM = 1e-3  # for line segments of almost no length
 SAME_POINT_M = 50.0  # the largest distance between a substation and its transmission bus
 TOLERANCE_MW = 1e-6
 HOURS_PER_DAY = 24
+LEVELS = ("peak", "average")
 ASSET_TYPES = ("substation", "line", "plant")
 
 
@@ -89,6 +92,27 @@ def read_line_circuits(path: Path) -> pd.DataFrame:
     if table["line_id"].duplicated().any():
         raise ValueError(f"{path}: line_id appears more than once")
     return table.set_index("line_id")
+
+
+def is_transmission_line(network: pypsa.Network, max_radial_line_voltage_kv: float) -> pd.Series:
+    """Return, for each line of ``network``, whether it is a transmission line: above ``max_radial_line_voltage_kv``
+    at either end. The others are distribution lines."""
+    voltage = network.buses["v_nom"].astype(float)
+    return network.lines["bus0"].map(voltage).gt(max_radial_line_voltage_kv) | network.lines["bus1"].map(voltage).gt(
+        max_radial_line_voltage_kv
+    )
+
+
+def transmission_lines(network: pypsa.Network, max_radial_line_voltage_kv: float) -> pd.DataFrame:
+    """Return the transmission lines of ``network``, those above ``max_radial_line_voltage_kv``, with their voltage
+    (``v_nom``, kV): the lines of the power flow."""
+    lines = network.lines[is_transmission_line(network, max_radial_line_voltage_kv)]
+    voltage0 = lines["bus0"].map(network.buses["v_nom"]).astype(float)
+    voltage1 = lines["bus1"].map(network.buses["v_nom"]).astype(float)
+    setting = f"max_radial_line_voltage_kv ({max_radial_line_voltage_kv:g} kV)"
+    if not np.allclose(voltage0, voltage1):
+        raise ValueError(f"a line above {setting} joins buses of different voltages")
+    return lines.assign(v_nom=voltage0)
 
 
 def _distance_m(lon0: float, lat0: float, lon1: np.ndarray, lat1: np.ndarray) -> np.ndarray:
@@ -151,13 +175,8 @@ def transmission_model(
     """
     line_types = {int(kv): name for kv, name in (line_types or DEFAULT_LINE_TYPES).items()}
     buses = network.buses
-    voltage0 = buses.loc[network.lines["bus0"], "v_nom"].astype(float).to_numpy()
-    voltage1 = buses.loc[network.lines["bus1"], "v_nom"].astype(float).to_numpy()
-    above = (voltage0 > max_radial_line_voltage_kv) | (voltage1 > max_radial_line_voltage_kv)
-    meshed = network.lines[above]
-    voltage = voltage0[above]
-    if not np.allclose(voltage, voltage1[above]):
-        raise ValueError(f"a line above {max_radial_line_voltage_kv:g} kV joins buses of different voltages")
+    meshed = transmission_lines(network, max_radial_line_voltage_kv)
+    voltage = meshed["v_nom"].to_numpy()
     line_buses = sorted(set(meshed["bus0"]) | set(meshed["bus1"]))
     model_buses = buses.loc[line_buses, ["region", "v_nom"]].rename(columns={"region": "island"})
     model_buses = model_buses.astype({"island": str, "v_nom": float})
@@ -205,14 +224,14 @@ def transmission_model(
                 f"line circuits do not match the network: missing {unlisted[:5]}, not in network {unknown[:5]}"
             )
         circuits = line_circuits.reindex(meshed.index)
-    no_type = sorted(set(circuits["built_for_kv"].astype(int)) - set(line_types))
-    if no_type:
-        raise ValueError(f"no line type for lines built for {no_type} kV")
-    types = network.line_types.loc[circuits["built_for_kv"].astype(int).map(line_types)]
     count = circuits["circuits"].astype(float).to_numpy()
     if (count < 1).any():
         raise ValueError("every transmission line needs at least one circuit")
     length = meshed["length"].astype(float).to_numpy()
+    no_type = sorted(set(circuits["built_for_kv"].astype(int)) - set(line_types))
+    if no_type:
+        raise ValueError(f"no line type for lines built for {no_type} kV")
+    types = network.line_types.loc[circuits["built_for_kv"].astype(int).map(line_types)]
     lines = pd.DataFrame(
         {
             "bus0": meshed["bus0"],
@@ -233,9 +252,14 @@ def transmission_model(
     return TransmissionModel(model_buses.rename_axis("bus"), lines, plants[["bus", "p_nom", "carrier"]], supply_points)
 
 
+def island_demand(demand_levels: pd.DataFrame, level: str) -> pd.Series:
+    """Return each island's ``level`` demand (MW), from ``demand_levels.csv``."""
+    return demand_levels[demand_levels["level"].eq(level)].set_index("island")["demand_mw"].astype(float)
+
+
 def demand_by_supply_point(substation_weights: pd.DataFrame, demand_levels: pd.DataFrame, level: str) -> pd.Series:
     """Return each supply point's demand (MW): its ``service_weight`` times its island's ``level`` demand."""
-    levels = demand_levels[demand_levels["level"].eq(level)].set_index("island")["demand_mw"].astype(float)
+    levels = island_demand(demand_levels, level)
     weights = substation_weights.set_index("bus_id")
     missing = sorted(set(weights["island"]) - set(levels.index))
     if missing:
@@ -250,7 +274,7 @@ def unmet_demand(
     lines: tuple[str, ...] = (),
     bus: str | None = None,
     plants: tuple[str, ...] = (),
-    line_limits: bool = True,
+    line_ratings: bool = True,
     s_max_pu: float = 1.0,
     island_carriers: tuple[str, ...] = DEFAULT_ISLAND_CARRIERS,
 ) -> pd.Series:
@@ -274,7 +298,7 @@ def unmet_demand(
         part_plants = live_plants[live_plants["bus"].isin(part)]
         if part_plants["carrier"].isin(island_carriers).any():
             keep.extend(part_plants.index)
-    live_plants = live_plants.loc[[plant for plant in live_plants.index if plant in set(keep)]]
+    live_plants = live_plants[live_plants.index.isin(keep)]
 
     supply = model.supply_points
     load = demand.groupby(supply["bus"].reindex(demand.index)).sum()
@@ -289,7 +313,7 @@ def unmet_demand(
         bus1=live_lines["bus1"].to_numpy(),
         x=live_lines["x"].to_numpy(),
         r=live_lines["r"].to_numpy(),
-        s_nom=live_lines["s_nom"].to_numpy() if line_limits else UNLIMITED_MVA,
+        s_nom=live_lines["s_nom"].to_numpy() if line_ratings else UNLIMITED_MVA,
         s_max_pu=s_max_pu,
     )
     network.madd(
@@ -329,7 +353,7 @@ def failure_assets(
     line_circuits: pd.DataFrame | None = None,
     substation_names: pd.Series | None = None,
 ) -> pd.DataFrame:
-    """Return the assets to fail: substations, lines (one per route) and plants.
+    """Return the assets to fail in the power flow: substations, lines (one per route) and plants.
 
     Columns: ``asset_id``, ``asset_type``, ``name``, ``island``, ``lines``, ``bus`` and ``plants``. A line is
     named by the ``ends`` column of ``line_circuits`` and a substation by ``substation_names`` (indexed by
@@ -338,76 +362,70 @@ def failure_assets(
     names = substation_names if substation_names is not None else pd.Series(dtype=str)
     line_circuits = line_circuits if line_circuits is not None else pd.DataFrame()
     kind = network.buses["kind"].astype(str)
+    takes_out_nothing = {"lines": (), "bus": None, "plants": ()}  # what else a failure takes out; set per type below
     rows = []
     for bus_id, point in model.supply_points.iterrows():
-        if kind.get(bus_id) != "substation":
-            continue
-        asset_id = str(network.buses.at[bus_id, "asset_id"])
-        rows.append(
-            {
-                "asset_id": asset_id,
-                "asset_type": "substation",
-                "name": names.get(asset_id, asset_id),
-                "island": point["island"],
-                "lines": (),
-                "bus": point["bus"],
-                "plants": (),
-            }
-        )
+        if kind.get(bus_id) == "substation":
+            asset_id = str(network.buses.at[bus_id, "asset_id"])
+            name = names.get(asset_id, asset_id)
+            rows.append(
+                {
+                    **takes_out_nothing,
+                    "asset_id": asset_id,
+                    "asset_type": "substation",
+                    "name": name,
+                    "island": point["island"],
+                    "bus": point["bus"],
+                }
+            )
     ends = line_circuits["ends"] if "ends" in line_circuits else pd.Series(dtype=str)
     for route, block in model.lines.groupby("route", sort=True):
+        route_ends = ends.reindex(block.index).dropna()
+        name = str(route_ends.iloc[0]) if len(route_ends) else route
         island = model.buses.at[block["bus0"].iloc[0], "island"]
-        name = str(ends.reindex(block.index).dropna().iloc[0]) if ends.reindex(block.index).notna().any() else route
         rows.append(
             {
+                **takes_out_nothing,
                 "asset_id": route,
                 "asset_type": "line",
                 "name": name,
                 "island": island,
                 "lines": tuple(block.index),
-                "bus": None,
-                "plants": (),
             }
         )
     for plant, row in model.plants.iterrows():
+        island = model.buses.at[row["bus"], "island"]
         rows.append(
             {
+                **takes_out_nothing,
                 "asset_id": plant,
                 "asset_type": "plant",
                 "name": plant,
-                "island": model.buses.at[row["bus"], "island"],
-                "lines": (),
-                "bus": None,
+                "island": island,
                 "plants": (plant,),
             }
         )
-    return pd.DataFrame(rows)
+    columns = ["asset_id", "asset_type", "name", "island", "lines", "bus", "plants"]
+    return pd.DataFrame(rows, columns=columns)
 
 
-def _unmet_by_failure(
-    model: TransmissionModel, assets: pd.DataFrame, demand: pd.Series, settings: dict, *, split_limits: bool
-) -> tuple[pd.DataFrame, pd.Series, pd.Series, float]:
-    """Return the unmet demand (MW) of each failure: at each supply point (rows: failures, columns: supply
-    points) and in total; the part of each total due to line ratings (zero unless ``split_limits``); and the
-    total with nothing failed.
+def _failures(
+    model: TransmissionModel, assets: pd.DataFrame, demand: pd.Series, settings: dict, *, line_ratings: bool = True
+) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+    """Return the unmet demand (MW) of each failure, at each supply point (rows: failures, columns: supply points) and
+    in total, and the unmet demand at each supply point with nothing failed.
 
-    A failure's total is the rise in the network's total unmet demand, and its value at a supply point the
-    rise at that point.
+    A failure's total is the rise in the network's total unmet demand, and its value at a supply point the rise at
+    that point.
     """
-    base = unmet_demand(model, demand, **settings)
-    base_free = unmet_demand(model, demand, line_limits=False, **settings) if split_limits else None
-    unmet_rows, totals, limits = {}, {}, {}
+    nothing_failed = unmet_demand(model, demand, line_ratings=line_ratings, **settings)
+    at_points, totals = {}, {}
     for asset in assets.itertuples(index=False):
         failure = {"lines": asset.lines, "bus": asset.bus, "plants": asset.plants}
-        unmet = unmet_demand(model, demand, **failure, **settings)
-        unmet_rows[asset.asset_id] = (unmet - base).clip(lower=0.0)
-        totals[asset.asset_id] = max(0.0, float(unmet.sum() - base.sum()))
-        limits[asset.asset_id] = 0.0
-        if split_limits and totals[asset.asset_id] > TOLERANCE_MW:
-            free = unmet_demand(model, demand, **failure, line_limits=False, **settings)
-            free_total = max(0.0, float(free.sum() - base_free.sum()))
-            limits[asset.asset_id] = max(0.0, totals[asset.asset_id] - free_total)
-    return pd.DataFrame(unmet_rows).T, pd.Series(totals, dtype=float), pd.Series(limits, dtype=float), float(base.sum())
+        unmet = unmet_demand(model, demand, **failure, line_ratings=line_ratings, **settings)
+        at_points[asset.asset_id] = (unmet - nothing_failed).clip(lower=0.0)
+        totals[asset.asset_id] = max(0.0, float(unmet.sum() - nothing_failed.sum()))
+    return pd.DataFrame(at_points).T, pd.Series(totals, dtype=float), nothing_failed
 
 
 def _by_area(frame: pd.DataFrame, name: str) -> pd.DataFrame:
@@ -416,7 +434,22 @@ def _by_area(frame: pd.DataFrame, name: str) -> pd.DataFrame:
     return frame.melt(id_vars="asset_id", var_name="area_bus_id", value_name=name)
 
 
-def criticality(
+def _leaves_demand_unmet(frame: pd.DataFrame) -> pd.Series:
+    """Return whether each row of ``frame`` has unmet demand, at peak or per day."""
+    return frame["unmet_peak_mw"].gt(TOLERANCE_MW) | frame["unmet_mwh_per_day"].gt(HOURS_PER_DAY * TOLERANCE_MW)
+
+
+def _sorted(summary: pd.DataFrame) -> pd.DataFrame:
+    """Return ``summary`` in the order of ``ASSET_TYPES``, each type from the most unmet demand to the least."""
+    order = {asset_type: position for position, asset_type in enumerate(ASSET_TYPES)}
+    return summary.sort_values(
+        ["asset_type", "unmet_mwh_per_day", "unmet_peak_mw", "asset_id"],
+        key=lambda column: column.map(order) if column.name == "asset_type" else column,
+        ascending=[True, False, False, True],
+    ).reset_index(drop=True)
+
+
+def power_flow_failures(
     model: TransmissionModel,
     assets: pd.DataFrame,
     peak: pd.Series,
@@ -424,40 +457,33 @@ def criticality(
     *,
     s_max_pu: float = 1.0,
     island_carriers: tuple[str, ...] = DEFAULT_ISLAND_CARRIERS,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]:
-    """Fail each asset at peak and at average demand (MW per supply point).
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, pd.Series]]:
+    """Fail each asset of the power flow at peak and at average demand (MW per supply point).
 
     Returns one row per asset with ``unmet_mwh_per_day`` (the unmet demand at average demand over 24 hours),
     ``unmet_peak_mw`` and ``line_limits_peak_mw`` (the part of ``unmet_peak_mw`` due to line ratings); the two
-    unmet quantities by asset and substation area (``area_bus_id``), where either is above zero; and the two
-    for the intact network. When demand is unmet with nothing failed, an asset's areas can add up to more
-    than its total, since a failure can move the shortfall from one area to another.
+    unmet quantities by asset and substation area (``area_bus_id``), where either is above zero; and the unmet
+    demand at each supply point with nothing failed, by level (MW). When demand is unmet with nothing failed, an
+    asset's areas can add up to more than its total, since a failure can move the shortfall from one area to another.
     """
-    settings = {"s_max_pu": s_max_pu, "island_carriers": tuple(island_carriers)}
-    at_peak, peak_totals, limits, intact_peak = _unmet_by_failure(model, assets, peak, settings, split_limits=True)
-    at_average, average_totals, _, intact_average = _unmet_by_failure(
-        model, assets, average, settings, split_limits=False
-    )
+    settings = {"s_max_pu": s_max_pu, "island_carriers": island_carriers}
+    at_peak, peak_totals, nothing_failed_peak = _failures(model, assets, peak, settings)
+    at_average, average_totals, nothing_failed_average = _failures(model, assets, average, settings)
+    # The part due to line ratings: each failure that leaves demand unmet at peak, solved again without ratings.
+    leaving_unmet = assets[assets["asset_id"].map(peak_totals).gt(TOLERANCE_MW)]
+    _, unrated_totals, _ = _failures(model, leaving_unmet, peak, settings, line_ratings=False)
 
     summary = assets[["asset_id", "asset_type", "name", "island"]].copy()
     summary["lines"] = assets["lines"].map(" ".join)
     summary["unmet_mwh_per_day"] = summary["asset_id"].map(HOURS_PER_DAY * average_totals)
     summary["unmet_peak_mw"] = summary["asset_id"].map(peak_totals)
-    summary["line_limits_peak_mw"] = summary["asset_id"].map(limits)
-    order = {asset_type: position for position, asset_type in enumerate(ASSET_TYPES)}
-    summary = summary.sort_values(
-        ["asset_type", "unmet_mwh_per_day", "unmet_peak_mw", "asset_id"],
-        key=lambda column: column.map(order) if column.name == "asset_type" else column,
-        ascending=[True, False, False, True],
-    )
+    summary["line_limits_peak_mw"] = summary["asset_id"].map((peak_totals - unrated_totals).clip(lower=0.0)).fillna(0.0)
 
     by_area = _by_area(HOURS_PER_DAY * at_average, "unmet_mwh_per_day").merge(
         _by_area(at_peak, "unmet_peak_mw"), on=["asset_id", "area_bus_id"]
     )
-    hit = by_area["unmet_peak_mw"].gt(TOLERANCE_MW) | by_area["unmet_mwh_per_day"].gt(HOURS_PER_DAY * TOLERANCE_MW)
-    by_area = by_area[hit].sort_values(["asset_id", "area_bus_id"]).reset_index(drop=True)
-    intact = {"unmet_mwh_per_day": HOURS_PER_DAY * intact_average, "unmet_peak_mw": intact_peak}
-    return summary.reset_index(drop=True), by_area, intact
+    by_area = by_area[_leaves_demand_unmet(by_area)].sort_values(["asset_id", "area_bus_id"]).reset_index(drop=True)
+    return _sorted(summary), by_area, {"peak": nothing_failed_peak, "average": nothing_failed_average}
 
 
 def build_criticality(
@@ -478,6 +504,8 @@ def build_criticality(
     ``line_circuits_path`` and ``substation_names_path`` are optional (see ``transmission_model`` and
     ``failure_assets``); the names table has columns ``substation`` (asset_id) and ``name``.
     """
+    line_types = line_types or DEFAULT_LINE_TYPES
+    island_carriers = tuple(island_carriers)
     network = pypsa.Network(str(network_path))
     line_circuits = read_line_circuits(line_circuits_path) if line_circuits_path else None
     names = (
@@ -495,9 +523,9 @@ def build_criticality(
         max_radial_line_voltage_kv=max_radial_line_voltage_kv,
     )
     assets = failure_assets(model, network, line_circuits, names)
-    demands = {level: demand_by_supply_point(weights, levels, level) for level in ("peak", "average")}
-    summary, by_area, intact = criticality(
-        model, assets, demands["peak"], demands["average"], s_max_pu=s_max_pu, island_carriers=tuple(island_carriers)
+    demand = {level: demand_by_supply_point(weights, levels, level) for level in LEVELS}
+    summary, by_area, nothing_failed = power_flow_failures(
+        model, assets, demand["peak"], demand["average"], s_max_pu=s_max_pu, island_carriers=island_carriers
     )
 
     output_dir = Path(output_dir)
@@ -520,12 +548,15 @@ def build_criticality(
         "substation_names": str(substation_names_path) if substation_names_path else None,
         "substation_weights": str(substation_weights_path),
         "demand_levels": str(demand_levels_path),
-        "line_types": {str(kv): name for kv, name in (line_types or DEFAULT_LINE_TYPES).items()},
+        "line_types": {str(kv): name for kv, name in line_types.items()},
         "max_radial_line_voltage_kv": max_radial_line_voltage_kv,
         "s_max_pu": s_max_pu,
         "island_carriers": list(island_carriers),
-        "demand_mw": {level: round(float(demand.sum()), 3) for level, demand in demands.items()},
-        "unmet_with_nothing_failed": {name: round(value, 3) for name, value in intact.items()},
+        "demand_mw": {level: round(float(demand[level].sum()), 3) for level in LEVELS},
+        "unmet_with_nothing_failed": {
+            "unmet_mwh_per_day": round(HOURS_PER_DAY * float(nothing_failed["average"].sum()), 3),
+            "unmet_peak_mw": round(float(nothing_failed["peak"].sum()), 3),
+        },
         "assets": summary["asset_type"].value_counts().to_dict(),
     }
     outputs.metadata.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")

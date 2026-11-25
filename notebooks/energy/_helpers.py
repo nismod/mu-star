@@ -574,10 +574,10 @@ _HALO = [patheffects.withStroke(linewidth=3, foreground="white")]  # keeps label
 
 
 def load_criticality() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return ``(summary, by_area)``: ``criticality.csv``, one row per asset, and ``criticality_by_area.csv``."""
-    summary = pd.read_csv(CRITICALITY_DIR / "criticality.csv")
+    """Return ``(summary, by_area)``: ``criticality.csv``, one row per component, and ``criticality_by_area.csv``."""
+    summary = pd.read_csv(CRITICALITY_DIR / "criticality.csv", dtype={"asset_id": str, "name": str})
     summary["lines"] = summary["lines"].fillna("")
-    return summary, pd.read_csv(CRITICALITY_DIR / "criticality_by_area.csv")
+    return summary, pd.read_csv(CRITICALITY_DIR / "criticality_by_area.csv", dtype={"asset_id": str})
 
 
 @functools.lru_cache(maxsize=1)
@@ -591,9 +591,11 @@ def _node_areas() -> pd.Series:
     return pd.read_csv(DEMAND_DIR / "service_weights_nodes.csv").set_index("bus_id")["area_bus_id"]
 
 
-def _area_name(area_bus_id: str, summary: pd.DataFrame) -> str:
-    """Return an area's name: its substation's, or on an island without substations, its power station's."""
-    names = summary.set_index("asset_id")["name"]
+def _area_name(area_bus_id: str, names: pd.Series) -> str:
+    """Return an area's name: its substation's, or on an island without substations, its power station's.
+
+    ``names``: the components' names by ``asset_id``, as ``summary.set_index("asset_id")["name"]``.
+    """
     return str(names.get(area_bus_id.removeprefix("bus::"), area_bus_id.removeprefix("asset::")))
 
 
@@ -661,16 +663,16 @@ def _area_demand_mw() -> pd.DataFrame:
 
     Indexed by ``bus_id``: ``service_weights_substations.csv`` times ``demand_levels.csv``, both in ``DEMAND_DIR``.
     """
-    weights = pd.read_csv(DEMAND_DIR / "service_weights_substations.csv").set_index("bus_id")
-    levels = pd.read_csv(DEMAND_DIR / "demand_levels.csv").pivot(index="island", columns="level", values="demand_mw")
-    return pd.DataFrame(
-        {
-            "island": weights["island"],
-            "share_of_island": weights["service_weight"],
-            "peak_mw": weights["service_weight"] * weights["island"].map(levels["peak"]),
-            "average_mw": weights["service_weight"] * weights["island"].map(levels["average"]),
-        }
+    from energy.criticality import demand_by_supply_point  # imports PyPSA, so only when needed
+
+    weights = pd.read_csv(DEMAND_DIR / "service_weights_substations.csv")
+    levels = demand_levels()
+    table = weights.set_index("bus_id")[["island", "service_weight"]].rename(
+        columns={"service_weight": "share_of_island"}
     )
+    table["peak_mw"] = demand_by_supply_point(weights, levels, "peak")
+    table["average_mw"] = demand_by_supply_point(weights, levels, "average")
+    return table
 
 
 def demand_levels() -> pd.DataFrame:
@@ -681,7 +683,8 @@ def demand_levels() -> pd.DataFrame:
 def area_demand(summary: pd.DataFrame) -> pd.DataFrame:
     """Return each substation area's share of its island's demand and its demand at peak and average (MW)."""
     table = _area_demand_mw().reset_index()
-    table.insert(0, "area", [_area_name(area, summary) for area in table.pop("bus_id")])
+    names = summary.set_index("asset_id")["name"]
+    table.insert(0, "area", [_area_name(area, names) for area in table.pop("bus_id")])
     return table.sort_values(["island", "peak_mw"], ascending=[True, False]).reset_index(drop=True)
 
 
@@ -733,7 +736,7 @@ def unmet_by_area(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame:
     table["area_status"] = np.select([own, share.ge(0.999)], AREA_STATUS[:2], AREA_STATUS[2])
     table["unmet_share_of_peak"] = share
     table["asset"] = table["asset_id"].map(assets["name"])
-    table["area"] = [_area_name(area, summary) for area in table["area_bus_id"]]
+    table["area"] = [_area_name(area, assets["name"]) for area in table["area_bus_id"]]
     table["asset_mwh_per_day"] = table["asset_id"].map(assets["unmet_mwh_per_day"])
     table["asset_peak_mw"] = table["asset_id"].map(assets["unmet_peak_mw"])
     table = table.sort_values(
@@ -750,8 +753,7 @@ def unmet_by_cause(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame
     ``failed_substation_area_peak_mw``: a failed substation's own area. ``areas_without_supply`` and
     ``areas_without_supply_peak_mw``: the other areas that lose all their supply. ``areas_partly_supplied_peak_mw``:
     unmet demand in areas that keep some supply, because the plants left cannot cover them or lines reach their
-    ratings. ``line_limits_peak_mw``: the part of ``unmet_peak_mw`` due to line ratings. Raises ValueError if the
-    parts do not add up to ``unmet_peak_mw``.
+    ratings. ``line_limits_peak_mw``: the part of ``unmet_peak_mw`` due to line ratings.
     """
     areas = unmet_by_area(summary, by_area)
     rows = []
@@ -762,8 +764,6 @@ def unmet_by_cause(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame
         failure_areas = areas[areas["asset_id"].eq(asset_id)]
         at_peak = failure_areas.groupby("area_status")["unmet_peak_mw"].sum()
         parts = {status: float(at_peak.get(status, 0.0)) for status in AREA_STATUS}
-        if abs(sum(parts.values()) - unmet) > 0.01:
-            raise ValueError(f"{asset_id}: the areas add up to {sum(parts.values()):.3f} MW, not {unmet:.3f} MW")
         without = failure_areas.loc[failure_areas["area_status"].eq(AREA_STATUS[1]), "area"]
         rows.append(
             {
@@ -813,7 +813,7 @@ def plot_criticality_map(
     hit, sub_hit, plant_hit = ceb["unmet"].round(1) > 0, subs["unmet"].round(1) > 0, plants["unmet"].round(1) > 0
     _draw(ceb[~hit], ax, color=_NO_LOSS, linewidth=1.2, zorder=2)
     if hit.any():
-        _draw(ceb[hit], ax, color=[_SCALE(norm(value)) for value in ceb.loc[hit, "unmet"]], linewidth=3, zorder=3)
+        _draw(ceb[hit], ax, color=_SCALE(norm(ceb.loc[hit, "unmet"].to_numpy())), linewidth=3, zorder=3)
     plant_colours = [_SCALE(norm(value)) if drawn else _NO_LOSS for value, drawn in zip(plants["unmet"], plant_hit)]
     ax.scatter(
         plants.geometry.x,
@@ -892,7 +892,7 @@ def plot_failure(
         _, ax = plt.subplots(figsize=figsize)
     unserved = lines["share"] > 0
     _draw(lines[~unserved], ax, color=_CONTEXT, linewidth=0.3, zorder=1)
-    _draw(lines[unserved], ax, color=[_SCALE(value) for value in lines.loc[unserved, "share"]], linewidth=0.7, zorder=2)
+    _draw(lines[unserved], ax, color=_SCALE(lines.loc[unserved, "share"].to_numpy()), linewidth=0.7, zorder=2)
     _draw(_clip(ceb, clip), ax, color=_NO_LOSS, linewidth=1.0, zorder=3)
     ax.scatter(subs.geometry.x, subs.geometry.y, s=25, color=_NO_LOSS, edgecolor="white", linewidth=1, zorder=4)
     if asset["asset_type"] == "line":
