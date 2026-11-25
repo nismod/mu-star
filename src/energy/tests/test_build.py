@@ -139,6 +139,34 @@ def test_build_base_network_exports_network_files(tmp_path):
     assert spatial_manifest["totals"]["edges"] == len(network.lines)
 
 
+def test_networks_keep_the_names_of_the_provided_substations_and_plants(tmp_path):
+    input_dir = tmp_path / "processed" / "energy" / "provided"
+    _write_base_inputs(input_dir)
+    substations = gpd.read_parquet(input_dir / "snapped_substations.parquet")
+    substations.assign(name=["Ebène", "B"]).to_parquet(input_dir / "snapped_substations.parquet")
+    pd.read_csv(input_dir / "generators.csv").assign(name="Plant A").to_csv(input_dir / "generators.csv", index=False)
+    roads, roads_path = _roads(tmp_path, [(57.5, -20.2), (57.6, -20.2)], "mauritius")
+
+    base = build_network("base", input_dir=input_dir, output_dir=tmp_path / "networks")
+    inferred = build_network(
+        "inferred-provided",
+        region="mauritius",
+        input_dir=input_dir,
+        output_dir=tmp_path / "networks",
+        roads_path=roads_path,
+        nightlight_targets=roads,
+        max_anchor_distance_m=20_000,
+        base_route_gap_tolerance_m=120,
+    )
+
+    assert pypsa.Network(base.network).buses["name"].to_dict() == {"A": "Ebène", "B": "B"}
+    network = pypsa.Network(inferred.network)
+    assert network.buses.loc[["bus::A", "bus::B", "asset::plant"], "name"].tolist() == ["Ebène", "B", "Plant A"]
+    assert network.generators.at["plant", "name"] == "Plant A"
+    nodes = gpd.read_parquet(inferred.spatial_nodes).set_index("asset_id")
+    assert nodes.at["bus::A", "name"] == "Ebène"
+
+
 def test_build_base_network_requires_prepared_inputs(tmp_path):
     with pytest.raises(FileNotFoundError, match=r"transmission_routes\.parquet"):
         build_network(

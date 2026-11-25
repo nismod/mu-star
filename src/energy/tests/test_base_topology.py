@@ -3,7 +3,7 @@ import networkx as nx
 import pytest
 from shapely.geometry import LineString, Point
 
-from energy.base_topology import CEB_SUBSTATION_NAMES, derive_base_topology
+from energy.base_topology import derive_base_topology
 from energy.paths import processed_energy_dir
 
 
@@ -110,7 +110,7 @@ def test_base_topology_preserves_distinct_parallel_source_routes():
     assert result.retained_source_length_km == pytest.approx(result.source_route_length_km)
 
 
-def test_base_topology_applies_ceb_names_without_overwriting_provided_names():
+def test_base_topology_keeps_provided_names_and_names_the_others_by_id():
     substations = gpd.GeoDataFrame(
         {
             "bus_id": ["SUB_001", "SUB_004"],
@@ -131,7 +131,7 @@ def test_base_topology_applies_ceb_names_without_overwriting_provided_names():
     result = derive_base_topology(substations, routes)
     names = result.buses.set_index("bus_id")["name"]
 
-    assert names["SUB_001"] == CEB_SUBSTATION_NAMES["SUB_001"]
+    assert names["SUB_001"] == "SUB_001"
     assert names["SUB_004"] == "Provided Amaury"
     assert result.buses["v_nom_kv"].eq(66).all()
 
@@ -162,6 +162,3 @@ def test_ceb_base_regression_restores_provided_loops_and_amaury_junction():
     assert result.parallel_edge_count == 1
     assert result.retained_source_length_km == pytest.approx(303.9765146)
     assert result.buses["v_nom_kv"].eq(66).all()
-    names = result.buses.set_index("bus_id")["name"]
-    assert names["SUB_004"] == "Amaury"
-    assert names["SUB_015"] == "Union Vale"

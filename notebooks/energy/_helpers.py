@@ -38,7 +38,7 @@ Criticality (``02_criticality.ipynb``):
   component, substations, transmission lines and plants by power flow and distribution lines by connectivity
   (``method``).
 - ``demand_levels()``: each island's peak and average demand, with its source.
-- ``area_demand(summary)``: each substation area's share of its island's demand, and its demand in MW.
+- ``area_demand()``: each substation area's share of its island's demand, and its demand in MW.
 - ``unmet_by_cause(summary, by_area)``: the unmet demand when each component of the power flow fails, per day and
   at peak, and at peak by cause (the failed substation's area, other areas without supply, areas partly supplied).
 - ``unmet_by_area(summary, by_area)``: every substation area with unmet demand for each failure of a component of the
@@ -609,14 +609,6 @@ def _node_areas() -> pd.Series:
     return pd.read_csv(DEMAND_DIR / "service_weights_nodes.csv").set_index("bus_id")["area_bus_id"]
 
 
-def _area_name(area_bus_id: str, names: pd.Series) -> str:
-    """Return an area's name: its substation's, or on an island without substations, its power station's.
-
-    ``names``: the components' names by ``asset_id``, as ``summary.set_index("asset_id")["name"]``.
-    """
-    return str(names.get(area_bus_id.removeprefix("bus::"), area_bus_id.removeprefix("asset::")))
-
-
 def _route_of_line(summary: pd.DataFrame) -> dict[str, str]:
     """Return the line asset (route) of each transmission line segment."""
     lines = summary[summary["asset_type"].eq("line")]
@@ -677,7 +669,7 @@ QUANTITIES = {
 
 @functools.lru_cache(maxsize=1)
 def _area_demand_mw() -> pd.DataFrame:
-    """Return each substation area's island, share of its island's demand, and demand at peak and average (MW).
+    """Return each substation area's name, island, share of its island's demand, and demand at peak and average (MW).
 
     Indexed by ``bus_id``: ``service_weights_substations.csv`` times ``demand_levels.csv``, both in ``DEMAND_DIR``.
     """
@@ -685,7 +677,7 @@ def _area_demand_mw() -> pd.DataFrame:
 
     weights = pd.read_csv(DEMAND_DIR / "service_weights_substations.csv")
     levels = demand_levels()
-    table = weights.set_index("bus_id")[["island", "service_weight"]].rename(
+    table = weights.set_index("bus_id")[["name", "island", "service_weight"]].rename(
         columns={"service_weight": "share_of_island"}
     )
     table["peak_mw"] = demand_by_supply_point(weights, levels, "peak")
@@ -698,11 +690,9 @@ def demand_levels() -> pd.DataFrame:
     return pd.read_csv(DEMAND_DIR / "demand_levels.csv")
 
 
-def area_demand(summary: pd.DataFrame) -> pd.DataFrame:
+def area_demand() -> pd.DataFrame:
     """Return each substation area's share of its island's demand and its demand at peak and average (MW)."""
-    table = _area_demand_mw().reset_index()
-    names = summary.set_index("asset_id")["name"]
-    table.insert(0, "area", [_area_name(area, names) for area in table.pop("bus_id")])
+    table = _area_demand_mw().rename(columns={"name": "area"}).reset_index(drop=True)
     return table.sort_values(["island", "peak_mw"], ascending=[True, False]).reset_index(drop=True)
 
 
@@ -756,7 +746,7 @@ def unmet_by_area(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame:
     table["area_status"] = np.select([own, share.ge(0.999)], AREA_STATUS[:2], AREA_STATUS[2])
     table["unmet_share_of_peak"] = share
     table["asset"] = table["asset_id"].map(assets["name"])
-    table["area"] = [_area_name(area, assets["name"]) for area in table["area_bus_id"]]
+    table["area"] = table["area_name"]
     table["asset_mwh_per_day"] = table["asset_id"].map(assets["unmet_mwh_per_day"])
     table["asset_peak_mw"] = table["asset_id"].map(assets["unmet_peak_mw"])
     table = table.sort_values(
@@ -899,9 +889,8 @@ def largest_distribution_failures(
     """Return the ``count`` distribution lines whose failure leaves the most demand unmet in ``quantity`` (one of
     ``QUANTITIES``), with the substation area each is in."""
     lines = summary[summary["asset_type"].eq("distribution_line")].nlargest(count, quantity)
-    area_of_line = by_area.drop_duplicates("asset_id").set_index("asset_id")["area_bus_id"]
-    names = summary.set_index("asset_id")["name"]
-    lines = lines.assign(area=[_area_name(area, names) for area in lines["asset_id"].map(area_of_line)])
+    area_of_line = by_area.drop_duplicates("asset_id").set_index("asset_id")["area_name"]
+    lines = lines.assign(area=lines["asset_id"].map(area_of_line))
     columns = ["asset_id", "area", "island", "unmet_peak_mw", "unmet_mwh_per_day"]
     return lines[columns].reset_index(drop=True)
 

@@ -91,8 +91,8 @@ def supply_points(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Return the supply points: ``substation`` nodes, or an island's ``generator`` nodes if it has none.
 
     ``nodes`` needs ``bus_id``, ``kind`` and point geometry; ``region`` separates the islands (one
-    island, ``all``, if absent) and is returned as ``island``. Nodes at the same point (a station and
-    its rooftop PV) count once.
+    island, ``all``, if absent) and is returned as ``island``, and ``name``, if present, is kept. Nodes at the same
+    point (a station and its rooftop PV) count once.
     """
     kind = nodes["kind"].astype(str)
     region = _islands(nodes)
@@ -104,7 +104,8 @@ def supply_points(nodes: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             candidates = members[kind.loc[index].eq("generator").to_numpy()]
         if candidates.empty:
             raise ValueError(f"{name}: no substation or generator node to serve demand from")
-        chosen.append(candidates[["bus_id", "geometry"]].assign(island=name))
+        columns = ["bus_id", "name", "geometry"] if "name" in candidates else ["bus_id", "geometry"]
+        chosen.append(candidates[columns].assign(island=name))
     points = gpd.GeoDataFrame(pd.concat(chosen), geometry="geometry", crs=nodes.crs)
     points["bus_id"] = points["bus_id"].astype(str)
     return points[~points.geometry.duplicated()].reset_index(drop=True)
@@ -347,9 +348,12 @@ def build_demand_shares(
         metadata=output_dir / "metadata.json",
     )
     area_weight = area_key.rename("service_weight")
+    area_names = points.set_index("bus_id")["name"] if "name" in points else pd.Series(dtype=str)
+    areas.insert(1, "name", areas["bus_id"].map(area_names))
     areas.merge(area_weight, left_on="bus_id", right_index=True).to_parquet(outputs.service_areas)
     area_table = area_weight.rename_axis("bus_id").reset_index()
-    area_table.insert(1, "island", area_table["bus_id"].map(area_islands))
+    area_table.insert(1, "name", area_table["bus_id"].map(area_names))
+    area_table.insert(2, "island", area_table["bus_id"].map(area_islands))
     area_table.to_csv(outputs.substation_weights, index=False)
     node_table = pd.DataFrame(
         {

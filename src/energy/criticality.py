@@ -380,33 +380,43 @@ def unmet_demand(
     return unmet.clip(lower=0.0).rename("unmet_mw")
 
 
+def bus_names(network: pypsa.Network) -> pd.Series:
+    """Return each bus's name: its ``name``, or the id of the asset at it, or the bus id."""
+    names = pd.Series(network.buses.index, index=network.buses.index)
+    for column in ("asset_id", "name"):  # each fills in where it has a value
+        if column in network.buses:
+            values = network.buses[column].replace("", np.nan)
+            names = values.where(values.notna(), names)
+    return names.astype(str)
+
+
 def failure_assets(
-    model: TransmissionModel,
-    network: pypsa.Network,
-    line_circuits: pd.DataFrame | None = None,
-    substation_names: pd.Series | None = None,
+    model: TransmissionModel, network: pypsa.Network, line_circuits: pd.DataFrame | None = None
 ) -> pd.DataFrame:
     """Return the assets to fail in the power flow: substations, lines (one per route) and plants.
 
-    Columns: ``asset_id``, ``asset_type``, ``name``, ``island``, ``lines``, ``bus`` and ``plants``. A line is
-    named by the ``ends`` column of ``line_circuits`` and a substation by ``substation_names`` (indexed by
-    asset_id); without them, by their ids.
+    Columns: ``asset_id``, ``asset_type``, ``name``, ``island``, ``lines``, ``bus`` and ``plants``. A substation
+    and a plant take the ``name`` the network gives them, and a line the ``ends`` column of ``line_circuits``;
+    without them, their ids.
     """
-    names = substation_names if substation_names is not None else pd.Series(dtype=str)
     line_circuits = line_circuits if line_circuits is not None else pd.DataFrame()
     kind = network.buses["kind"].astype(str)
+    names = bus_names(network)
+    plant_names = (
+        network.generators["name"].replace("", np.nan).dropna()
+        if "name" in network.generators
+        else pd.Series(dtype=str)
+    )
     takes_out_nothing = {"lines": (), "bus": None, "plants": ()}  # what else a failure takes out; set per type below
     rows = []
     for bus_id, point in model.supply_points.iterrows():
         if kind.get(bus_id) == "substation":
-            asset_id = str(network.buses.at[bus_id, "asset_id"])
-            name = names.get(asset_id, asset_id)
             rows.append(
                 {
                     **takes_out_nothing,
-                    "asset_id": asset_id,
+                    "asset_id": str(network.buses.at[bus_id, "asset_id"]),
                     "asset_type": "substation",
-                    "name": name,
+                    "name": names[bus_id],
                     "island": point["island"],
                     "bus": point["bus"],
                 }
@@ -433,7 +443,7 @@ def failure_assets(
                 **takes_out_nothing,
                 "asset_id": plant,
                 "asset_type": "plant",
-                "name": plant,
+                "name": str(plant_names.get(plant, plant)),
                 "island": island,
                 "plants": (plant,),
             }
@@ -538,8 +548,8 @@ def all_failures(
     ``service_weights_nodes.csv``. Returns one row per component with ``unmet_mwh_per_day``, ``unmet_peak_mw``,
     ``line_limits_peak_mw`` (empty for a distribution line, which the power flow does not include), ``in_service``
     (false for a distribution line left open) and ``method`` (``power_flow`` or ``connectivity``); the two unmet
-    quantities by component and service area (``area_bus_id``), where either is above zero; and a summary with the
-    demand, the unmet demand with nothing failed and counts of distribution lines.
+    quantities by component and service area (``area_bus_id`` and ``area_name``), where either is above zero; and a
+    summary with the demand, the unmet demand with nothing failed and counts of distribution lines.
     """
     demand = {level: demand_by_supply_point(substation_weights, demand_levels, level) for level in LEVELS}
     power_flow_rows, power_flow_by_area, nothing_failed = power_flow_failures(
@@ -586,6 +596,7 @@ def all_failures(
         ["asset_id", "area_bus_id", *QUANTITIES]
     ]
     by_area = by_area.sort_values(["asset_id", "area_bus_id"]).reset_index(drop=True)
+    by_area.insert(2, "area_name", by_area["area_bus_id"].map(bus_names(network)))
 
     notes = {
         "demand_mw": {level: round(float(demand[level].sum()), 3) for level in LEVELS},
@@ -606,7 +617,6 @@ def build_criticality(
     demand_levels_path: Path,
     output_dir: Path,
     line_circuits_path: Path | None = None,
-    substation_names_path: Path | None = None,
     line_types: dict[int, str] | None = None,
     max_radial_line_voltage_kv: float = DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV,
     s_max_pu: float = 1.0,
@@ -614,19 +624,14 @@ def build_criticality(
 ) -> CriticalityOutputs:
     """Write ``criticality.csv``, ``criticality_by_area.csv``, ``line_ratings.csv`` and ``metadata.json``.
 
-    ``line_circuits_path`` and ``substation_names_path`` are optional (see ``transmission_model`` and
-    ``failure_assets``); the names table has columns ``substation`` (asset_id) and ``name``. A setting that leaves the
-    power flow with no lines is logged as a warning and kept in ``metadata.json``.
+    ``line_circuits_path`` is optional (see ``transmission_model``). Components and service areas take their names
+    from the network. A setting that leaves the power flow with no lines is logged as a warning and kept in
+    ``metadata.json``.
     """
     line_types = line_types or DEFAULT_LINE_TYPES
     island_carriers = tuple(island_carriers)
     network = pypsa.Network(str(network_path))
     line_circuits = read_line_circuits(line_circuits_path) if line_circuits_path else None
-    names = (
-        pd.read_csv(substation_names_path, comment="#").set_index("substation")["name"]
-        if substation_names_path
-        else None
-    )
     weights = pd.read_csv(substation_weights_path)
     node_weights = pd.read_csv(node_weights_path)
     levels = pd.read_csv(demand_levels_path, comment="#")
@@ -644,7 +649,7 @@ def build_criticality(
             "no lines: each island is one bus, and every line, transmission lines included, is run radially."
         )
         logger.warning(warnings[-1])
-    assets = failure_assets(model, network, line_circuits, names)
+    assets = failure_assets(model, network, line_circuits)
     summary, by_area, notes = all_failures(
         network,
         model,
@@ -674,7 +679,6 @@ def build_criticality(
     metadata = {
         "network": str(network_path),
         "line_circuits": str(line_circuits_path) if line_circuits_path else None,
-        "substation_names": str(substation_names_path) if substation_names_path else None,
         "substation_weights": str(substation_weights_path),
         "node_weights": str(node_weights_path),
         "demand_levels": str(demand_levels_path),

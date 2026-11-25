@@ -42,7 +42,10 @@ its own folder in `data/processed/energy/<model_data>/`:
 
 1. **CEB tables** (`provided/`). The substations are moved onto the nearest
    66 kV line so that they connect to it, and the power plants are located
-   and, on Mauritius, assigned to the nearest substation.
+   and, on Mauritius, assigned to the nearest substation. The substations take
+   their names from the names table read from CEB's map (`substation_names` in
+   `config/energy/energy.yaml`), or keep their ids without it; the networks,
+   the demand shares and the criticality tables carry the names.
 2. **Lit areas** (`nightlight/`). The median of the twelve monthly night-light
    images is filtered as in [GridFinder](https://github.com/carderne/gridfinder)
    into *targets*: lit places that the network must reach.
@@ -143,11 +146,12 @@ rating of one circuit of a standard PyPSA line type at the voltage the line
 runs at in the network, 66 kV: 53.7 MVA for lines built for 66 kV and 73.7 MVA
 for lines built for 132 kV.
 
-The two tables read from CEB's map are optional, and are named under
-`criticality` in `config/energy/energy.yaml`. Without the line circuits table,
-each run of segments between two substations or junctions is one line, with
-one circuit built for the voltage it runs at. Without the names table,
-substations keep their ids.
+The two tables read from CEB's map are optional: `line_circuits` under
+`criticality` in `config/energy/energy.yaml`, and `substation_names` at the
+top of the file, which names the substations from the first step on. Without
+the line circuits table, each run of segments between two substations or
+junctions is one line, with one circuit built for the voltage it runs at.
+Without the names table, substations keep their ids.
 
 #### Connectivity
 
@@ -290,12 +294,13 @@ The criticality rule reads its settings from `criticality` in
 | `max_radial_line_voltage_kv` | 35 | Lines above it are transmission lines, run meshed and solved by power flow; lines at or below it are distribution lines, run radially and failed by connectivity. The demand shares use it too. Keep it between the two voltages (see "Criticality" above). |
 | `island_carriers` | thermal, hydro | Plants that keep supply going in a part of the network cut off from the rest. |
 | `line_circuits` | `Power Transmission/ceb_line_circuits.csv` | Each CEB line's route, design voltage and circuits, for the power flow. Optional. |
-| `substation_names` | `Substation/ceb_substation_names.csv` | The substations' names. Optional. |
 | `line_types` | 149-AL1/24-ST1A for lines built for 66 kV, 243-AL1/39-ST1A for 132 kV | The PyPSA line type of one circuit, which sets a line's rating in the power flow. |
 | `s_max_pu` | 1.0 | The share of a line's rating that the power flow can use after a failure. |
 
-`criticality.csv` has a row for every component, distribution lines
-included, so it is the table to map. `line_limits_peak_mw` gives the unmet
+The components and service areas take their names from the network, which
+has them from `substation_names` at the top of the file. `criticality.csv` has
+a row for every component, distribution lines included, so it is the table to
+map. `line_limits_peak_mw` gives the unmet
 demand that line ratings add to a failure of the power flow; it is zero for
 every failure with the current ratings.
 
@@ -312,9 +317,11 @@ every failure with the current ratings.
     `validation.json` compares the network with CEB's published line length
     (479 km of 66 kV lines; 10,492 km of all lines) and installed capacity.
 - `data/processed/energy/<model_data>/demand/inferred-provided-<region>/`:
-  - `service_areas.geoparquet`: the service area of each substation;
+  - `service_areas.geoparquet`: the service area of each substation, with
+    its name;
   - `service_weights_substations.csv` and `service_weights_nodes.csv`: each
-    area's and each node's share of its island's demand;
+    area's and each node's share of its island's demand, with each area's
+    name in the first;
   - `demand_levels.csv`: each island's peak and average demand, with its
     source.
 - `data/results/energy/<date>-results/criticality/inferred-provided-<region>/`,
@@ -329,9 +336,9 @@ every failure with the current ratings.
   - `criticality_by_area.csv`: one row for each failure and each service
     area left with unmet demand, with the same two quantities; a distribution
     line has one row, for its own area. `area_bus_id` names the area by the
-    bus of its substation (or power station, on
-    Rodrigues), which `service_weights_nodes.csv` links to the nodes of the
-    distribution network. When demand is unmet with nothing failed, a failure
+    bus of its substation (or power station, on Rodrigues), which
+    `service_weights_nodes.csv` links to the nodes of the distribution
+    network, and `area_name` by the substation's name. When demand is unmet with nothing failed, a failure
     can move that shortfall from one area to another, so a failure's areas
     can add up to more than its value in `criticality.csv`;
   - `line_ratings.csv`: the rating of each transmission line segment, with

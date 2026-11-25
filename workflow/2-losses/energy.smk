@@ -1,22 +1,21 @@
 """Energy criticality: the unmet demand when one component of the network fails.
 
 One rule, compute_energy_criticality, analyses the inferred-provided network, with demand shares from
-workflow/0-preprocess/energy.smk and, if set, two tables in the incoming folder (line circuits, substation names; on
-Mauritius read from the CEB network map). It fails each substation, transmission line and plant and solves a linear
-power flow on the lines above max_radial_line_voltage_kv (src/energy/criticality.py), and fails each distribution
-line, at or below it, from the connectivity of the network (src/energy/connectivity.py). The target rule
-build_energy_criticality asks for its tables in the data folder set by data_root, so
-`snakemake -c1 build_energy_criticality` runs it.
+workflow/0-preprocess/energy.smk and, if set, the line circuits table in the incoming folder (on Mauritius read from
+the CEB network map). It fails each substation, transmission line and plant and solves a linear power flow on the
+lines above max_radial_line_voltage_kv (src/energy/criticality.py), and fails each distribution line, at or below
+it, from the connectivity of the network (src/energy/connectivity.py). The target rule build_energy_criticality asks
+for its tables in the data folder set by data_root, so `snakemake -c1 build_energy_criticality` runs it.
 
 Settings are under criticality in config/energy/energy.yaml; the method is in docs/src/infrastructure-energy.md.
 """
 
 from energy.paths import results_name
 
-# Optional tables, as paths in the incoming folder.
-CRITICALITY_TABLES = {
-    name: f"{INCOMING_DIR}/{CRITICALITY[name]}" for name in ("line_circuits", "substation_names") if CRITICALITY.get(name)
-}
+# Optional table, as a path in the incoming folder.
+CRITICALITY_TABLES = (
+    {"line_circuits": f"{INCOMING_DIR}/{CRITICALITY['line_circuits']}"} if CRITICALITY.get("line_circuits") else {}
+)
 # Results of the model-data pack: 20261012-model-data gives 20261012-results.
 CRITICALITY_DIR = f"{{data}}/results/energy/{results_name(ENERGY)}/criticality/{INFERRED_PROVIDED_NAME}"
 

@@ -1,7 +1,9 @@
 """Clean the CEB shapefiles, demand workbook and annual report tables in ``--input-dir``.
 
 Writes to ``--output-dir`` the substation, route, generation-site, generator and demand tables that
-the network builds read. Header-only templates go to the sibling ``templates`` folder.
+the network builds read. ``--substation-names``, a table with columns ``substation`` and ``name``, names the
+substations, which otherwise keep their ids; the networks and the tables made from them carry the names. Header-only
+templates go to the sibling ``templates`` folder.
 """
 
 from pathlib import Path
@@ -54,7 +56,13 @@ from energy.provided import (
     type=click.Path(exists=True, dir_okay=False, path_type=str),
     help="Cached OpenStreetMap power features (with names), used to place plants the provided data lacks.",
 )
-def main(input_dir, output_dir, osm_power):
+@click.option(
+    "--substation-names",
+    "substation_names",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Table of the substations' names: columns substation (SUB_001, ...) and name.",
+)
+def main(input_dir, output_dir, osm_power, substation_names):
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
     validate_provided_inputs(input_dir)
@@ -62,7 +70,8 @@ def main(input_dir, output_dir, osm_power):
 
     substations = _read_gdf(input_dir / SUBSTATION_FOLDER / "Substation.shp").reset_index(drop=True)
     substations["bus_id"] = [f"SUB_{index + 1:03d}" for index in substations.index]
-    substations["name"] = substations["bus_id"]
+    names = pd.read_csv(substation_names, comment="#").set_index("substation")["name"] if substation_names else {}
+    substations["name"] = substations["bus_id"].map(names).fillna(substations["bus_id"])
     substations["asset_type"] = "substation"
 
     routes = _read_gdf(input_dir / TRANSMISSION_FOLDER / "PowerGrid.shp").reset_index(drop=True)

@@ -38,6 +38,7 @@ def _network():
             "region": ["mauritius"] * 6 + ["rodrigues"] * 2,
             "kind": ["substation"] * 3 + ["transformer"] * 3 + ["generator"] * 2,
             "asset_id": ["SUB_A", "SUB_B", "SUB_C", "", "", "", "r1", "r2"],
+            "name": ["Alpha", "", "", "", "", "", "", ""],
         },
         index=["bus::SUB_A", "bus::SUB_B", "bus::SUB_C", "hv::A", "hv::B", "hv::C", "asset::r1", "asset::r2"],
     )
@@ -169,7 +170,8 @@ def test_demand_cut_off_from_thermal_and_hydro_plants_is_unmet():
 def test_criticality_separates_unmet_demand_due_to_line_ratings():
     network = _network()
     model = transmission_model(network, ISLANDS, line_circuits=_circuits())
-    assets = failure_assets(model, network, _circuits(), pd.Series({"SUB_B": "Bravo"}))
+    network.buses.loc["bus::SUB_B", "name"] = "Bravo"
+    assets = failure_assets(model, network, _circuits())
 
     assert assets.groupby("asset_type").size().to_dict() == {"line": 2, "plant": 4, "substation": 3}
     assert assets.set_index("asset_id").at["SUB_B", "name"] == "Bravo"
@@ -208,13 +210,12 @@ def test_unmet_demand_of_a_failure_is_the_rise_in_the_total():
 
 
 def _inputs(tmp_path):
-    """Write the network, circuits, names, weights and demand levels; return them as build_criticality arguments.
+    """Write the network, circuits, weights and demand levels; return them as build_criticality arguments.
 
     Each supply point is a node of its own service area, so the 11 kV road line between A and B joins two areas.
     """
     _network().export_to_netcdf(tmp_path / "network.nc")
     _circuits().reset_index().to_csv(tmp_path / "circuits.csv", index=False)
-    pd.DataFrame({"substation": ["SUB_A"], "name": ["Alpha"]}).to_csv(tmp_path / "names.csv", index=False)
     shares = [10 / 60, 20 / 60, 30 / 60, 0.5, 0.5]
     weights = pd.DataFrame({"bus_id": ISLANDS.index, "island": ISLANDS.to_numpy(), "service_weight": shares})
     weights.to_csv(tmp_path / "weights.csv", index=False)
@@ -242,7 +243,6 @@ def test_build_criticality_writes_one_table_by_power_flow_and_connectivity(tmp_p
     outputs = build_criticality(
         **inputs,
         line_circuits_path=tmp_path / "circuits.csv",
-        substation_names_path=tmp_path / "names.csv",
         output_dir=tmp_path / "criticality",
     )
 
@@ -274,7 +274,10 @@ def test_build_criticality_writes_one_table_by_power_flow_and_connectivity(tmp_p
     assert math.isnan(road["line_limits_peak_mw"])
     assert summary.loc[summary["method"].eq("power_flow"), "in_service"].all()
     by_area = pd.read_csv(outputs.by_area)
-    assert list(by_area.columns) == ["asset_id", "area_bus_id", "unmet_mwh_per_day", "unmet_peak_mw"]
+    assert list(by_area.columns) == ["asset_id", "area_bus_id", "area_name", "unmet_mwh_per_day", "unmet_peak_mw"]
+    # Areas take the name the network gives their substation, or the substation's id.
+    assert by_area.set_index(["asset_id", "area_bus_id"]).loc[("SUB_A", "bus::SUB_A"), "area_name"] == "Alpha"
+    assert set(by_area.loc[by_area["asset_id"].eq("R2"), "area_name"]) == {"SUB_C"}
     metadata = json.loads(outputs.metadata.read_text())
     assert metadata["unmet_with_nothing_failed"] == {"unmet_mwh_per_day": 0.0, "unmet_peak_mw": 0.0}
     assert metadata["max_radial_line_voltage_kv"] == 35.0

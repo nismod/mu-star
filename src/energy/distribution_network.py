@@ -359,6 +359,7 @@ def build_inferred_distribution_graph(
             inferred=False,
             bus_id=asset_id if asset_kind == "substation" else None,
             asset_id=asset_id,
+            name=getattr(row, "name", None),
             is_root=True,
             source=getattr(row, "source", "osm_power"),
             region=getattr(row, "region", None),

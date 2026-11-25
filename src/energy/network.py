@@ -221,6 +221,8 @@ def build_topology_network(
             marginal_cost=float(row["marginal_cost"]),
             efficiency=float(efficiency),
         )
+    if "name" in generators:
+        network.generators["name"] = generators.set_index(generators["generator_id"].astype(str))["name"]
 
     assert_fixed_capacity(network)
     return network
