@@ -11,6 +11,7 @@ from energy.criticality import (
     failure_assets,
     power_flow_failures,
     read_line_circuits,
+    transmission_lines,
     transmission_model,
     unmet_demand,
 )
@@ -260,7 +261,23 @@ def test_build_criticality_writes_the_tables(tmp_path):
     metadata = json.loads(outputs.metadata.read_text())
     assert metadata["unmet_with_nothing_failed"] == {"unmet_mwh_per_day": 0.0, "unmet_peak_mw": 0.0}
     assert metadata["max_radial_line_voltage_kv"] == 35.0
+    assert metadata["power_flow"] == {"buses": 4, "lines": 2, "failures": 9}
+    assert metadata["warnings"] == []
     assert len(read_line_circuits(tmp_path / "circuits.csv")) == 2
     ratings = pd.read_csv(outputs.line_ratings)
     assert list(ratings.columns) == ["line_id", "asset_id", "built_for_kv", "circuits", "voltage_kv", "rating_mva"]
     assert ratings["asset_id"].tolist() == ["R1", "R2"]
+
+
+def test_transmission_lines_stop_when_the_setting_takes_in_distribution_lines():
+    network = _network()
+
+    assert list(transmission_lines(network, 35.0).index) == ["ceb_ab", "ceb_bc"]
+    assert transmission_lines(network, 70.0).empty  # a warning in build_criticality
+    # Below 11 kV the road line would enter the power flow.
+    with pytest.raises(ValueError, match="puts 1 of the estimated distribution network's lines into the power flow"):
+        transmission_lines(network, 10.0)
+    # So would lines at two voltages, which only transformers join.
+    network.lines.loc["road_ab", "source"] = "provided_transmission"
+    with pytest.raises(ValueError, match="lines at 11 and 66 kV are above"):
+        transmission_lines(network, 10.0)

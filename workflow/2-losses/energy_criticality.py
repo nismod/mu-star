@@ -44,6 +44,7 @@ def main(
     s_max_pu,
     island_carriers,
 ):
+    logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.WARNING)
     for name in ("pypsa", "linopy"):
         logging.getLogger(name).setLevel(logging.ERROR)
     outputs = build_criticality(

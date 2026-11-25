@@ -97,6 +97,16 @@ transmission in Scotland but distribution in England and Wales. The default of
 lists the systems up to 35 kV (such as 11, 22 and 33 kV) apart from those above
 it. CEB runs its transmission at 66 kV and its distribution at 22 and 6.6 kV.
 
+Keep the setting between the voltage of the distribution lines and that of
+the transmission lines. Lowered below the distribution lines (11 kV in the
+estimated network), it would move them into the power flow, which would run
+them meshed, with every line in service instead of radially, and solve each
+voltage as a separate network, since it leaves out the transformers between
+voltages. The rule therefore stops with an error, before it builds the model,
+when lines of the estimated distribution network or lines of more than one
+voltage would enter the power flow. It warns when no line is above the
+setting, and `metadata.json` keeps the warning.
+
 A failed substation takes its bus out of the network, with the lines and
 plants connected to it, so the demand of its whole area is unmet. Lines and
 plants carry no demand, so the unmet demand when one of them fails lies in the
@@ -225,7 +235,10 @@ demand and criticality commands also need the incoming folder.
     can add up to more than its value in `criticality.csv`;
   - `line_ratings.csv`: the rating of each transmission line segment, with
     its line (`asset_id`), the voltage it was built for, its circuits and the
-    voltage it runs at.
+    voltage it runs at;
+  - `metadata.json`: the inputs and settings, the unmet demand with nothing
+    failed, counts of components, and any warning about
+    `max_radial_line_voltage_kv`.
 
 The notebooks in `notebooks/energy/` show the inputs, the networks and the
 criticality results.

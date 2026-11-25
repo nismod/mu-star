@@ -26,11 +26,15 @@ gives two quantities: the unmet demand at peak demand (MW), and the unmet energy
 which is the unmet demand at average demand over 24 hours. The per-day value is exact when whole areas
 lose supply and too low for shortfalls that occur only near peak. Each failure that leaves demand unmet
 at peak is solved again without line ratings, to give the part due to the ratings.
+
+The power flow models lines at one voltage and no transformers, so ``transmission_lines`` stops with an error when
+the setting puts lines of the estimated distribution network, or lines of more than one voltage, into it.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +43,8 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import pypsa
+
+logger = logging.getLogger(__name__)
 
 # IEC 60038 lists three-phase systems up to 35 kV apart from those above it; see config/energy/energy.yaml.
 DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV = 35.0
@@ -54,6 +60,8 @@ TOLERANCE_MW = 1e-6
 HOURS_PER_DAY = 24
 LEVELS = ("peak", "average")
 ASSET_TYPES = ("substation", "line", "plant")
+# The build's sources for the lines of the estimated distribution network; its anchors end in "_anchor".
+ESTIMATED_SOURCES = ("osm", "precomputed")
 
 
 @dataclass(frozen=True)
@@ -105,13 +113,32 @@ def is_transmission_line(network: pypsa.Network, max_radial_line_voltage_kv: flo
 
 def transmission_lines(network: pypsa.Network, max_radial_line_voltage_kv: float) -> pd.DataFrame:
     """Return the transmission lines of ``network``, those above ``max_radial_line_voltage_kv``, with their voltage
-    (``v_nom``, kV): the lines of the power flow."""
+    (``v_nom``, kV): the lines of the power flow.
+
+    The power flow models lines at one voltage and no transformers, and is meant for the meshed transmission network.
+    Raises ValueError when the setting, set below the voltage of the distribution lines, puts lines of the estimated
+    distribution network, or lines of more than one voltage, into it.
+    """
     lines = network.lines[is_transmission_line(network, max_radial_line_voltage_kv)]
     voltage0 = lines["bus0"].map(network.buses["v_nom"]).astype(float)
     voltage1 = lines["bus1"].map(network.buses["v_nom"]).astype(float)
     setting = f"max_radial_line_voltage_kv ({max_radial_line_voltage_kv:g} kV)"
     if not np.allclose(voltage0, voltage1):
         raise ValueError(f"a line above {setting} joins buses of different voltages")
+    source = lines["source"].astype(str) if "source" in lines else pd.Series("", index=lines.index)
+    estimated = int((source.isin(ESTIMATED_SOURCES) | source.str.endswith("_anchor")).sum())
+    if estimated:
+        raise ValueError(
+            f"{setting} puts {estimated:,} of the estimated distribution network's lines into the power flow, which "
+            "would run them meshed, with every line in service. Set it between the voltage of the distribution lines "
+            "and that of the transmission lines."
+        )
+    voltages = sorted(voltage0.unique())
+    if len(voltages) > 1:
+        raise ValueError(
+            f"lines at {' and '.join(f'{voltage:g}' for voltage in voltages)} kV are above {setting}, but the power "
+            "flow models lines at one voltage, not the transformers between voltages"
+        )
     return lines.assign(v_nom=voltage0)
 
 
@@ -502,7 +529,8 @@ def build_criticality(
     """Write ``criticality.csv``, ``criticality_by_area.csv``, ``line_ratings.csv`` and ``metadata.json``.
 
     ``line_circuits_path`` and ``substation_names_path`` are optional (see ``transmission_model`` and
-    ``failure_assets``); the names table has columns ``substation`` (asset_id) and ``name``.
+    ``failure_assets``); the names table has columns ``substation`` (asset_id) and ``name``. A setting that leaves the
+    power flow with no lines is logged as a warning and kept in ``metadata.json``.
     """
     line_types = line_types or DEFAULT_LINE_TYPES
     island_carriers = tuple(island_carriers)
@@ -522,6 +550,13 @@ def build_criticality(
         line_types=line_types,
         max_radial_line_voltage_kv=max_radial_line_voltage_kv,
     )
+    warnings = []
+    if model.lines.empty:
+        warnings.append(
+            f"No line is above max_radial_line_voltage_kv ({max_radial_line_voltage_kv:g} kV), so the power flow has "
+            "no lines: each island is one bus."
+        )
+        logger.warning(warnings[-1])
     assets = failure_assets(model, network, line_circuits, names)
     demand = {level: demand_by_supply_point(weights, levels, level) for level in LEVELS}
     summary, by_area, nothing_failed = power_flow_failures(
@@ -557,7 +592,9 @@ def build_criticality(
             "unmet_mwh_per_day": round(HOURS_PER_DAY * float(nothing_failed["average"].sum()), 3),
             "unmet_peak_mw": round(float(nothing_failed["peak"].sum()), 3),
         },
+        "power_flow": {"buses": len(model.buses), "lines": len(model.lines), "failures": len(assets)},
         "assets": summary["asset_type"].value_counts().to_dict(),
+        "warnings": warnings,
     }
     outputs.metadata.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
     return outputs
