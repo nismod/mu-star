@@ -44,9 +44,6 @@ def _write_base_inputs(input_dir, extra_generator_rows=()):
         ]
     )
     generators.to_csv(input_dir / "generators.csv", index=False)
-    pd.DataFrame({"bus_id": ["A", "B"], "service_weight": [0.0, 1.0]}).to_csv(
-        input_dir / "service_weights.csv", index=False
-    )
 
 
 def _roads(tmp_path, coords, region):

@@ -59,10 +59,6 @@ def _asset_node_id(row) -> str:
     return f"{'bus' if asset_kind == 'substation' else 'asset'}::{asset_id}"
 
 
-def _distribution_nodes(graph: nx.MultiGraph) -> list[str]:
-    return [node for node, attrs in graph.nodes(data=True) if attrs.get("kind") == "distribution_node"]
-
-
 def _add_junction(graph: nx.MultiGraph, node: str, x: float, y: float, *, source: str, region: object) -> None:
     if node not in graph:
         graph.add_node(
@@ -379,88 +375,6 @@ def build_inferred_distribution_graph(
         anchor_to_each_line_source=anchor_to_each_line_source,
     )
     return graph
-
-
-def assign_proxy_demand_to_graph(
-    graph: nx.MultiGraph,
-    demand_points: gpd.GeoDataFrame,
-    *,
-    demand_column: str = "demand_mw",
-) -> nx.MultiGraph:
-    """Return a copy of ``graph`` with each point's demand (MW) added to the nearest road node.
-
-    Kept for the interruption step. Raises ValueError for negative demand or a graph with no road nodes.
-    """
-    if demand_column not in demand_points.columns:
-        raise ValueError(f"demand_points must contain {demand_column}")
-    candidates = _distribution_nodes(graph)
-    if not candidates:
-        raise ValueError("Cannot assign proxy demand without distribution nodes")
-
-    updated = graph.copy()
-    candidate_points = gpd.GeoSeries(
-        [Point(float(updated.nodes[n]["x"]), float(updated.nodes[n]["y"])) for n in candidates], crs=GEOGRAPHIC_CRS
-    )
-    metric_crs = candidate_points.estimate_utm_crs()
-    tree = shapely.STRtree(candidate_points.to_crs(metric_crs).to_numpy())
-    points = demand_points.to_crs(metric_crs)
-    demands = points[demand_column].astype(float).to_numpy()
-    if (demands < 0).any():
-        raise ValueError("Proxy demand cannot be negative")
-    point_index, nearest = tree.query_nearest(points.geometry.to_numpy(), all_matches=False)
-    for position, candidate_position in zip(point_index, nearest, strict=True):
-        node = candidates[candidate_position]
-        updated.nodes[node]["demand_mw"] = float(updated.nodes[node].get("demand_mw", 0.0)) + float(demands[position])
-    return updated
-
-
-def topology_disconnection_impacts(
-    graph: nx.MultiGraph,
-    *,
-    failed_bus_ids: list[str] | tuple[str, ...] = (),
-    failed_edge_ids: list[str] | tuple[str, ...] = (),
-) -> pd.DataFrame:
-    """Return the demand (MW) of each graph component cut off from every power asset by the failures.
-
-    ``failed_bus_ids`` are substation ids. Kept for the interruption step.
-    """
-    scenario = graph.copy()
-    failed_bus_nodes = {f"bus::{bus_id}" for bus_id in failed_bus_ids}
-    scenario.remove_nodes_from(node for node in failed_bus_nodes if node in scenario)
-
-    failed_edges = set(failed_edge_ids)
-    scenario.remove_edges_from(
-        [
-            (u, v, key)
-            for u, v, key, attrs in scenario.edges(keys=True, data=True)
-            if attrs.get("edge_id") in failed_edges
-        ]
-    )
-
-    rows: list[dict[str, object]] = []
-    root_nodes = {
-        node for node, attrs in scenario.nodes(data=True) if attrs.get("is_root", attrs.get("kind") == "substation")
-    }
-    for component_id, nodes in enumerate(nx.connected_components(scenario), start=1):
-        node_set = set(nodes)
-        has_root = bool(node_set & root_nodes)
-        demand_mw = sum(float(scenario.nodes[node].get("demand_mw", 0.0)) for node in node_set)
-        if has_root or demand_mw == 0:
-            continue
-        rows.append(
-            {
-                "component_id": component_id,
-                "unserved_demand_mw": demand_mw,
-                "node_count": len(node_set),
-                "edge_count": scenario.subgraph(node_set).number_of_edges(),
-                "inferred": True,
-                "stage": "connectivity_only",
-            }
-        )
-    return pd.DataFrame(
-        rows,
-        columns=["component_id", "unserved_demand_mw", "node_count", "edge_count", "inferred", "stage"],
-    )
 
 
 def write_inferred_distribution_tables(graph: nx.MultiGraph, output_dir: Path) -> InferredDistributionOutputs:

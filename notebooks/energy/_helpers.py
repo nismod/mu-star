@@ -166,7 +166,6 @@ PROVIDED_FILES = (
     "generators.csv",
     "monthly_peak_demand_mw.csv",
     "annual_sector_demand_gwh.csv",
-    "service_weights.csv",
     "substation_snap_distances.csv",
 )
 PREPARE_PROVIDED = build_command(PROVIDED_DIR / "generators.csv")

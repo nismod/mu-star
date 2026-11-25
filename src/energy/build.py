@@ -431,18 +431,6 @@ def _graph_line_frame(
     )
 
 
-def _equal_service_weights(bus_frame: gpd.GeoDataFrame) -> pd.DataFrame:
-    bus_ids = bus_frame["bus_id"].astype(str)
-    if bus_ids.empty:
-        return pd.DataFrame(columns=["bus_id", "service_weight"])
-    return pd.DataFrame(
-        {
-            "bus_id": bus_ids,
-            "service_weight": [1 / len(bus_ids)] * len(bus_ids),
-        }
-    )
-
-
 def _largest_road_component_centroid(roads: gpd.GeoDataFrame | None, *, region: str) -> Point:
     """Return the placeholder substation point for a region with no power assets (EPSG:4326).
 
@@ -1105,9 +1093,6 @@ def _build_inferred_network(
     connected_buses = set(lines["bus0"].astype(str)) | set(lines["bus1"].astype(str))
     isolated = ~buses["bus_id"].astype(str).isin(connected_buses) & buses["v_nom_kv"].isna()
     buses.loc[isolated, "v_nom_kv"] = float(inferred_voltage_kv)
-    service_weights = _equal_service_weights(buses)
-    service_weights_path_out = table_dir / "service_weights.csv"
-    service_weights.to_csv(service_weights_path_out, index=False)
 
     generators = (
         _provided_generators_for_inferred(provided_generators, substation_regions=substation_regions)
@@ -1195,7 +1180,6 @@ def _build_inferred_network(
             "loads": 0,
             "inferred": True,
             "stage": "connectivity_only",
-            "service_weights": str(service_weights_path_out),
             "road_envelope_edges": len(osm_road_envelope),
             "osm_road_envelope_cache": str(roads_path),
             "nightlight_targets": str(nightlight_targets_path) if nightlight_targets_path is not None else None,

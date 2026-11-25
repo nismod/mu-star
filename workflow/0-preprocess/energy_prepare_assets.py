@@ -1,8 +1,7 @@
 """Clean the CEB shapefiles, demand workbook and annual report tables in ``--input-dir``.
 
 Writes to ``--output-dir`` the substation, route, generation-site, generator and demand tables that
-the network builds read, and ``service_weights.csv`` with equal shares (no lines are passed).
-Header-only templates go to the sibling ``templates`` folder.
+the network builds read. Header-only templates go to the sibling ``templates`` folder.
 """
 
 from pathlib import Path
@@ -34,7 +33,6 @@ from energy.provided import (
     snap_substations_to_routes,
     validate_provided_inputs,
 )
-from energy.service_weights import build_service_weights
 
 
 @click.command()
@@ -132,7 +130,6 @@ def main(input_dir, output_dir, osm_power):
     generators_path = output_dir / "generators.csv"
     peak_path = output_dir / "monthly_peak_demand_mw.csv"
     annual_path = output_dir / "annual_sector_demand_gwh.csv"
-    service_weights_path = output_dir / "service_weights.csv"
 
     substations[["bus_id", "name", "asset_type", "geometry"]].to_parquet(substation_path)
     snapped_substations[
@@ -184,10 +181,6 @@ def main(input_dir, output_dir, osm_power):
     generators.to_csv(generators_path, index=False)
     monthly_peak.to_csv(peak_path)
     annual_demand.to_csv(annual_path, index=False)
-    build_service_weights(snapped_substations).to_csv(
-        service_weights_path,
-        index=False,
-    )
     write_input_templates(output_dir.parent / "templates")
 
 

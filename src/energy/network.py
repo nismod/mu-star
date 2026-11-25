@@ -14,20 +14,6 @@ def _require_columns(frame: pd.DataFrame, columns: set[str], label: str) -> None
         raise ValueError(f"{label} missing columns: {sorted(missing)}")
 
 
-def _time_step_hours(index: pd.Index) -> float:
-    if not isinstance(index, pd.DatetimeIndex):
-        raise ValueError("Demand profile index must contain dates and times")
-    if index.has_duplicates or not index.is_monotonic_increasing:
-        raise ValueError("Demand profile dates and times must be unique and ordered")
-    if len(index) < 2:
-        return 1.0
-
-    intervals = index.to_series().diff().dropna().dt.total_seconds() / 3600
-    if (intervals <= 0).any() or not np.allclose(intervals, intervals.iloc[0]):
-        raise ValueError("Demand profile must use one regular time-step length")
-    return float(intervals.iloc[0])
-
-
 def _bus_voltage_kv(
     bus_id: str,
     bus_row: pd.Series,
@@ -240,135 +226,6 @@ def build_topology_network(
     return network
 
 
-def attach_demand(
-    network: pypsa.Network,
-    demand_profile: pd.DataFrame,
-    service_weights: pd.DataFrame,
-    *,
-    generator_availability: pd.DataFrame | None = None,
-    value_of_lost_load: float = 10_000,
-) -> pypsa.Network:
-    """Return a copy of ``network`` with a load and a load-shedding generator at each bus with demand.
-
-    ``demand_profile`` (MW) has a ``demand_mw`` column, split between buses by ``service_weights``,
-    or one column per ``bus_id``. Shed load costs ``value_of_lost_load``.
-    """
-    _require_columns(service_weights, {"bus_id", "service_weight"}, "service_weights")
-
-    if not network.loads.empty or (
-        "carrier" in network.generators and network.generators.carrier.eq("load_shedding").any()
-    ):
-        raise ValueError("Demand is already attached to this network")
-    if demand_profile.empty:
-        raise ValueError("Demand profile is empty")
-    demand_profile = demand_profile.apply(pd.to_numeric, errors="coerce")
-    if demand_profile.isna().any().any():
-        raise ValueError("Demand profile contains missing values")
-    if (demand_profile < 0).any().any():
-        raise ValueError("Demand profile cannot contain negative demand")
-    if generator_availability is not None:
-        if not generator_availability.index.equals(demand_profile.index):
-            raise ValueError("Generator availability must use the same timestamps as demand_profile")
-        generator_availability = generator_availability.apply(
-            pd.to_numeric,
-            errors="coerce",
-        )
-        if generator_availability.isna().any().any():
-            raise ValueError("Generator availability contains missing values")
-        if (generator_availability < 0).any().any() or (generator_availability > 1).any().any():
-            raise ValueError("Generator availability values must lie between zero and one")
-
-    run_network = network.copy()
-    time_step_hours = _time_step_hours(demand_profile.index)
-    run_network.set_snapshots(demand_profile.index)
-    run_network.snapshot_weightings.loc[:, :] = time_step_hours
-
-    physical_generator_ids = (
-        run_network.generators.index[~run_network.generators.carrier.eq("load_shedding")].astype(str).tolist()
-    )
-    if generator_availability is not None:
-        availability = generator_availability.reindex(columns=physical_generator_ids)
-        if availability.isna().any().any():
-            missing = sorted(set(physical_generator_ids) - set(generator_availability.columns))
-            raise ValueError(
-                f"Generator availability must contain one complete column per generator_id; missing: {missing}"
-            )
-        run_network.generators_t.p_max_pu.loc[:, physical_generator_ids] = availability
-
-    bus_ids = run_network.buses.index.astype(str)
-    if service_weights["bus_id"].astype(str).duplicated().any():
-        raise ValueError("Demand shares contain duplicate bus_id values")
-    supplied_bus_ids = set(service_weights["bus_id"].astype(str))
-    unknown_bus_ids = sorted(supplied_bus_ids - set(bus_ids))
-    if unknown_bus_ids:
-        raise ValueError(f"Demand shares reference unknown buses: {unknown_bus_ids}")
-    weights = (
-        service_weights.assign(bus_id=service_weights["bus_id"].astype(str))
-        .set_index("bus_id")["service_weight"]
-        .reindex(bus_ids, fill_value=0.0)
-    )
-    if weights.isna().any() or not np.isclose(weights.sum(), 1.0):
-        raise ValueError("Demand shares must contain valid bus_id values and add to one")
-
-    if "demand_mw" in demand_profile.columns:
-        total_demand = demand_profile["demand_mw"]
-        demand_by_bus = pd.DataFrame({bus_id: total_demand * weight for bus_id, weight in weights.items()})
-    else:
-        demand_by_bus = demand_profile.reindex(columns=bus_ids)
-        if demand_by_bus.isna().any().any():
-            raise ValueError("Demand profile must contain demand_mw or one complete column per substation (bus_id)")
-
-    demand_bus_ids = demand_by_bus.columns[demand_by_bus.abs().max(axis=0).gt(0)].astype(str)
-    if "load_shedding" not in run_network.carriers.index:
-        run_network.add("Carrier", "load_shedding")
-    for bus_id in demand_bus_ids:
-        load_id = f"load::{bus_id}"
-        shed_id = f"load_shedding::{bus_id}"
-        run_network.add("Load", load_id, bus=bus_id)
-        run_network.loads_t.p_set[load_id] = demand_by_bus[bus_id]
-        run_network.add(
-            "Generator",
-            shed_id,
-            bus=bus_id,
-            carrier="load_shedding",
-            p_nom=max(float(demand_by_bus[bus_id].max()), 1.0),
-            p_nom_extendable=False,
-            marginal_cost=float(value_of_lost_load),
-        )
-
-    assert_fixed_capacity(run_network)
-    return run_network
-
-
-def build_operational_network(
-    buses: gpd.GeoDataFrame,
-    lines: gpd.GeoDataFrame,
-    generators: pd.DataFrame,
-    demand_profile: pd.DataFrame,
-    service_weights: pd.DataFrame,
-    *,
-    generator_availability: pd.DataFrame | None = None,
-    value_of_lost_load: float = 10_000,
-    line_resistance_ohm_per_km: float = 0.01,
-    line_reactance_ohm_per_km: float = 0.4,
-) -> pypsa.Network:
-    """Return :func:`build_topology_network` with :func:`attach_demand` applied."""
-    topology = build_topology_network(
-        buses,
-        lines,
-        generators,
-        line_resistance_ohm_per_km=line_resistance_ohm_per_km,
-        line_reactance_ohm_per_km=line_reactance_ohm_per_km,
-    )
-    return attach_demand(
-        topology,
-        demand_profile,
-        service_weights,
-        generator_availability=generator_availability,
-        value_of_lost_load=value_of_lost_load,
-    )
-
-
 def assert_fixed_capacity(network: pypsa.Network) -> None:
     """Raise ValueError if any generator, line, link, storage unit or store is extendable."""
     checks = (
@@ -381,4 +238,4 @@ def assert_fixed_capacity(network: pypsa.Network) -> None:
     for component, column in checks:
         frame = getattr(network, component)
         if column in frame and frame[column].fillna(False).any():
-            raise ValueError(f"{component}.{column} must be false for interruption modelling")
+            raise ValueError(f"{component}.{column} must be false: the networks have fixed capacities")

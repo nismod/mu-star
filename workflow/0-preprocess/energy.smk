@@ -195,7 +195,6 @@ rule prepare_energy_assets:
         generation_areas=f"{PROVIDED_DIR}/generation_areas.parquet",
         generation_sites=f"{PROVIDED_DIR}/generation_sites.csv",
         generators=f"{PROVIDED_DIR}/generators.csv",
-        service_weights=f"{PROVIDED_DIR}/service_weights.csv",
         monthly_peak=f"{PROVIDED_DIR}/monthly_peak_demand_mw.csv",
         annual_demand=f"{PROVIDED_DIR}/annual_sector_demand_gwh.csv",
         generator_template=f"{PROCESSED_DIR}/templates/generators.csv",
@@ -376,7 +375,6 @@ rule build_inferred_energy_network:
         nodes=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_nodes.csv",
         edges=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_edges.csv",
         graph_metadata=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_metadata.json",
-        service_weights=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/service_weights.csv",
     params:
         input_dir=PROVIDED_DIR,
         output_dir=NETWORKS_DIR,
