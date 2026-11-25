@@ -72,7 +72,7 @@ energy:
 
   criticality:
     # Unmet demand when each component of inferred-provided fails
-    # (build_energy_criticality in workflow/2-losses/energy.smk): substations,
+    # (compute_energy_criticality in workflow/2-losses/energy.smk): substations,
     # transmission lines and plants by power flow, and distribution lines by
     # connectivity. Lines above this voltage are run meshed and make up the
     # network of the power flow; lines at or below it are distribution lines,

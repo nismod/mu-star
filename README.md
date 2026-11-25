@@ -192,10 +192,10 @@ output files.
 While this workflow is in development, some of the rules are placeholders.
 
 The energy rules build three models of the electricity network and measure
-the unmet demand when each substation, transmission line or power plant
-fails. Two target rules make the usual outputs and run by their names:
-`snakemake -c1 build_energy_networks` builds the three networks and
-`snakemake -c1 build_energy_criticality` the criticality tables. How to get
+the unmet demand when each substation, transmission line, power plant or
+distribution line fails. Two target rules make the usual outputs and run by
+their names: `snakemake -c1 build_energy_networks` builds the three networks
+and `snakemake -c1 build_energy_criticality` the criticality tables. How to get
 the data and run the rules is in the Energy chapter of the documentation,
 `docs/src/infrastructure-energy.md`. Settings are in
 `config/energy/energy.yaml`.
