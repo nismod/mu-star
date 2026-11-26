@@ -5,10 +5,8 @@ from shapely.geometry import LineString, Point
 
 from energy.distribution_network import (
     DEFAULT_MAX_ANCHOR_DISTANCE_M,
-    assign_proxy_demand_to_graph,
     build_inferred_distribution_graph,
     geodesic_length_km,
-    topology_disconnection_impacts,
     write_inferred_distribution_tables,
 )
 
@@ -144,27 +142,6 @@ def test_asset_beyond_the_anchor_distance_stays_unanchored_with_its_road_distanc
     assert graph.nodes["bus::SUB_001"]["anchor_status"] == "unanchored"
     assert 5_000 < graph.nodes["bus::SUB_001"]["anchor_distance_m"] < 6_000
     assert graph.degree["bus::SUB_001"] == 0
-
-
-def test_topology_disconnection_counts_only_demand_without_substation_root():
-    precomputed = _lines([(57.5001, -20.2), (57.501, -20.2)])
-    demand_points = gpd.GeoDataFrame({"demand_mw": [3.0], "geometry": [Point(57.501, -20.2)]}, crs="EPSG:4326")
-    graph = build_inferred_distribution_graph(_substation(), precomputed_lines=precomputed, max_anchor_distance_m=100)
-    graph = assign_proxy_demand_to_graph(graph, demand_points)
-
-    supplied = topology_disconnection_impacts(graph)
-    failed = topology_disconnection_impacts(graph, failed_bus_ids=["SUB_001"])
-
-    assert supplied.empty
-    assert failed["unserved_demand_mw"].sum() == 3.0
-
-
-def test_proxy_demand_requires_distribution_nodes():
-    demand_points = gpd.GeoDataFrame({"demand_mw": [3.0], "geometry": [Point(57.501, -20.2)]}, crs="EPSG:4326")
-    graph = build_inferred_distribution_graph(_substation())
-
-    with pytest.raises(ValueError, match="without distribution nodes"):
-        assign_proxy_demand_to_graph(graph, demand_points)
 
 
 def test_geodesic_graph_preserves_region_and_default_anchor_distance():

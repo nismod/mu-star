@@ -15,7 +15,6 @@ from energy.criticality import DEFAULT_ISLAND_CARRIERS, DEFAULT_MAX_RADIAL_LINE_
 @click.option("--demand-levels", "demand_levels", required=True, type=click.Path(exists=True, path_type=Path))
 @click.option("--output-dir", "output_dir", required=True, type=click.Path(file_okay=False, path_type=Path))
 @click.option("--line-circuits", "line_circuits", type=click.Path(exists=True, path_type=Path))
-@click.option("--substation-names", "substation_names", type=click.Path(exists=True, path_type=Path))
 @click.option(
     "--line-type",
     "line_types",
@@ -41,7 +40,6 @@ def main(
     demand_levels,
     output_dir,
     line_circuits,
-    substation_names,
     line_types,
     max_radial_line_voltage_kv,
     s_max_pu,
@@ -57,7 +55,6 @@ def main(
         demand_levels_path=demand_levels,
         output_dir=output_dir,
         line_circuits_path=line_circuits,
-        substation_names_path=substation_names,
         line_types=dict(line_types) or None,
         max_radial_line_voltage_kv=max_radial_line_voltage_kv,
         s_max_pu=s_max_pu,

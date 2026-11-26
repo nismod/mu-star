@@ -121,6 +121,11 @@ MAX_RADIAL_LINE_VOLTAGE_KV = CRITICALITY.get("max_radial_line_voltage_kv", DEFAU
 
 # --- Networks -----------------------------------------------------------------
 BASE_NETWORK = ENERGY.get("base_network", {})
+# Optional table of the substations' names, in the incoming folder. prepare_energy_assets names the substations from
+# it, and the networks and the tables made from them carry the names.
+SUBSTATION_NAMES = (
+    {"substation_names": f"{INCOMING_DIR}/{ENERGY['substation_names']}"} if ENERGY.get("substation_names") else {}
+)
 INFERRED = ENERGY.get("inferred", {})
 PROVIDED_DIR = f"{PROCESSED_DIR}/provided"
 NETWORKS_DIR = f"{PROCESSED_DIR}/networks"
@@ -186,6 +191,7 @@ rule prepare_energy_assets:
         plant_sites=f"{INCOMING_DIR}/{PLANT_SITES_FILE}",
         osm_power=f"{{data}}/{OSM_POWER_CACHE}",
         script=ancient("workflow/0-preprocess/energy_prepare_assets.py"),
+        **SUBSTATION_NAMES,
     output:
         substations=f"{PROVIDED_DIR}/substations.parquet",
         snapped_substations=f"{PROVIDED_DIR}/snapped_substations.parquet",
@@ -195,7 +201,6 @@ rule prepare_energy_assets:
         generation_areas=f"{PROVIDED_DIR}/generation_areas.parquet",
         generation_sites=f"{PROVIDED_DIR}/generation_sites.csv",
         generators=f"{PROVIDED_DIR}/generators.csv",
-        service_weights=f"{PROVIDED_DIR}/service_weights.csv",
         monthly_peak=f"{PROVIDED_DIR}/monthly_peak_demand_mw.csv",
         annual_demand=f"{PROVIDED_DIR}/annual_sector_demand_gwh.csv",
         generator_template=f"{PROCESSED_DIR}/templates/generators.csv",
@@ -203,12 +208,16 @@ rule prepare_energy_assets:
     params:
         input_dir=INCOMING_DIR,
         output_dir=PROVIDED_DIR,
+        substation_names=lambda wildcards, input: " ".join(
+            f"--substation-names {shlex.quote(input[name])}" for name in SUBSTATION_NAMES
+        ),
     shell:
         """
         python {input.script:q} \
             --input-dir {params.input_dir:q} \
             --output-dir {params.output_dir:q} \
-            --osm-power {input.osm_power:q}
+            --osm-power {input.osm_power:q} \
+            {params.substation_names}
         """
 
 
@@ -376,7 +385,6 @@ rule build_inferred_energy_network:
         nodes=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_nodes.csv",
         edges=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_edges.csv",
         graph_metadata=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/inferred_distribution_metadata.json",
-        service_weights=f"{NETWORKS_DIR}/{INFERRED_NAME}/inferred_distribution/service_weights.csv",
     params:
         input_dir=PROVIDED_DIR,
         output_dir=NETWORKS_DIR,

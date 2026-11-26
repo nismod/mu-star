@@ -21,7 +21,6 @@ from shapely.ops import nearest_points, unary_union
 
 import energy.osm as osm
 from energy.base_topology import (
-    CEB_SUBSTATION_NAMES,
     DerivedBaseTopology,
     derive_base_topology,
 )
@@ -145,7 +144,7 @@ def _write_metadata(path: Path, metadata: dict[str, object]) -> Path:
 
 def _ceb_topology_validation(topology: DerivedBaseTopology) -> dict[str, object]:
     """Check the base network against the CEB 2025 network map, if all 18 CEB substations are present."""
-    required_ids = set(CEB_SUBSTATION_NAMES)
+    required_ids = {f"SUB_{number:03d}" for number in range(1, 19)}  # CEB's substations on Mauritius
     available_ids = set(topology.buses["bus_id"].astype(str))
     if not required_ids <= available_ids:
         return {
@@ -340,6 +339,7 @@ def _node_bus_frame(graph: nx.Graph) -> gpd.GeoDataFrame:
     rows = [
         {
             "bus_id": node,
+            "name": attrs.get("name"),
             "kind": attrs.get("kind"),
             "asset_id": attrs.get("asset_id"),
             "is_root": bool(attrs.get("is_root", False)),
@@ -431,18 +431,6 @@ def _graph_line_frame(
     )
 
 
-def _equal_service_weights(bus_frame: gpd.GeoDataFrame) -> pd.DataFrame:
-    bus_ids = bus_frame["bus_id"].astype(str)
-    if bus_ids.empty:
-        return pd.DataFrame(columns=["bus_id", "service_weight"])
-    return pd.DataFrame(
-        {
-            "bus_id": bus_ids,
-            "service_weight": [1 / len(bus_ids)] * len(bus_ids),
-        }
-    )
-
-
 def _largest_road_component_centroid(roads: gpd.GeoDataFrame | None, *, region: str) -> Point:
     """Return the placeholder substation point for a region with no power assets (EPSG:4326).
 
@@ -497,6 +485,7 @@ def _empty_power_assets() -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(
         {
             "asset_id": [],
+            "name": [],
             "asset_kind": [],
             "source": [],
             "region": [],
@@ -538,6 +527,7 @@ def _normalise_osm_power_assets(
     return gpd.GeoDataFrame(
         {
             "asset_id": assets["bus_id"].astype(str).to_numpy(),
+            "name": assets["name"].to_numpy() if "name" in assets else None,
             "asset_kind": assets["power"]
             .map({"substation": "substation", "plant": "generator", "generator": "generator"})
             .to_numpy(),
@@ -565,6 +555,7 @@ def _provided_power_assets(
     substations = gpd.GeoDataFrame(
         {
             "asset_id": substations["bus_id"].astype(str),
+            "name": substations["name"] if "name" in substations else substations["bus_id"].astype(str),
             "asset_kind": "substation",
             "source": "provided_substation",
             "region": "mauritius",
@@ -581,6 +572,7 @@ def _provided_power_assets(
     generator_assets = gpd.GeoDataFrame(
         {
             "asset_id": coordinate_rows["generator_id"].astype(str),
+            "name": coordinate_rows["name"] if "name" in coordinate_rows else None,
             "asset_kind": "generator",
             "source": "provided_generator",
             "region": coordinate_rows["region"].astype(str).to_numpy(),
@@ -1105,9 +1097,6 @@ def _build_inferred_network(
     connected_buses = set(lines["bus0"].astype(str)) | set(lines["bus1"].astype(str))
     isolated = ~buses["bus_id"].astype(str).isin(connected_buses) & buses["v_nom_kv"].isna()
     buses.loc[isolated, "v_nom_kv"] = float(inferred_voltage_kv)
-    service_weights = _equal_service_weights(buses)
-    service_weights_path_out = table_dir / "service_weights.csv"
-    service_weights.to_csv(service_weights_path_out, index=False)
 
     generators = (
         _provided_generators_for_inferred(provided_generators, substation_regions=substation_regions)
@@ -1195,7 +1184,6 @@ def _build_inferred_network(
             "loads": 0,
             "inferred": True,
             "stage": "connectivity_only",
-            "service_weights": str(service_weights_path_out),
             "road_envelope_edges": len(osm_road_envelope),
             "osm_road_envelope_cache": str(roads_path),
             "nightlight_targets": str(nightlight_targets_path) if nightlight_targets_path is not None else None,

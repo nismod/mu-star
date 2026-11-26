@@ -15,29 +15,6 @@ METRIC_CRS = "EPSG:32740"
 STATION_JOIN_TOLERANCE_M = 100.0
 MEANINGFUL_CYCLE_AREA_M2 = 1_000_000.0
 
-# The CEB substation points have generic labels. These names are read off the CEB
-# 2025 network map, in the points' north-to-south order.
-CEB_SUBSTATION_NAMES = {
-    "SUB_001": "Sottise",
-    "SUB_002": "Belle Vue",
-    "SUB_003": "Jin Fei",
-    "SUB_004": "Amaury",
-    "SUB_005": "Dumas",
-    "SUB_006": "LTK",
-    "SUB_007": "F.U.E.L. S.E.",
-    "SUB_008": "Anahita",
-    "SUB_009": "Wooton",
-    "SUB_010": "La Chaumiere",
-    "SUB_011": "Ebene",
-    "SUB_012": "Henrietta",
-    "SUB_013": "Champagne",
-    "SUB_014": "Case Noyale",
-    "SUB_015": "Union Vale",
-    "SUB_016": "Combo",
-    "SUB_017": "L'Avenir",
-    "SUB_018": "St Louis",
-}
-
 # A 171.5 m break in the CEB routes opens the Ebene-Wooton side of the blue loop on the
 # CEB map. It is joined here (up to 200 m) rather than by raising the gap tolerance for all routes.
 PROVIDED_ROUTE_JOINS = (
@@ -439,16 +416,15 @@ def derive_base_topology(
     junction_nodes = sorted(node for node in graph if node not in node_ids)
     node_ids.update({node: f"JUNCTION_{number:03d}" for number, node in enumerate(junction_nodes, start=1)})
 
-    source_substation_names = (
+    # A substation without a name of its own (CEB's points have generic labels) keeps its id.
+    source_names = (
         substations.set_index(substations["bus_id"].astype(str))["name"].to_dict() if "name" in substations else {}
     )
     substation_names = {}
     for bus_id in bus_nodes:
-        source_name = source_substation_names.get(bus_id)
-        if pd.isna(source_name) or str(source_name).strip() in {"", bus_id, "Substation"}:
-            substation_names[bus_id] = CEB_SUBSTATION_NAMES.get(bus_id, bus_id)
-        else:
-            substation_names[bus_id] = str(source_name)
+        name = source_names.get(bus_id)
+        generic = pd.isna(name) or str(name).strip() in {"", "Substation"}
+        substation_names[bus_id] = bus_id if generic else str(name)
     bus_rows = []
     for node, bus_id in sorted(node_ids.items(), key=lambda item: item[1]):
         is_junction = node not in bus_nodes.values()

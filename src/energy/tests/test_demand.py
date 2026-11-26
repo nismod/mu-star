@@ -194,6 +194,7 @@ def test_build_demand_shares_writes_shares_that_add_to_one_on_each_island(tmp_pa
             "bus_id": ["bus::A", "bus::B", "dist::1", "dist::3", "asset::plant-r", "dist::2"],
             "kind": ["substation", "substation"] + ["distribution_node"] * 2 + ["generator", "distribution_node"],
             "region": ["mauritius"] * 4 + ["rodrigues"] * 2,
+            "name": ["Alpha", None, None, None, "Rodrigues plant", None],
             "geometry": [
                 Point(57.02, -20.05),
                 Point(57.08, -20.05),
@@ -244,6 +245,12 @@ def test_build_demand_shares_writes_shares_that_add_to_one_on_each_island(tmp_pa
     assert set(node_weights["bus_id"]) == set(nodes["bus_id"])
     assert node_weights.set_index("bus_id").at["dist::3", "service_weight"] == 0.0
     assert len(gpd.read_parquet(outputs.service_areas)) == 3
+    # Each area carries its supply point's name, where the network gives one.
+    assert substations.set_index("bus_id")["name"].fillna("").to_dict() == {
+        "bus::A": "Alpha",
+        "bus::B": "",
+        "asset::plant-r": "Rodrigues plant",
+    }
     assert metadata["weights"] == {"nightlights": 0.6, "population": 0.4}
     assert (metadata["max_radial_line_voltage_kv"], metadata["nodes_not_joined"]) == (35.0, 1)
     assert pd.read_csv(outputs.demand_levels)["demand_mw"].tolist() == [500.0, 350.0, 8.0, 5.0]

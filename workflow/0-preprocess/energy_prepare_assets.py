@@ -1,8 +1,9 @@
 """Clean the CEB shapefiles, demand workbook and annual report tables in ``--input-dir``.
 
 Writes to ``--output-dir`` the substation, route, generation-site, generator and demand tables that
-the network builds read, and ``service_weights.csv`` with equal shares (no lines are passed).
-Header-only templates go to the sibling ``templates`` folder.
+the network builds read. ``--substation-names``, a table with columns ``substation`` and ``name``, names the
+substations, which otherwise keep their ids; the networks and the tables made from them carry the names. Header-only
+templates go to the sibling ``templates`` folder.
 """
 
 from pathlib import Path
@@ -34,7 +35,6 @@ from energy.provided import (
     snap_substations_to_routes,
     validate_provided_inputs,
 )
-from energy.service_weights import build_service_weights
 
 
 @click.command()
@@ -56,7 +56,13 @@ from energy.service_weights import build_service_weights
     type=click.Path(exists=True, dir_okay=False, path_type=str),
     help="Cached OpenStreetMap power features (with names), used to place plants the provided data lacks.",
 )
-def main(input_dir, output_dir, osm_power):
+@click.option(
+    "--substation-names",
+    "substation_names",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Table of the substations' names: columns substation (SUB_001, ...) and name.",
+)
+def main(input_dir, output_dir, osm_power, substation_names):
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
     validate_provided_inputs(input_dir)
@@ -64,7 +70,8 @@ def main(input_dir, output_dir, osm_power):
 
     substations = _read_gdf(input_dir / SUBSTATION_FOLDER / "Substation.shp").reset_index(drop=True)
     substations["bus_id"] = [f"SUB_{index + 1:03d}" for index in substations.index]
-    substations["name"] = substations["bus_id"]
+    names = pd.read_csv(substation_names, comment="#").set_index("substation")["name"] if substation_names else {}
+    substations["name"] = substations["bus_id"].map(names).fillna(substations["bus_id"])
     substations["asset_type"] = "substation"
 
     routes = _read_gdf(input_dir / TRANSMISSION_FOLDER / "PowerGrid.shp").reset_index(drop=True)
@@ -132,7 +139,6 @@ def main(input_dir, output_dir, osm_power):
     generators_path = output_dir / "generators.csv"
     peak_path = output_dir / "monthly_peak_demand_mw.csv"
     annual_path = output_dir / "annual_sector_demand_gwh.csv"
-    service_weights_path = output_dir / "service_weights.csv"
 
     substations[["bus_id", "name", "asset_type", "geometry"]].to_parquet(substation_path)
     snapped_substations[
@@ -184,10 +190,6 @@ def main(input_dir, output_dir, osm_power):
     generators.to_csv(generators_path, index=False)
     monthly_peak.to_csv(peak_path)
     annual_demand.to_csv(annual_path, index=False)
-    build_service_weights(snapped_substations).to_csv(
-        service_weights_path,
-        index=False,
-    )
     write_input_templates(output_dir.parent / "templates")
 
 
