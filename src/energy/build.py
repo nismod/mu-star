@@ -876,12 +876,15 @@ def _insert_transformer_junctions(
     lines: gpd.GeoDataFrame,
     *,
     capacity_mva: float,
+    asset_capacity_mva: float | None = None,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
     """Split each bus with lines of more than one voltage into one bus per voltage, as PyPSA needs.
 
     The lowest voltage keeps the id, others become ``<bus>::<kV>kv``; adjacent levels are joined
-    by a ``capacity_mva`` transformer. Returns buses, lines and transformers.
+    by a transformer of ``asset_capacity_mva`` at a substation or plant and ``capacity_mva``
+    elsewhere. Returns buses, lines and transformers.
     """
+    asset_capacity_mva = capacity_mva if asset_capacity_mva is None else asset_capacity_mva
     transformer_columns = ["transformer_id", "bus0", "bus1", "v_nom0_kv", "v_nom1_kv", "s_nom_mva", "geometry"]
     incident: dict[str, set[float]] = {}
     for bus0, bus1, voltage in zip(lines["bus0"], lines["bus1"], lines["v_nom_kv"]):
@@ -903,12 +906,23 @@ def _insert_transformer_junctions(
     for bus, levels in mixed.items():
         base_row = bus_lookup.loc[bus]
         geometry = base_row["geometry"]
+        at_asset = str(base_row.get("kind")) in {"substation", "generator"}
         for voltage in levels[1:]:
             row = {column: base_row.get(column) for column in bus_lookup.columns}
             row["bus_id"] = split_id(bus, voltage, levels)
             row["kind"] = "transformer"
             row["v_nom_kv"] = None
             row["geometry"] = geometry
+            # The other side of a substation's or plant's transformer is not itself a substation or plant.
+            not_an_asset = {
+                "is_root": False,
+                "inferred": True,
+                "anchor_status": None,
+                "anchor_distance_m": float("nan"),
+            }
+            for column, value in not_an_asset.items():
+                if column in row:
+                    row[column] = value
             extra_bus_rows.append(row)
         for low, high in pairwise(levels):
             transformer_rows.append(
@@ -918,7 +932,7 @@ def _insert_transformer_junctions(
                     "bus1": split_id(bus, low, levels),
                     "v_nom0_kv": float(high),
                     "v_nom1_kv": float(low),
-                    "s_nom_mva": float(capacity_mva),
+                    "s_nom_mva": float(asset_capacity_mva if at_asset else capacity_mva),
                     "geometry": geometry,
                 }
             )
@@ -1084,7 +1098,9 @@ def _build_inferred_network(
     )
     buses = _node_bus_frame(graph)
     # Split each bus that touches lines of two voltages and join the parts by a transformer.
-    buses, lines, transformers = _insert_transformer_junctions(buses, lines, capacity_mva=inferred_capacity_mva)
+    buses, lines, transformers = _insert_transformer_junctions(
+        buses, lines, capacity_mva=inferred_capacity_mva, asset_capacity_mva=inferred_anchor_capacity_mva
+    )
     # Buses with no line (assets too far from any road) get the distribution voltage.
     connected_buses = set(lines["bus0"].astype(str)) | set(lines["bus1"].astype(str))
     isolated = ~buses["bus_id"].astype(str).isin(connected_buses) & buses["v_nom_kv"].isna()
@@ -1152,7 +1168,8 @@ def _build_inferred_network(
     if source == "inferred-provided":
         electrical_values_note += (
             f" CEB lines {inferred_transmission_voltage_kv:g} kV and {inferred_transmission_capacity_mva:g} MVA,"
-            " joined to the roads by transformers."
+            f" joined to the roads by transformers of {inferred_anchor_capacity_mva:g} MVA at substations and"
+            f" {inferred_capacity_mva:g} MVA where a plant's connection meets a CEB line."
         )
     _write_metadata(
         metadata_path,

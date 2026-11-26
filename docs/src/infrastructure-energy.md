@@ -5,7 +5,7 @@ The Central Electricity Board (CEB) provided its 66 kV transmission network
 but no data on its distribution network, so the workflow estimates the
 distribution network from roads and night-time lights. It then splits each
 island's demand between its substations, and measures the unmet demand when
-each substation, transmission line or power plant fails.
+each substation, transmission line, power plant or distribution line fails.
 
 ## Data
 
@@ -51,51 +51,60 @@ its own folder in `data/processed/energy/<model_data>/`:
    - `base-mauritius`: the CEB network alone, which covers Mauritius only.
    - `inferred-osm-<region>`: public data only. The OpenStreetMap power assets
      are connected through the drivable roads within 1 km of a target or an
-     asset, and these roads form the estimated distribution network.
+     asset, and these roads form the estimated distribution network: one line
+     along each road, standing for the medium- and low-voltage lines together.
    - `inferred-provided-<region>`: the CEB network with the estimated
      distribution network added.
 
-   The same file sets the placeholder voltages and capacities of the networks.
-4. **Demand shares** (`demand/`). Each substation supplies its service area,
-   the part of the island closer to it than to any other substation; on
-   Rodrigues, which has no substations, the power stations take their place.
-   An area's share of its island's demand is 0.6 times its share of the
-   island's night-light radiance plus 0.4 times its share of the population.
-   This is PyPSA-Earth's method, with night lights in place of GDP, whose grids
-   are too coarse for these islands. The same weights split each area's demand
-   between the nodes of its distribution network. Each island's demand comes
-   from the annual report: 525.7 MW at peak and 346.8 MW on average on
-   Mauritius, and 8.52 MW and 5.75 MW on Rodrigues.
+   The same file sets the default voltages and capacities of the networks.
+4. **Demand shares** (`demand/`). Each substation supplies its service area:
+   the nodes of the distribution network nearer to it along the distribution
+   lines than to any other substation, and the land nearer to those nodes than
+   to any other node. On Rodrigues, which has no substations, the power
+   stations take their place. Nodes that no distribution line joins to a
+   substation, such as the bends of 66 kV lines, get no demand. An area's
+   share of its island's demand is 0.6 times its share of the island's
+   night-light radiance plus 0.4 times its share of the population, each grid
+   cell counting towards the nearest node. This is PyPSA-Earth's method, with
+   night lights in place of GDP, whose grids are too coarse for these islands.
+   The same weights split each area's demand between the nodes of its
+   distribution network. Each island's demand comes from the annual report:
+   525.7 MW at peak and 346.8 MW on average on Mauritius, and 8.52 MW and
+   5.75 MW on Rodrigues.
 
 ### Criticality
 
 The criticality analysis measures how much each component of
 `inferred-provided-<region>` matters for supply: the unmet demand when that
-substation, transmission line or power plant fails on its own (an N-1
-analysis). It
-involves no hazard and runs once. Whether a hazard event damages a component
-depends on the hazard intensity at the component and on the component's
-vulnerability curve; this analysis gives the consequence for supply if it
-does.
+component fails on its own (an N-1 analysis). It involves no hazard and runs
+once. Whether a hazard event damages a component depends on the hazard
+intensity at the component and on the component's vulnerability curve; this
+analysis gives the consequence for supply if it does.
 
-For each failure, a linear optimal power flow (PyPSA) supplies as much demand
-as the remaining network allows. The power flow includes the lines above
-`max_radial_line_voltage_kv` in `config/energy/energy.yaml`, which are run
-meshed: in `inferred-provided`, the CEB 66 kV network. The lines at or below
-it are distribution lines, each fed from one substation, and are left out:
-the demand of each substation's service area, from the demand shares above,
-sits on the substation's 66 kV bus, as do the plants assigned to the
-substation. Rodrigues, which has no CEB lines, is a single bus with all its
-plants and demand. The demand the power flow cannot supply is the unmet
-demand: demand minus supply, at each substation. On Rodrigues, the unmet
-demand of the single bus is split between the power stations' areas in
-proportion to their demand.
+One rule, `compute_energy_criticality`, computes it, with a method for each
+part of the network:
 
-No single voltage separates transmission from distribution: 132 kV lines are
-transmission in Scotland but distribution in England and Wales. The default of
-35 kV follows IEC 60038, the international standard of system voltages, which
-lists the systems up to 35 kV (such as 11, 22 and 33 kV) apart from those above
-it. CEB runs its transmission at 66 kV and its distribution at 22 and 6.6 kV.
+- a linear power flow for each failure of a substation, transmission line or
+  power plant, on the lines above `max_radial_line_voltage_kv`, so that line
+  ratings count;
+- the connectivity of the network for each failure of a distribution line, at
+  or below that voltage.
+
+A power flow would add nothing for the failure of a distribution line, without
+switching: the line cuts off the nodes beyond it, and the rest of the network
+only loses load. It would also take more than 100,000 core-hours (see the run
+times below). The rule writes one table, with a row for each component and the
+method that gave it.
+
+Lines above `max_radial_line_voltage_kv` in `config/energy/energy.yaml` are
+transmission lines, run meshed: in `inferred-provided`, the CEB 66 kV network.
+Lines at or below it are distribution lines, run radially, each fed from one
+substation. No single voltage separates transmission from distribution:
+132 kV lines are transmission in Scotland but distribution in England and
+Wales. The default of 35 kV follows IEC 60038, the international standard of
+system voltages, which lists the systems up to 35 kV (such as 11, 22 and
+33 kV) apart from those above it. CEB runs its transmission at 66 kV and its
+distribution at 22 and 6.6 kV.
 
 Keep the setting between the voltage of the distribution lines and that of
 the transmission lines. Lowered below the distribution lines (11 kV in the
@@ -105,15 +114,29 @@ voltage as a separate network, since it leaves out the transformers between
 voltages. The rule therefore stops with an error, before it builds the model,
 when lines of the estimated distribution network or lines of more than one
 voltage would enter the power flow. It warns when no line is above the
-setting, and `metadata.json` keeps the warning.
+setting, and `metadata.json` keeps the warning. The demand step, which finds
+the service areas along the lines at or below the setting, warns when they
+join fewer than 90% of the nodes to a supply point.
+
+#### Power flow
+
+For each failure, a linear optimal power flow (PyPSA) on the transmission
+lines supplies as much demand as the remaining network allows. The
+distribution lines are left out: the demand of each substation's service area,
+from the demand shares above, sits on the substation's 66 kV bus, as do the
+plants assigned to the substation. Rodrigues, which has no CEB lines, is a
+single bus with all its plants and demand. The demand the power flow cannot
+supply is the unmet demand: demand minus supply, at each substation. On
+Rodrigues, the unmet demand of the single bus is split between the power
+stations' areas in proportion to their demand.
 
 A failed substation takes its bus out of the network, with the lines and
 plants connected to it, so the demand of its whole area is unmet. Lines and
 plants carry no demand, so the unmet demand when one of them fails lies in the
 areas of the substations that the remaining network cannot fully supply. A
-transmission line made of several segments fails as a whole. A part of the network cut off
-from the rest keeps supply only if it has a thermal or hydro plant, because
-solar and wind farms disconnect when they lose the grid.
+transmission line made of several segments fails as a whole. A part of the
+network cut off from the rest keeps supply only if it has a thermal or hydro
+plant, because solar and wind farms disconnect when they lose the grid.
 
 A line's rating is its number of circuits, read from CEB's map, times the
 rating of one circuit of a standard PyPSA line type at the voltage the line
@@ -126,6 +149,25 @@ each run of segments between two substations or junctions is one line, with
 one circuit built for the voltage it runs at. Without the names table,
 substations keep their ids.
 
+#### Connectivity
+
+The rule fails each distribution line with the distribution network run
+radially, as distribution networks are in normal operation: each substation
+feeds its service area along the shortest routes through the area's lines, so
+that each node has one route to its substation, and the area's other lines and
+the lines between areas are open. On Mauritius, 4,116 km of the estimated
+network's 5,942 km are in service. A failed line cuts off the nodes beyond it
+until it is repaired, and the demand the power flow supplies to them with
+nothing failed is unmet, less what a thermal or hydro plant among them can
+supply. Switching, by which an operator can restore some of those nodes
+through another route before the repair, is left out. The connections that the
+build adds between a substation or plant and the nearest road do not fail on
+their own: they fail with the substation or plant. Nor do the nodes of the
+distribution network: each node is fed by one line in service, and the node's
+failure would cut off the same nodes as that line's failure.
+
+#### Results
+
 Each failure is solved at peak and at average demand, which gives two
 quantities, each the rise in unmet demand over that with nothing failed:
 
@@ -137,6 +179,21 @@ quantities, each the rise in unmet demand over that with nothing failed:
 The per-day value is exact when whole areas lose supply. It is too low for
 shortfalls that occur only near peak: on Rodrigues, losing a power station
 leaves demand unmet at peak but not at average demand.
+
+The run times show why the power flow stops at the transmission network. On
+one core of an Apple M1 Max laptop, with the networks of Mauritius and
+Rodrigues, the rule takes about 70 s:
+
+| Method | Components failed | Run time |
+| --- | --- | --- |
+| power flow | 85 substations, transmission lines and plants | about 62 s |
+| connectivity | 50,358 distribution lines | under 1 s |
+
+One power flow on a part of the Mauritius distribution network with 10,000
+buses took 203 s, so a power flow for each failure of a distribution line, at
+peak and at average demand, would take more than 100,000 core-hours. By
+connectivity, all the radial failures of a road-like network of 1,000,000
+buses take 1.4 s.
 
 ## Running the model
 
@@ -230,16 +287,17 @@ The criticality rule reads its settings from `criticality` in
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| `max_radial_line_voltage_kv` | 35 | Lines above it are transmission lines, run meshed and solved by power flow; lines at or below it are distribution lines, left out of the power flow. Keep it between the two voltages (see "Criticality" above). |
+| `max_radial_line_voltage_kv` | 35 | Lines above it are transmission lines, run meshed and solved by power flow; lines at or below it are distribution lines, run radially and failed by connectivity. The demand shares use it too. Keep it between the two voltages (see "Criticality" above). |
 | `island_carriers` | thermal, hydro | Plants that keep supply going in a part of the network cut off from the rest. |
 | `line_circuits` | `Power Transmission/ceb_line_circuits.csv` | Each CEB line's route, design voltage and circuits, for the power flow. Optional. |
 | `substation_names` | `Substation/ceb_substation_names.csv` | The substations' names. Optional. |
 | `line_types` | 149-AL1/24-ST1A for lines built for 66 kV, 243-AL1/39-ST1A for 132 kV | The PyPSA line type of one circuit, which sets a line's rating in the power flow. |
 | `s_max_pu` | 1.0 | The share of a line's rating that the power flow can use after a failure. |
 
-`line_limits_peak_mw` in `criticality.csv` gives the unmet demand that line
-ratings add to a failure; it is zero for every failure with the current
-ratings.
+`criticality.csv` has a row for every component, distribution lines
+included, so it is the table to map. `line_limits_peak_mw` gives the unmet
+demand that line ratings add to a failure of the power flow; it is zero for
+every failure with the current ratings.
 
 ## Outputs
 
@@ -261,12 +319,17 @@ ratings.
     source.
 - `data/results/energy/<date>-results/criticality/inferred-provided-<region>/`,
   where `<date>` is the date of the pack:
-  - `criticality.csv`: one row per substation, line and plant, with
-    `unmet_mwh_per_day` and `unmet_peak_mw` when that component fails, and
-    `line_limits_peak_mw`, the part of `unmet_peak_mw` due to line ratings;
+  - `criticality.csv`: one row per substation, transmission line, plant and
+    distribution line, with `unmet_mwh_per_day` and `unmet_peak_mw` when that
+    component fails; `line_limits_peak_mw`, the part of `unmet_peak_mw` due to
+    line ratings, empty for a distribution line; `in_service`, false for a
+    distribution line that radial operation leaves open; and `method`,
+    `power_flow` or `connectivity`. A distribution line's `asset_id` is its
+    `line_id` in the network's edges layer;
   - `criticality_by_area.csv`: one row for each failure and each service
-    area left with unmet demand, with the same two quantities. `area_bus_id`
-    names the area by the bus of its substation (or power station, on
+    area left with unmet demand, with the same two quantities; a distribution
+    line has one row, for its own area. `area_bus_id` names the area by the
+    bus of its substation (or power station, on
     Rodrigues), which `service_weights_nodes.csv` links to the nodes of the
     distribution network. When demand is unmet with nothing failed, a failure
     can move that shortfall from one area to another, so a failure's areas
@@ -284,7 +347,11 @@ criticality results.
 ## Limitations
 
 - The estimated distribution lines show where lines probably run, not where
-  they are; lines that do not follow roads are missing.
+  they are. On Mauritius they total 5,942 km, 4,618 km (44%) less than the
+  10,560 km of lines at 22 kV and below in the annual report (p. 60): 4,100 km
+  at 22 and 6.6 kV and 6,460 km at 400 and 230 V. CEB's total counts a road
+  that carries both voltages twice, where the estimate has one line, and lines
+  that do not follow roads are missing from the estimate.
 - Rodrigues has no CEB network data, so there is no substation or 66 kV line
   between its plants. An island with no power asset at all gets a placeholder
   substation on its roads.
@@ -293,9 +360,22 @@ criticality results.
   CEB would replace. The power flow, the only part that rates lines, rates
   them by standard line types until CEB provides its ratings.
 - The rule does not model switching: a failed substation cuts off its whole
-  service area until the repair, even where an operator could restore supply
-  sooner through another route. In 2024, an interruption to CEB's customers
-  lasted 1.8 to 3.2 hours on average, by region (annual report, p. 66).
+  service area, and a failed distribution line the nodes beyond it, until the
+  repair, even where an operator could restore supply sooner through another
+  route. In 2024, an interruption to CEB's customers lasted 1.8 to 3.2 hours
+  on average, by region (annual report, p. 66).
+- The service areas and the radial routes follow the roads: each node is
+  supplied from the substation nearest along them. Where roads are sparse, in
+  less populated places, that substation is less likely to be the one that
+  supplies the node; the rule is the same everywhere, so the error is of the
+  same kind across the islands.
+- The build joins each substation to the roads at one point (Champagne at
+  two, one through the power station next to it), so the routes from a
+  substation start on one or two road segments, as if it had one or two
+  feeders. At each of the 18 substations on Mauritius, the distribution line
+  whose failure leaves the most demand unmet is one of these first segments,
+  with 55–100% of the area's peak demand; a real substation divides its area
+  between several feeders.
 - The criticality analysis fails one component at a time. The unmet demand
   when a hazard damages several components at once is not the sum of the
   single-failure values: a substation fed by two lines keeps its supply when

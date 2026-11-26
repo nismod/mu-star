@@ -25,7 +25,8 @@ DEFAULT_MAX_ANCHOR_DISTANCE_M = 1000.0
 WGS84_GEOD = Geod(ellps="WGS84")
 # Node keys round coordinates to 6 decimal places of a degree (about 0.1 m).
 NODE_KEY_DECIMALS = 6
-# A connection point within this distance of a line end uses the end node instead of splitting the line.
+# A connection point within this distance of a line end uses the end node instead of splitting the line, and
+# an asset within this distance of a line is on it: the line ends at the asset, with no connecting line.
 SPLIT_SNAP_TOLERANCE_M = 1.0
 
 
@@ -193,6 +194,13 @@ def _split_edge_at(
     return cut_nodes
 
 
+def _move_lines_to_asset(graph: nx.MultiGraph, junction: str, asset_node: str) -> None:
+    """Attach every line at ``junction`` to ``asset_node`` instead, and remove the junction."""
+    for _, other, key, attrs in list(graph.edges(junction, keys=True, data=True)):
+        graph.add_edge(asset_node, other, key=key, **attrs)
+    graph.remove_node(junction)
+
+
 def _anchor_assets(
     graph: nx.MultiGraph,
     assets: gpd.GeoDataFrame,
@@ -203,7 +211,9 @@ def _anchor_assets(
     """Connect each asset to the nearest point on the nearest line within ``max_anchor_distance_m``.
 
     With ``anchor_to_each_line_source`` an asset gets one connection per line ``source``, so a
-    substation joins both the OSM roads and the CEB 66 kV lines.
+    substation joins both the OSM roads and the CEB 66 kV lines. An asset on a line (within
+    ``SPLIT_SNAP_TOLERANCE_M``) needs no connection: the line ends at the asset's node. Where two
+    assets are on the same point of a line, a substation takes that point before a plant.
     """
     edges = _edge_table(graph)
     asset_nodes = [_asset_node_id(row) for row in assets.itertuples()]
@@ -265,13 +275,30 @@ def _anchor_assets(
         for (_, asset_node, _), junction in zip(points, junctions, strict=True):
             junction_for_request[(asset_node, edge_row)] = junction
 
+    # An asset on a line takes the place of its junction, nearest asset first and substations before plants.
+    taken_by: dict[str, str] = {}
+    on_line = [request for request in anchor_requests if request[2] <= SPLIT_SNAP_TOLERANCE_M]
+    for asset_node, edge_row, _, _ in sorted(
+        on_line, key=lambda request: (request[2], graph.nodes[request[0]].get("kind") != "substation")
+    ):
+        junction = junction_for_request[(asset_node, edge_row)]
+        if junction not in taken_by:
+            _move_lines_to_asset(graph, junction, asset_node)
+            taken_by[junction] = asset_node
+
+    connected: set[tuple[str, str]] = set()
     for asset_node, edge_row, distance_m, group in anchor_requests:
         junction = junction_for_request[(asset_node, edge_row)]
+        junction = taken_by.get(junction, junction)
         asset_attrs = graph.nodes[asset_node]
         asset_kind = asset_attrs.get("kind", "substation")
         asset_id = asset_attrs.get("asset_id")
         asset_attrs["anchor_status"] = "anchored"
         asset_attrs["anchor_distance_m"] = min(float(asset_attrs["anchor_distance_m"]), distance_m)
+        # No connection to the asset itself, and one per pair of nodes.
+        if junction == asset_node or (asset_node, junction) in connected:
+            continue
+        connected.add((asset_node, junction))
         label = group if group != "all" else "road"
         edge_id = f"anchor::{asset_id}::{label}"
         graph.add_edge(
@@ -307,7 +334,8 @@ def build_inferred_distribution_graph(
     Each line becomes an edge with ``source`` ``precomputed``, ``osm`` or ``provided_transmission``;
     parallel lines between the same two nodes stay separate. ``power_assets`` (substations and
     generators) become nodes with ``is_root=True``. An asset within ``max_anchor_distance_m`` of a
-    line is connected to the nearest point on it, and the line is split there.
+    line is connected to the nearest point on it, and the line is split there; a line that passes
+    through or ends at an asset joins the asset's node directly.
     """
     if "asset_id" not in power_assets.columns and "bus_id" not in power_assets.columns:
         raise ValueError("power_assets must contain asset_id or bus_id")

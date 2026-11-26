@@ -1,8 +1,10 @@
-"""Unmet demand when one substation, transmission line or power plant fails (N-1 criticality), by power flow.
+"""Unmet demand when one component fails (N-1 criticality): a power flow for the meshed network, connectivity below it.
 
-The lines above ``max_radial_line_voltage_kv`` (35 kV by default), which are run meshed, are solved as a
-linear power flow (PyPSA, HiGHS) at peak and at average demand, first with nothing failed, then with each
-asset failed in turn. The lines at or below it are distribution lines, run radially, and are left out:
+``max_radial_line_voltage_kv`` (35 kV by default) splits the network. The lines above it are run meshed: each
+substation, transmission line and power plant is failed in turn and the network is solved as a linear power flow
+(PyPSA, HiGHS) at peak and at average demand, first with nothing failed. The lines at or below it are distribution
+lines, run radially: each is failed in turn from the connectivity of the network (``energy.connectivity``), which for
+one failure without switching gives what a power flow would. The power flow:
 
 - Buses are the points where the lines above that voltage meet, at the voltage the network gives them. A
   substation's demand and plants sit on the transmission bus at the substation. An island without such
@@ -25,10 +27,12 @@ that shedding from one point to another, so the points can add up to more than t
 gives two quantities: the unmet demand at peak demand (MW), and the unmet energy per day of outage (MWh),
 which is the unmet demand at average demand over 24 hours. The per-day value is exact when whole areas
 lose supply and too low for shortfalls that occur only near peak. Each failure that leaves demand unmet
-at peak is solved again without line ratings, to give the part due to the ratings.
+at peak is solved again without line ratings, to give the part due to the ratings. A distribution line's
+failure starts from the supply that the power flow gives each area with nothing failed.
 
-The power flow models lines at one voltage and no transformers, so ``transmission_lines`` stops with an error when
-the setting puts lines of the estimated distribution network, or lines of more than one voltage, into it.
+``build_criticality`` writes one table, with a row for each component and the ``method`` that gave it. The power
+flow models lines at one voltage and no transformers, so ``transmission_lines`` stops with an error when the setting
+puts lines of the estimated distribution network, or lines of more than one voltage, into it.
 """
 
 from __future__ import annotations
@@ -44,10 +48,11 @@ import numpy as np
 import pandas as pd
 import pypsa
 
+from energy.connectivity import distribution_failures
+from energy.demand import DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV
+
 logger = logging.getLogger(__name__)
 
-# IEC 60038 lists three-phase systems up to 35 kV apart from those above it; see config/energy/energy.yaml.
-DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV = 35.0
 DEFAULT_LINE_TYPES = {66: "149-AL1/24-ST1A 110.0", 132: "243-AL1/39-ST1A 110.0"}
 # Plants that keep supply going in a part of the network cut off from the rest. Solar and wind farms disconnect when
 # the grid is lost.
@@ -59,7 +64,8 @@ SAME_POINT_M = 50.0  # the largest distance between a substation and its transmi
 TOLERANCE_MW = 1e-6
 HOURS_PER_DAY = 24
 LEVELS = ("peak", "average")
-ASSET_TYPES = ("substation", "line", "plant")
+QUANTITIES = ("unmet_mwh_per_day", "unmet_peak_mw")
+ASSET_TYPES = ("substation", "line", "plant", "distribution_line")
 # The build's sources for the lines of the estimated distribution network; its anchors end in "_anchor".
 ESTIMATED_SOURCES = ("osm", "precomputed")
 
@@ -513,10 +519,90 @@ def power_flow_failures(
     return _sorted(summary), by_area, {"peak": nothing_failed_peak, "average": nothing_failed_average}
 
 
+def all_failures(
+    network: pypsa.Network,
+    model: TransmissionModel,
+    assets: pd.DataFrame,
+    substation_weights: pd.DataFrame,
+    node_weights: pd.DataFrame,
+    demand_levels: pd.DataFrame,
+    *,
+    max_radial_line_voltage_kv: float = DEFAULT_MAX_RADIAL_LINE_VOLTAGE_KV,
+    s_max_pu: float = 1.0,
+    island_carriers: tuple[str, ...] = DEFAULT_ISLAND_CARRIERS,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Fail each component at peak and at average demand: by power flow for the substations, transmission lines and
+    plants (``assets``), and by connectivity for the distribution lines.
+
+    ``substation_weights`` and ``node_weights`` are ``service_weights_substations.csv`` and
+    ``service_weights_nodes.csv``. Returns one row per component with ``unmet_mwh_per_day``, ``unmet_peak_mw``,
+    ``line_limits_peak_mw`` (empty for a distribution line, which the power flow does not include), ``in_service``
+    (false for a distribution line left open) and ``method`` (``power_flow`` or ``connectivity``); the two unmet
+    quantities by component and service area (``area_bus_id``), where either is above zero; and a summary with the
+    demand, the unmet demand with nothing failed and counts of distribution lines.
+    """
+    demand = {level: demand_by_supply_point(substation_weights, demand_levels, level) for level in LEVELS}
+    power_flow_rows, power_flow_by_area, nothing_failed = power_flow_failures(
+        model, assets, demand["peak"], demand["average"], s_max_pu=s_max_pu, island_carriers=island_carriers
+    )
+    # Each distribution line's failure starts from the supply the power flow gives its area with nothing failed.
+    supplied_share = {
+        level: (1.0 - nothing_failed[level] / demand[level].where(demand[level] > 0)).fillna(1.0).clip(0.0, 1.0)
+        for level in LEVELS
+    }
+    lines, not_joined, counts = distribution_failures(
+        network.lines[~is_transmission_line(network, max_radial_line_voltage_kv)],
+        network.generators,
+        node_weights,
+        {level: island_demand(demand_levels, level) for level in LEVELS},
+        island_carriers=island_carriers,
+        supplied_share=supplied_share,
+    )
+
+    power_flow_rows = power_flow_rows.assign(in_service=True, method="power_flow")
+    distribution_rows = pd.DataFrame(
+        {
+            "asset_id": lines.index,
+            "asset_type": "distribution_line",
+            "name": lines.index,
+            "island": lines["island"].to_numpy(),
+            "lines": lines.index,
+            "unmet_mwh_per_day": HOURS_PER_DAY * lines["unmet_average_mw"].to_numpy(),
+            "unmet_peak_mw": lines["unmet_peak_mw"].to_numpy(),
+            "line_limits_peak_mw": np.nan,
+            "in_service": lines["in_service"].to_numpy(dtype=bool),
+            "method": "connectivity",
+        }
+    )
+    summary = _sorted(pd.concat([power_flow_rows, distribution_rows], ignore_index=True))
+
+    distribution_by_area = distribution_rows[["asset_id", *QUANTITIES]].assign(
+        area_bus_id=lines["area_bus_id"].to_numpy()
+    )
+    distribution_by_area = distribution_by_area[
+        distribution_by_area["area_bus_id"].ne("") & _leaves_demand_unmet(distribution_by_area)
+    ]
+    by_area = pd.concat([power_flow_by_area, distribution_by_area], ignore_index=True)[
+        ["asset_id", "area_bus_id", *QUANTITIES]
+    ]
+    by_area = by_area.sort_values(["asset_id", "area_bus_id"]).reset_index(drop=True)
+
+    notes = {
+        "demand_mw": {level: round(float(demand[level].sum()), 3) for level in LEVELS},
+        "unmet_with_nothing_failed": {
+            "unmet_mwh_per_day": HOURS_PER_DAY * (float(nothing_failed["average"].sum()) + not_joined["average"]),
+            "unmet_peak_mw": float(nothing_failed["peak"].sum()) + not_joined["peak"],
+        },
+        "distribution_lines": counts,
+    }
+    return summary, by_area, notes
+
+
 def build_criticality(
     *,
     network_path: Path,
     substation_weights_path: Path,
+    node_weights_path: Path,
     demand_levels_path: Path,
     output_dir: Path,
     line_circuits_path: Path | None = None,
@@ -542,6 +628,7 @@ def build_criticality(
         else None
     )
     weights = pd.read_csv(substation_weights_path)
+    node_weights = pd.read_csv(node_weights_path)
     levels = pd.read_csv(demand_levels_path, comment="#")
     model = transmission_model(
         network,
@@ -554,13 +641,20 @@ def build_criticality(
     if model.lines.empty:
         warnings.append(
             f"No line is above max_radial_line_voltage_kv ({max_radial_line_voltage_kv:g} kV), so the power flow has "
-            "no lines: each island is one bus."
+            "no lines: each island is one bus, and every line, transmission lines included, is run radially."
         )
         logger.warning(warnings[-1])
     assets = failure_assets(model, network, line_circuits, names)
-    demand = {level: demand_by_supply_point(weights, levels, level) for level in LEVELS}
-    summary, by_area, nothing_failed = power_flow_failures(
-        model, assets, demand["peak"], demand["average"], s_max_pu=s_max_pu, island_carriers=island_carriers
+    summary, by_area, notes = all_failures(
+        network,
+        model,
+        assets,
+        weights,
+        node_weights,
+        levels,
+        max_radial_line_voltage_kv=max_radial_line_voltage_kv,
+        s_max_pu=s_max_pu,
+        island_carriers=island_carriers,
     )
 
     output_dir = Path(output_dir)
@@ -582,17 +676,18 @@ def build_criticality(
         "line_circuits": str(line_circuits_path) if line_circuits_path else None,
         "substation_names": str(substation_names_path) if substation_names_path else None,
         "substation_weights": str(substation_weights_path),
+        "node_weights": str(node_weights_path),
         "demand_levels": str(demand_levels_path),
         "line_types": {str(kv): name for kv, name in line_types.items()},
         "max_radial_line_voltage_kv": max_radial_line_voltage_kv,
         "s_max_pu": s_max_pu,
         "island_carriers": list(island_carriers),
-        "demand_mw": {level: round(float(demand[level].sum()), 3) for level in LEVELS},
+        "demand_mw": notes["demand_mw"],
         "unmet_with_nothing_failed": {
-            "unmet_mwh_per_day": round(HOURS_PER_DAY * float(nothing_failed["average"].sum()), 3),
-            "unmet_peak_mw": round(float(nothing_failed["peak"].sum()), 3),
+            name: round(value, 3) for name, value in notes["unmet_with_nothing_failed"].items()
         },
         "power_flow": {"buses": len(model.buses), "lines": len(model.lines), "failures": len(assets)},
+        "distribution_lines": notes["distribution_lines"],
         "assets": summary["asset_type"].value_counts().to_dict(),
         "warnings": warnings,
     }

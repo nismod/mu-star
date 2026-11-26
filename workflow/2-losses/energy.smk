@@ -1,17 +1,18 @@
-"""Energy criticality: the unmet demand when one substation, transmission line or power plant fails.
+"""Energy criticality: the unmet demand when one component of the network fails.
 
-compute_energy_criticality uses the inferred-provided network and demand shares from
-workflow/0-preprocess/energy.smk and, if set, two tables in the incoming folder (line circuits,
-substation names; on Mauritius read from the CEB network map). The target rule
+One rule, compute_energy_criticality, analyses the inferred-provided network, with demand shares from
+workflow/0-preprocess/energy.smk and, if set, two tables in the incoming folder (line circuits, substation names; on
+Mauritius read from the CEB network map). It fails each substation, transmission line and plant and solves a linear
+power flow on the lines above max_radial_line_voltage_kv (src/energy/criticality.py), and fails each distribution
+line, at or below it, from the connectivity of the network (src/energy/connectivity.py). The target rule
 build_energy_criticality asks for its tables in the data folder set by data_root, so
-`snakemake -c1 build_energy_criticality` runs it. Settings are under criticality in
-config/energy/energy.yaml; the method is in src/energy/criticality.py and
-docs/src/infrastructure-energy.md.
+`snakemake -c1 build_energy_criticality` runs it.
+
+Settings are under criticality in config/energy/energy.yaml; the method is in docs/src/infrastructure-energy.md.
 """
 
 from energy.paths import results_name
 
-CRITICALITY = ENERGY.get("criticality", {})
 # Optional tables, as paths in the incoming folder.
 CRITICALITY_TABLES = {
     name: f"{INCOMING_DIR}/{CRITICALITY[name]}" for name in ("line_circuits", "substation_names") if CRITICALITY.get(name)
@@ -27,9 +28,10 @@ def criticality_table_options(wildcards, input):
 
 rule compute_energy_criticality:
     """
-    Fail each substation, transmission line and power plant of inferred-provided in turn,
-    solve a linear power flow on the lines above max_radial_line_voltage_kv, and record the
-    unmet demand at peak (MW) and per day of outage (MWh, at average demand).
+    Fail each component of inferred-provided in turn and record the unmet demand at peak (MW) and per day of outage
+    (MWh, at average demand): each substation, transmission line and plant by a linear power flow on the lines above
+    max_radial_line_voltage_kv, and each distribution line, at or below it, from the connectivity of the network,
+    run radially without switching.
 
     Test with:
     snakemake -c1 data/results/energy/<date>-results/criticality/inferred-provided-mauritius-rodrigues/criticality.csv
@@ -37,6 +39,7 @@ rule compute_energy_criticality:
     input:
         network=f"{NETWORKS_DIR}/{INFERRED_PROVIDED_NAME}/{INFERRED_PROVIDED_NAME}.nc",
         substation_weights=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/service_weights_substations.csv",
+        node_weights=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/service_weights_nodes.csv",
         demand_levels=f"{DEMAND_DIR}/{INFERRED_PROVIDED_NAME}/demand_levels.csv",
         script=ancient("workflow/2-losses/energy_criticality.py"),
         **CRITICALITY_TABLES,
@@ -52,7 +55,7 @@ rule compute_energy_criticality:
             f"--line-type {int(kv)} {shlex.quote(str(line_type))}"
             for kv, line_type in CRITICALITY.get("line_types", {}).items()
         ),
-        max_radial_line_voltage_kv=CRITICALITY.get("max_radial_line_voltage_kv", 35),
+        max_radial_line_voltage_kv=MAX_RADIAL_LINE_VOLTAGE_KV,
         s_max_pu=CRITICALITY.get("s_max_pu", 1.0),
         island_carriers=" ".join(
             f"--island-carrier {shlex.quote(str(carrier))}"
@@ -63,6 +66,7 @@ rule compute_energy_criticality:
         python {input.script:q} \
             --network {input.network:q} \
             --substation-weights {input.substation_weights:q} \
+            --node-weights {input.node_weights:q} \
             --demand-levels {input.demand_levels:q} \
             --output-dir {params.output_dir:q} \
             {params.tables} \

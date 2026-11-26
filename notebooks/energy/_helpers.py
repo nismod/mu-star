@@ -34,19 +34,27 @@ Criticality (``02_criticality.ipynb``):
 
 - ``CRITICALITY_DIR``: <data>/results/energy/<date>-results/criticality/inferred-provided-<region>.
 - ``MAX_RADIAL_LINE_VOLTAGE_KV``: lines above it are transmission lines, the rest distribution lines.
-- ``load_criticality()``: ``(summary, by_area)``, the two tables of ``build_energy_criticality``.
+- ``load_criticality()``: ``(summary, by_area)``, the two tables of ``build_energy_criticality``: one row per
+  component, substations, transmission lines and plants by power flow and distribution lines by connectivity
+  (``method``).
 - ``demand_levels()``: each island's peak and average demand, with its source.
 - ``area_demand(summary)``: each substation area's share of its island's demand, and its demand in MW.
-- ``unmet_by_cause(summary, by_area)``: the unmet demand when each component fails, per day and at peak, and at
-  peak by cause (the failed substation's area, other areas without supply, areas partly supplied).
-- ``unmet_by_area(summary, by_area)``: every substation area with unmet demand for each failure, with names.
+- ``unmet_by_cause(summary, by_area)``: the unmet demand when each component of the power flow fails, per day and
+  at peak, and at peak by cause (the failed substation's area, other areas without supply, areas partly supplied).
+- ``unmet_by_area(summary, by_area)``: every substation area with unmet demand for each failure of a component of the
+  power flow, with names.
 - ``failures_by_island(summary)``: each island's peak demand and plant capacity, and the number of components
   failed and of failures leaving demand unmet, by type.
 - ``plot_criticality_map(summary, quantity)``: transmission lines, substations and plants, coloured by the unmet
   demand when each fails, in one of ``QUANTITIES``.
-- ``plot_failure(asset_id)``: the distribution network left without supply when one component fails.
+- ``plot_failure(asset_id)``: the distribution network left without supply when one component of the power flow
+  fails.
 - ``plot_line_ratings()``: the transmission line ratings the analysis used, by design voltage and number of
   circuits.
+- ``distribution_line_counts(summary)``: each island's distribution lines and how many leave demand unmet.
+- ``largest_distribution_failures(summary, by_area)``: the distribution lines that leave the most unmet.
+- ``plot_distribution_criticality(summary, quantity)``: the distribution lines, coloured by the unmet demand when
+  each fails, in one of ``QUANTITIES``.
 """
 
 from __future__ import annotations
@@ -65,7 +73,7 @@ import shapely
 import yaml
 from matplotlib import patheffects
 from matplotlib.cm import ScalarMappable
-from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
 from matplotlib.lines import Line2D
 
 from energy import osm as energy_osm
@@ -574,10 +582,21 @@ _HALO = [patheffects.withStroke(linewidth=3, foreground="white")]  # keeps label
 
 
 def load_criticality() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return ``(summary, by_area)``: ``criticality.csv``, one row per component, and ``criticality_by_area.csv``."""
+    """Return ``(summary, by_area)``: ``criticality.csv``, one row per component, and ``criticality_by_area.csv``.
+
+    ``method`` in ``summary`` is ``power_flow`` for substations, transmission lines and plants and ``connectivity``
+    for distribution lines.
+    """
     summary = pd.read_csv(CRITICALITY_DIR / "criticality.csv", dtype={"asset_id": str, "name": str})
     summary["lines"] = summary["lines"].fillna("")
     return summary, pd.read_csv(CRITICALITY_DIR / "criticality_by_area.csv", dtype={"asset_id": str})
+
+
+def power_flow_components(summary: pd.DataFrame, by_area: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return the rows of ``summary`` and ``by_area`` for the components of the power flow: substations,
+    transmission lines and plants."""
+    components = summary[summary["method"].eq("power_flow")]
+    return components, by_area[by_area["asset_id"].isin(components["asset_id"])]
 
 
 @functools.lru_cache(maxsize=1)
@@ -720,13 +739,15 @@ AREA_STATUS = ("failed substation's area", "without supply", "partly supplied")
 
 
 def unmet_by_area(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame:
-    """Return ``criticality_by_area.csv`` with names: one row per failure and substation area with unmet demand.
+    """Return ``criticality_by_area.csv`` with names: one row per failure of a component of the power flow and
+    substation area with unmet demand.
 
     ``asset`` and ``area`` name the failed component and the area. ``area_status``, one of ``AREA_STATUS``: the
     failed substation's own area; another area left without supply at peak; or another area that keeps some
     supply. ``unmet_share_of_peak``: the share of the area's peak demand that is unmet. Rows follow the order of
     :func:`unmet_by_cause`.
     """
+    summary, by_area = power_flow_components(summary, by_area)
     assets = summary.set_index("asset_id")
     area_peak = _area_demand_mw()["peak_mw"]
     table = by_area.copy()
@@ -747,14 +768,15 @@ def unmet_by_area(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame:
 
 
 def unmet_by_cause(summary: pd.DataFrame, by_area: pd.DataFrame) -> pd.DataFrame:
-    """Return, for each asset whose failure leaves demand unmet, its two unmet quantities and where the unmet
-    demand at peak falls, by the ``area_status`` of :func:`unmet_by_area`.
+    """Return, for each component of the power flow whose failure leaves demand unmet, its two unmet quantities and
+    where the unmet demand at peak falls, by the ``area_status`` of :func:`unmet_by_area`.
 
     ``failed_substation_area_peak_mw``: a failed substation's own area. ``areas_without_supply`` and
     ``areas_without_supply_peak_mw``: the other areas that lose all their supply. ``areas_partly_supplied_peak_mw``:
     unmet demand in areas that keep some supply, because the plants left cannot cover them or lines reach their
     ratings. ``line_limits_peak_mw``: the part of ``unmet_peak_mw`` due to line ratings.
     """
+    summary, by_area = power_flow_components(summary, by_area)
     areas = unmet_by_area(summary, by_area)
     rows = []
     for asset_id, asset in summary.set_index("asset_id").iterrows():
@@ -856,6 +878,88 @@ def plot_criticality_map(
     return ax
 
 
+def distribution_line_counts(summary: pd.DataFrame, threshold_mw: float = 1.0) -> pd.DataFrame:
+    """Return, for each island, its distribution lines, those in service in radial operation, the number whose
+    failure leaves at least ``threshold_mw`` unmet at peak, and the largest unmet demand (MW)."""
+    lines = summary[summary["asset_type"].eq("distribution_line")].groupby("island")
+    return pd.DataFrame(
+        {
+            "distribution_lines": lines.size(),
+            "in_service": lines["in_service"].sum(),
+            f"lines_at_least_{threshold_mw:g}_mw": lines["unmet_peak_mw"].agg(
+                lambda unmet: int((unmet >= threshold_mw).sum())
+            ),
+            "largest_peak_mw": lines["unmet_peak_mw"].max(),
+        }
+    ).reset_index()
+
+
+def largest_distribution_failures(
+    summary: pd.DataFrame, by_area: pd.DataFrame, count: int = 10, quantity: str = "unmet_peak_mw"
+) -> pd.DataFrame:
+    """Return the ``count`` distribution lines whose failure leaves the most demand unmet in ``quantity`` (one of
+    ``QUANTITIES``), with the substation area each is in."""
+    lines = summary[summary["asset_type"].eq("distribution_line")].nlargest(count, quantity)
+    area_of_line = by_area.drop_duplicates("asset_id").set_index("asset_id")["area_bus_id"]
+    names = summary.set_index("asset_id")["name"]
+    lines = lines.assign(area=[_area_name(area, names) for area in lines["asset_id"].map(area_of_line)])
+    columns = ["asset_id", "area", "island", "unmet_peak_mw", "unmet_mwh_per_day"]
+    return lines[columns].reset_index(drop=True)
+
+
+def plot_distribution_criticality(
+    summary: pd.DataFrame, quantity: str = "unmet_peak_mw", *, clip=None, ax=None, figsize=(9, 11)
+):
+    """Map the distribution lines, coloured on a log scale by the unmet demand when each fails.
+
+    ``quantity``: one of ``QUANTITIES``. Lines in service whose failure leaves less than a hundredth of
+    the largest value unmet are grey, and open lines, which radial operation leaves out of service, are dotted.
+    ``clip``: a ``(minx, miny, maxx, maxy)`` box in degrees; the default is the island with the most distribution
+    lines.
+    """
+    what, unit = QUANTITIES[quantity]
+    nodes, edges = _criticality_layers()
+    lines = summary[summary["asset_type"].eq("distribution_line")].set_index("asset_id")
+    clip = clip or _island_bounds([lines["island"].value_counts().index[0]])
+    roads = edges[edges["line_id"].isin(lines.index)].copy()
+    roads["unmet"] = roads["line_id"].map(lines[quantity]).fillna(0.0)
+    roads["open"] = ~roads["line_id"].map(lines["in_service"]).fillna(False).astype(bool)
+    roads = _clip(roads, clip).sort_values("unmet")  # the largest values are drawn on top
+    top = max(float(roads["unmet"].max()) if len(roads) else 0.0, 1e-3)
+    norm = LogNorm(top / 100, top)
+    hit = roads["unmet"] >= top / 100
+    ceb = _clip(_transmission(edges), clip)
+    subs = _clip(nodes[nodes["kind"].eq("substation")], clip)
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+    _draw(roads[roads["open"]], ax, color=_NO_LOSS, linewidth=0.4, linestyle=(0, (1, 2)), zorder=1)
+    _draw(roads[~hit & ~roads["open"]], ax, color=_CONTEXT, linewidth=0.3, zorder=1)
+    if hit.any():
+        _draw(roads[hit], ax, color=_SCALE(norm(roads.loc[hit, "unmet"].to_numpy())), linewidth=0.9, zorder=2)
+    _draw(ceb, ax, color=_NO_LOSS, linewidth=1.0, zorder=3)
+    ax.scatter(subs.geometry.x, subs.geometry.y, s=25, color=_NO_LOSS, edgecolor="white", linewidth=1, zorder=4)
+    plt.colorbar(
+        ScalarMappable(norm, _SCALE), ax=ax, shrink=0.4, label=f"Unmet demand when the line fails ({unit}, log scale)"
+    )
+    entries = [
+        (hit.any(), Line2D([], [], color=_SCALE(0.6), linewidth=1.5, label="distribution line, unmet demand")),
+        (
+            (~hit & ~roads["open"]).any(),
+            Line2D([], [], color=_CONTEXT, linewidth=1, label=f"distribution line, under {top / 100:.2g} {unit} unmet"),
+        ),
+        (
+            roads["open"].any(),
+            Line2D([], [], color=_NO_LOSS, linewidth=1, linestyle=(0, (1, 2)), label="distribution line, open"),
+        ),
+        (len(ceb) > 0, Line2D([], [], color=_NO_LOSS, linewidth=1, label="transmission line")),
+        (len(subs) > 0, _dot(_NO_LOSS, "substation", size=6)),
+    ]
+    ax.legend(handles=[entry for drawn, entry in entries if drawn], loc="lower left", frameon=False, fontsize=8)
+    ax.set_axis_off()
+    ax.set_title(f"Unmet demand when each distribution line fails: {what}", loc="left")
+    return ax
+
+
 def plot_failure(
     asset_id: str,
     *,
@@ -865,7 +969,8 @@ def plot_failure(
     ax=None,
     figsize=(9, 11),
 ):
-    """Map the distribution lines left without supply when ``asset_id`` fails.
+    """Map the distribution lines left without supply when ``asset_id``, a substation, transmission line or plant,
+    fails.
 
     Each line is coloured by the share of its substation area's peak demand that is unmet; a line between two
     areas takes the smaller share of its two ends. A box gives the unmet demand and, at peak, its causes (see
@@ -875,6 +980,8 @@ def plot_failure(
     if summary is None or by_area is None:
         summary, by_area = load_criticality()
     asset = summary.set_index("asset_id").loc[asset_id]
+    if asset["method"] != "power_flow":
+        raise ValueError(f"{asset_id} is a {asset['asset_type']}: plot_failure maps substations, lines and plants")
     nodes, edges = _criticality_layers()
     hit = by_area[by_area["asset_id"].eq(asset_id)]
     share = (hit["unmet_peak_mw"] / hit["area_bus_id"].map(_area_demand_mw()["peak_mw"])).clip(upper=1.0)
@@ -959,7 +1066,7 @@ def _unmet_breakdown(asset_id, asset, summary, by_area) -> str:
 def plot_line_ratings(*, clip=None, ax=None, figsize=(9, 11)):
     """Map the transmission line ratings, by design voltage (colour) and number of circuits (width).
 
-    From ``line_ratings.csv`` of ``build_energy_criticality``, the ratings the analysis used. The legend gives
+    From ``line_ratings.csv`` of ``build_energy_criticality``, the ratings the power flow used. The legend gives
     each class's rating at the voltage the lines run at.
     ``clip``: a ``(minx, miny, maxx, maxy)`` box in degrees; the default is the islands with transmission lines.
     """
