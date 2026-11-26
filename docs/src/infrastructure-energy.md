@@ -181,8 +181,23 @@ file whose inputs were copied after it.
 
 ### Commands
 
-Each command asks Snakemake for one file, or for a group of files, and runs
-the rules needed to make it:
+Snakemake runs the rules needed to make what a command asks for: a file, or a
+target rule, which only lists files. A rule can be named in a command only if
+its paths have no wildcards. The energy rules that do the work keep the data
+folder in their paths as a wildcard, `{data}`, like the other rules in mu-star,
+so the usual runs have target rules instead. These take the model-data pack
+and the region from `config/energy/energy.yaml`, and the data folder from
+`data_root` in `config/config.yaml` (`data` by default):
+
+```shell
+# the three networks
+snakemake -c1 build_energy_networks
+# the criticality of the combined network, in a results folder with the pack's date
+snakemake -c1 build_energy_criticality
+```
+
+To make one file, ask for it by its path, as the [Developer's
+README](./dev-introduction.md) describes:
 
 ```shell
 MODEL_DATA=$(sed -n 's/^ *model_data: *//p' config/energy/energy.yaml)
@@ -193,15 +208,20 @@ snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/base-mauritius/base-ma
 # the combined network, then its demand shares
 snakemake -c1 "data/processed/energy/$MODEL_DATA/networks/inferred-provided-mauritius-rodrigues/inferred-provided-mauritius-rodrigues.nc"
 snakemake -c1 "data/processed/energy/$MODEL_DATA/demand/inferred-provided-mauritius-rodrigues/service_weights_nodes.csv"
-# the criticality of the combined network, in a results folder with the pack's date
-snakemake -c1 "data/results/energy/${MODEL_DATA%-model-data}-results/criticality/inferred-provided-mauritius-rodrigues/criticality.csv"
-# all three networks
-snakemake -c1 build_energy_networks
 ```
 
 Add `-n` to a command to list the jobs it would run without running them.
 With the pack in place, the network commands have nothing to do, while the
 demand and criticality commands also need the incoming folder.
+
+Snakemake does not notice a change to `src/energy/`. To rerun a rule after
+one, add `-R` and the name of the rule that does the work after the target,
+since `-R` takes every word after it as a rule name. The criticality rule
+writes only to `data/results/`, so the links to the shared folders can stay:
+
+```shell
+snakemake -c1 build_energy_criticality -R compute_energy_criticality
+```
 
 ### Criticality settings
 

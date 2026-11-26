@@ -17,9 +17,10 @@ Three notebooks for checking the energy model while working on `src/energy/`:
 
 After editing `src/energy/`, rebuild with `snakemake -c1 build_energy_networks`
 (or set `RUN_BUILD = True` in `01_networks.ipynb`) and rerun `01_networks.ipynb`.
-After editing `src/energy/criticality.py`, add `-R build_energy_criticality` to
-the criticality command in "Running the model" and rerun `02_criticality.ipynb`;
-the rule writes only to `data/results/`, so the OneDrive links can stay.
+After editing `src/energy/criticality.py`, run
+`snakemake -c1 build_energy_criticality -R compute_energy_criticality`, then
+rerun `02_criticality.ipynb`; the rule writes only to `data/results/`, so the
+OneDrive links can stay.
 
 All three import `_helpers.py` as `h`, which takes its paths from
 `config/config.yaml` and `config/energy/energy.yaml`; its docstring lists the

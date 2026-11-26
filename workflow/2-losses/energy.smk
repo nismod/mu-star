@@ -1,9 +1,12 @@
 """Energy criticality: the unmet demand when one substation, transmission line or power plant fails.
 
-Uses the inferred-provided network and demand shares from workflow/0-preprocess/energy.smk
-and, if set, two tables in the incoming folder (line circuits, substation names; on Mauritius
-read from the CEB network map). Settings are under criticality in config/energy/energy.yaml;
-the method is in src/energy/criticality.py and docs/src/infrastructure-energy.md.
+compute_energy_criticality uses the inferred-provided network and demand shares from
+workflow/0-preprocess/energy.smk and, if set, two tables in the incoming folder (line circuits,
+substation names; on Mauritius read from the CEB network map). The target rule
+build_energy_criticality asks for its tables in the data folder set by data_root, so
+`snakemake -c1 build_energy_criticality` runs it. Settings are under criticality in
+config/energy/energy.yaml; the method is in src/energy/criticality.py and
+docs/src/infrastructure-energy.md.
 """
 
 from energy.paths import results_name
@@ -22,7 +25,7 @@ def criticality_table_options(wildcards, input):
     return " ".join(f"--{name.replace('_', '-')} {shlex.quote(input[name])}" for name in CRITICALITY_TABLES)
 
 
-rule build_energy_criticality:
+rule compute_energy_criticality:
     """
     Fail each substation, transmission line and power plant of inferred-provided in turn,
     solve a linear power flow on the lines above max_radial_line_voltage_kv, and record the
@@ -68,3 +71,14 @@ rule build_energy_criticality:
             --s-max-pu {params.s_max_pu} \
             {params.island_carriers}
         """
+
+
+rule build_energy_criticality:
+    """
+    Build the criticality tables of inferred-provided in the data folder set by data_root (data/ by default).
+
+    Run with:
+    snakemake -c1 build_energy_criticality
+    """
+    input:
+        expand(rules.compute_energy_criticality.output, data=ENERGY_DATA_ROOT),

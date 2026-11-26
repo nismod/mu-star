@@ -562,7 +562,7 @@ def explore_network(name, *, roads=True, clip=None, map_style="open-street-map")
 CRITICALITY_NETWORK = f"inferred-provided-{REGION_SLUG}"
 CRITICALITY_DIR = energy_paths.results_energy_dir(DATA_ROOT) / "criticality" / CRITICALITY_NETWORK
 MAX_RADIAL_LINE_VOLTAGE_KV = float(_setting("criticality", "max_radial_line_voltage_kv", default=35))
-RUN_CRITICALITY = build_command(CRITICALITY_DIR / "criticality.csv")
+RUN_CRITICALITY = "snakemake -c1 build_energy_criticality"
 DEMAND_DIR = energy_paths.processed_energy_dir(DATA_ROOT) / "demand" / CRITICALITY_NETWORK
 
 # Colours: a blue scale for amounts, greys for context and for assets whose failure leaves no demand unmet,
