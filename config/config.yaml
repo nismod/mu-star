@@ -1,6 +1,12 @@
 # This file contains configuration options for mu-star analysis.
 # These values are used by snakemake rules in the `workflow/` directory.
 
+# Optional local catalogue repository root, separate from the local output catalogue.
+# Leave null to use globdata's default S3 catalogue.
+# Can also be overridden for a run with `--config catalogue_source_root=/path/to/catalogue-repo`.
+catalogue_source_root: "../catalogue/datasets"
+# catalogue_source_root: null
+
 paths:
   # Update these values when the shared data layout is finalised.
   figures : "figures"
@@ -18,7 +24,6 @@ metadata:
 
 figures:
   dpi : 300
-
 
 sensitivity:
   vars:

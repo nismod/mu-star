@@ -6,6 +6,7 @@ channels:
   - nodefaults
 dependencies:
   - python=3.12
+  - git
   - pip:
     - -e .
     - nismod-snail
@@ -15,13 +16,7 @@ dependencies:
     - contextily
     - reverse_geocoder
     - seaborn
-    - 'pymc==5.25.1'
-    - 'arviz==0.22.0'
-    - 'blackjax==1.3'
-    - 'pytensor==2.31.7'
-    - scalenav
     - matplotlib_map_utils
-    - "git+https://github.com/nismod/global-econ-model.git@v4.0.0"
   - geopandas
   - hatchling
   - jupyter
@@ -35,8 +30,3 @@ dependencies:
   - tqdm
   - xarray
   - zarr
-  - 'duckdb==1.3.2'
-  - 'pyarrow==21.0.0'
-  - geoarrow-pyarrow
-  - 'ibis-framework[duckdb,geospatial]'  
-  - pydeck

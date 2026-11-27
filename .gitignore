@@ -4,6 +4,11 @@
 # Default data directory
 data/
 
+# notebooks
+notebooks/
+
+documents/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

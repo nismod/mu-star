@@ -1,11 +1,36 @@
 configfile: "config/config.yaml"
 
+from pathlib import Path
+
+from economy import CATALOGUE_ROOT
+from economy.catalogue import catalogue_include
+import globdata
+from globdata.catalogue import load_catalogue
+
+catalogue_source_root = config.get("catalogue_source_root")
+if catalogue_source_root is not None:
+    catalogue_source_root = Path(catalogue_source_root).expanduser().resolve()
+    if not catalogue_source_root.is_dir():
+        raise NotADirectoryError(f"Catalogue source root is not a directory: {catalogue_source_root}")
+    catalogue_output_root = Path(CATALOGUE_ROOT).resolve()
+    if (
+        catalogue_source_root.is_relative_to(catalogue_output_root)
+        or catalogue_output_root.is_relative_to(catalogue_source_root)
+    ):
+        raise ValueError("Catalogue source root must not overlap the local catalogue output root")
+    SOURCE_CATALOGUE = load_catalogue(root=catalogue_source_root, include_=catalogue_include)
+else:
+    SOURCE_CATALOGUE = {layer: globdata.get_catalogue()[layer] for layer in catalogue_include}
+
+CATALOGUE_SOURCE_ROOT = str(catalogue_source_root) if catalogue_source_root is not None else None
+globdata.set_catalogue(load_catalogue(root=CATALOGUE_ROOT))
+
 include: "0-preprocess/osm_roads_preprocess.smk"
 include: "0-preprocess/econ_catalogue.smk"
+include: "0-preprocess/preprocess_local_econ.smk"
 include: "0-preprocess/econ_utilities.smk"
 include: "0-preprocess/econ_model_setup.smk"
 include: "0-preprocess/econ_modelling.smk"
-include: "0-preprocess/econ.smk"
 include: "0-preprocess/catalogue-open-data.smk"
 include: "0-preprocess/preprocess.smk"
 include: "0-preprocess/transport.smk"
@@ -16,5 +41,4 @@ wildcard_constraints:
     peril=r"peril-(flood|cyclone)",
     subperil=r"subperil-(wind|fluvial|pluvial|coastal)",
     ensemble=r"ensemble-\d+",
-    catalogue_outputs=r"/\w/\w\d*.parquet",
     model_run=r"[a-z]{5}_mauritius_[^/]+",

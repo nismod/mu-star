@@ -1,7 +1,5 @@
 """Pre-process official economic accounts into a model constraint table."""
 
-import logging
-import os
 import re
 from pathlib import Path
 
@@ -17,23 +15,29 @@ SOURCE_UNITS = 1_000_000
 
 def preprocess_local_econ(
     raw_data_path,
+    custom_bounds_path,
     output_path,
-    catalogue_root,
     country_code,
     year,
     rupees_per_usd,
+    log_path,
 ):
     """Convert the official accounts workbook into a national constraint table."""
+    import logging
+
     import scalenav.oop as snoo
     from globdata import ISIC_CODES, REGION_INDEX
-    from globdata.catalogue import load_catalogue
     from ibis import _
 
-    catalogue_root = os.fspath(catalogue_root)
-    if not catalogue_root.endswith(("/", os.sep)):
-        catalogue_root = f"{catalogue_root}{os.sep}"
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+    logging.info("Pre-processing %s for %s (%s)", raw_data_path, country_code, year)
 
-    catalogue = load_catalogue(root=catalogue_root)
     conn = snoo.connect()
 
     econ_df = pd.read_excel(
@@ -75,8 +79,16 @@ def preprocess_local_econ(
     econ_df_clean["section"] = isic_section.section[best_match["id"]].tolist()
     econ_df_clean["match_score"] = best_match["match_score"]
 
-    boundaries = conn.read_parquet(catalogue["custom_bounds"])
-    nation = boundaries.filter(_.gid_0.isin([country_code])).execute().set_crs("epsg:4326").set_index("gid_0")
+    nation = (
+        conn.read_parquet(custom_bounds_path)
+        .cast({"geometry": "GEOMETRY"})
+        .filter(_.gid_0.isin([country_code]))
+        .execute()
+        .set_crs("epsg:4326")
+        .set_index("gid_0")
+    )
+
+    # print(nation)
 
     years = [str(year)]
     output_columns = [f"{value}_gross_output_at_basic_prices" for value in years]
@@ -86,6 +98,9 @@ def preprocess_local_econ(
         fill_value=0,
         aggfunc=lambda values: np.mean(np.sum(values) * SOURCE_UNITS / len(output_columns) / rupees_per_usd),
     )
+
+    # print(output_table.head())
+
     output_table.index = [country_code]
 
     output_gdf = (
@@ -100,31 +115,10 @@ def preprocess_local_econ(
         .reset_index(drop=False, names="id")
     )
 
+    # print(output_gdf.head())
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_gdf.to_parquet(output_path)
+    logging.info("Wrote economic constraint table to %s", output_path)
     return output_gdf
-
-
-def run_from_snakemake(snakemake):
-    """Pass workflow inputs and settings to the preprocessing function."""
-    log_path = Path(str(snakemake.log[0]))
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        filename=log_path,
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-
-    preprocess_local_econ(
-        raw_data_path=snakemake.input.accounts,
-        output_path=snakemake.output.table,
-        catalogue_root=snakemake.params.catalogue_root,
-        country_code=snakemake.params.country_code,
-        year=int(snakemake.params.year),
-        rupees_per_usd=float(snakemake.params.rupees_per_usd),
-    )
-
-
-if __name__ == "__main__":
-    run_from_snakemake(globals()["snakemake"])

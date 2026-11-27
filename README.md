@@ -125,11 +125,13 @@ benefits of adaptation options.
 These results will be visualised in an online viewer, under development at
 [irv-standalone](https://github.com/nismod/irv-standalone.git).
 
-The analysis is comprised of Python scripts wrapped in
+The analysis is comprised of Python functions called by
 [snakemake](https://snakemake.readthedocs.io/) rules. Snakemake is a workflow
 management system that can be used to break up complex modelling chains and
-improve the reproducibility of analyses. To invoke a rule, call `snakemake`
-followed by the file you want to produce.
+improve the reproducibility of analyses. Rules declare their data files as
+inputs and run-specific values as parameters, then pass them explicitly to
+functions in `src/economy`. To invoke a rule, call `snakemake` followed by the
+file you want to produce.
 
 Some functionality is contained within a helper Python module, located in
 `src/mu_star`.
